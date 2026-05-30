@@ -116,7 +116,29 @@ impl ServiceConfig {
     /// Missing files are silently skipped (defaults apply). After loading,
     /// resolves relative storage paths against `state_dir` if provided.
     pub fn load_from_directory(config_dir: &Path, state_dir: Option<&Path>) -> Self {
+        Self::load_from_directory_with_diagnostics(config_dir, state_dir).0
+    }
+
+    /// Like [`Self::load_from_directory`] but also returns non-fatal parse
+    /// diagnostics: section files that failed to parse, individual
+    /// `[[providers]]` blocks that were skipped, and capability values that
+    /// were dropped.
+    ///
+    /// Release builds without a `tracing_subscriber` installed have no
+    /// other channel for these warnings — the calling presentation layer
+    /// (e.g. the Tauri GUI) is expected to persist them to a user-visible
+    /// location so config typos can be diagnosed without rebuilding the app.
+    pub fn load_from_directory_with_diagnostics(
+        config_dir: &Path,
+        state_dir: Option<&Path>,
+    ) -> (Self, Vec<String>) {
         let mut config = Self::default();
+        let mut errors: Vec<String> = Vec::new();
+
+        // Drain anything sitting in the provider thread-local from a previous
+        // call. This prevents stale diagnostics from bleeding in if a caller
+        // never picks them up.
+        let _ = y_provider::drain_config_load_errors();
 
         // Set prompts override directory to <config_dir>/prompts/.
         let prompts_dir = config_dir.join("prompts");
@@ -137,7 +159,11 @@ impl ServiceConfig {
                 path = %config_dir.display(),
                 "Config directory not found; using defaults"
             );
-            return config;
+            errors.push(format!(
+                "config directory not found: {} -- using defaults",
+                config_dir.display()
+            ));
+            return (config, errors);
         }
 
         for section in CONFIG_SECTIONS {
@@ -154,64 +180,59 @@ impl ServiceConfig {
                         error = %e,
                         "Failed to read config file; skipping"
                     );
+                    errors.push(format!("{}: failed to read: {e}", path.display()));
                     continue;
                 }
             };
 
+            // Helper: parse one section, log + record on failure.
+            macro_rules! parse_section {
+                ($field:expr, $ty:ty) => {
+                    match toml::from_str::<$ty>(&content) {
+                        Ok(v) => $field = v,
+                        Err(e) => {
+                            warn!(file = format!("{section}.toml").as_str(), error = %e, "Parse error");
+                            errors.push(format!("{section}.toml: parse error: {e}"));
+                        }
+                    }
+                };
+            }
+
             match *section {
-                "providers" => match toml::from_str(&content) {
-                    Ok(v) => config.providers = v,
-                    Err(e) => warn!(file = "providers.toml", error = %e, "Parse error"),
-                },
-                "storage" => match toml::from_str(&content) {
-                    Ok(v) => config.storage = v,
-                    Err(e) => warn!(file = "storage.toml", error = %e, "Parse error"),
-                },
+                "providers" => parse_section!(config.providers, ProviderPoolConfig),
+                "storage" => parse_section!(config.storage, StorageConfig),
                 "session" => match toml::from_str::<SessionFileConfig>(&content) {
                     Ok(v) => {
                         config.session = v.session;
                         config.pruning = v.pruning;
                     }
-                    Err(e) => warn!(file = "session.toml", error = %e, "Parse error"),
+                    Err(e) => {
+                        warn!(file = "session.toml", error = %e, "Parse error");
+                        errors.push(format!("session.toml: parse error: {e}"));
+                    }
                 },
-                "runtime" => match toml::from_str(&content) {
-                    Ok(v) => config.runtime = v,
-                    Err(e) => warn!(file = "runtime.toml", error = %e, "Parse error"),
-                },
-                "hooks" => match toml::from_str(&content) {
-                    Ok(v) => config.hooks = v,
-                    Err(e) => warn!(file = "hooks.toml", error = %e, "Parse error"),
-                },
-                "tools" => match toml::from_str(&content) {
-                    Ok(v) => config.tools = v,
-                    Err(e) => warn!(file = "tools.toml", error = %e, "Parse error"),
-                },
-                "guardrails" => match toml::from_str(&content) {
-                    Ok(v) => config.guardrails = v,
-                    Err(e) => warn!(file = "guardrails.toml", error = %e, "Parse error"),
-                },
-                "browser" => match toml::from_str(&content) {
-                    Ok(v) => config.browser = v,
-                    Err(e) => warn!(file = "browser.toml", error = %e, "Parse error"),
-                },
-                "knowledge" => match toml::from_str(&content) {
-                    Ok(v) => config.knowledge = v,
-                    Err(e) => warn!(file = "knowledge.toml", error = %e, "Parse error"),
-                },
+                "runtime" => parse_section!(config.runtime, RuntimeConfig),
+                "hooks" => parse_section!(config.hooks, HookConfig),
+                "tools" => parse_section!(config.tools, ToolRegistryConfig),
+                "guardrails" => parse_section!(config.guardrails, GuardrailConfig),
+                "browser" => parse_section!(config.browser, BrowserConfig),
+                "knowledge" => parse_section!(config.knowledge, KnowledgeConfig),
                 #[cfg(feature = "langfuse")]
-                "langfuse" => match toml::from_str(&content) {
-                    Ok(v) => config.langfuse = v,
-                    Err(e) => warn!(file = "langfuse.toml", error = %e, "Parse error"),
-                },
+                "langfuse" => parse_section!(config.langfuse, LangfuseConfig),
                 _ => {}
             }
         }
+
+        // Pick up provider-level non-fatal diagnostics (per-block skips and
+        // dropped capabilities) recorded by lenient deserializers in
+        // y-provider during the per-section parses above.
+        errors.extend(y_provider::drain_config_load_errors());
 
         if let Some(base_dir) = state_dir {
             config.resolve_storage_paths(base_dir);
         }
 
-        config
+        (config, errors)
     }
 
     /// Resolve relative `db_path` and `transcript_dir` against a base directory.
@@ -257,15 +278,23 @@ impl ServiceConfig {
 
 /// Expand `~` to the user's home directory.
 fn expand_tilde(path: &str) -> String {
+    fn resolve_home() -> String {
+        fn non_empty(name: &str) -> Option<std::ffi::OsString> {
+            std::env::var_os(name).filter(|v| !v.is_empty())
+        }
+        let primary = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let fallback = if cfg!(windows) { "HOME" } else { "USERPROFILE" };
+        non_empty(primary)
+            .or_else(|| non_empty(fallback))
+            .map_or_else(
+                || ".".to_string(),
+                |os| PathBuf::from(os).to_string_lossy().into_owned(),
+            )
+    }
     if let Some(stripped) = path.strip_prefix("~/") {
-        let home = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        format!("{home}/{stripped}")
+        format!("{}/{stripped}", resolve_home())
     } else if path == "~" {
-        std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string())
+        resolve_home()
     } else {
         path.to_string()
     }
@@ -332,6 +361,90 @@ api_key_env = "OPENAI_API_KEY"
         assert_eq!(config.storage.db_path, "/tmp/test.db");
         // Providers should fall back to default (empty).
         assert!(config.providers.providers.is_empty());
+    }
+
+    #[test]
+    fn diagnostics_surface_per_provider_skip_and_unknown_capability() {
+        // Models the exact failure mode that emptied a user's GUI model
+        // dropdown in production: a single capability typo in one
+        // [[providers]] block (`"vison"` instead of `"vision"`). Before the
+        // lenient deserializers the whole file failed to parse and the
+        // provider pool was silently empty. Now the typo's entry is dropped,
+        // siblings survive, and a human-readable diagnostic is returned for
+        // the GUI to surface.
+        let dir = TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("providers.toml"),
+            r#"
+[[providers]]
+id = "good"
+provider_type = "openai-compat"
+model = "m"
+api_key = "k"
+capabilities = ["text", "vison"]
+
+[[providers]]
+# Missing required `id`.
+provider_type = "openai-compat"
+model = "m"
+api_key = "k"
+"#,
+        )
+        .unwrap();
+
+        let (config, errors) =
+            ServiceConfig::load_from_directory_with_diagnostics(dir.path(), None);
+
+        // The well-formed provider must survive both the bad-capability
+        // entry and the malformed sibling block.
+        assert_eq!(config.providers.providers.len(), 1);
+        assert_eq!(config.providers.providers[0].id, "good");
+        assert_eq!(
+            config.providers.providers[0].capabilities,
+            vec![y_core::provider::ProviderCapability::Text],
+        );
+
+        // Both kinds of diagnostic must be surfaced for the GUI.
+        assert!(
+            errors.iter().any(|e| e.contains("vison")),
+            "expected a diagnostic for the dropped capability: {errors:?}",
+        );
+        assert!(
+            errors.iter().any(|e| e.contains("skipping provider")),
+            "expected a diagnostic for the skipped provider block: {errors:?}",
+        );
+    }
+
+    #[test]
+    fn diagnostics_are_drained_between_calls() {
+        // Each call to load_from_directory_with_diagnostics must start
+        // from a clean slate so stale errors from a prior load don't bleed
+        // into a fresh report.
+        let dir1 = TempDir::new().unwrap();
+        std::fs::write(
+            dir1.path().join("providers.toml"),
+            r#"
+[[providers]]
+id = "x"
+provider_type = "openai-compat"
+model = "m"
+api_key = "k"
+capabilities = ["nonsense"]
+"#,
+        )
+        .unwrap();
+        let (_, errors1) = ServiceConfig::load_from_directory_with_diagnostics(dir1.path(), None);
+        assert!(!errors1.is_empty(), "first load should report the typo");
+
+        let dir2 = TempDir::new().unwrap();
+        let (_, errors2) = ServiceConfig::load_from_directory_with_diagnostics(dir2.path(), None);
+        // Empty directory: only the "config directory not found" path could
+        // fire, but dir2 exists. So the only surviving error category would
+        // be leakage from dir1, which we explicitly forbid.
+        assert!(
+            errors2.iter().all(|e| !e.contains("nonsense")),
+            "second load must not leak diagnostics from the first: {errors2:?}",
+        );
     }
 
     #[test]
