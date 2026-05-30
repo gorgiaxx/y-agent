@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { transport } from '../../lib';
-import type { GuiConfig } from '../../types';
+import type { AppConfigResponse, GuiConfig } from '../../types';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import {
   SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA,
@@ -35,6 +35,7 @@ import {
   DEFAULT_GUARDRAILS_FORM,
   DEFAULT_KNOWLEDGE_FORM,
   DEFAULT_LANGFUSE_FORM,
+  jsonToProviders,
   providersToToml,
   mcpServersToJson,
   TAB_LABELS,
@@ -176,6 +177,18 @@ export function SettingsPanel({
         await saveSection('providers', toml);
         setRawProvidersToml(undefined);
         setDirtyProviders(false);
+        // Refresh form-mode state from the freshly persisted TOML so that
+        // switching from raw mode back to form mode reflects the saved data.
+        try {
+          const allConfig = await transport.invoke<AppConfigResponse>('config_get');
+          setProvidersList(jsonToProviders(allConfig));
+          const raw = await loadSection('providers');
+          const tableMatch = raw.match(/^\s*\[\[providers\]\]/m);
+          const firstTable = tableMatch?.index ?? -1;
+          setProvidersMeta(firstTable > 0 ? raw.slice(0, firstTable) : '');
+        } catch (refreshErr) {
+          console.warn('Providers refresh after save failed:', refreshErr);
+        }
       } catch (e) { errors.push(`providers: ${e}`); }
     }
 
@@ -314,7 +327,7 @@ export function SettingsPanel({
     rawSessionToml, rawRuntimeToml, rawBrowserToml, rawProvidersToml,
     rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml, rawLangfuseToml,
     dirtyPrompts, dirtyPromptTemplates, promptTemplateSaveHandler,
-    saveSection, reloadConfig, localConfig, onSave,
+    saveSection, loadSection, reloadConfig, localConfig, onSave,
   ]);
 
   // Auto-dismiss toast.
