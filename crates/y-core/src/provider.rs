@@ -65,7 +65,14 @@ pub enum ToolCallingMode {
 ///
 /// Maps to provider-specific parameters:
 /// - Anthropic: `output_config.effort` (`"low"` | `"medium"` | `"high"` | `"max"`)
-/// - `OpenAI Response API`: `reasoning.effort` (`"low"` | `"medium"` | `"high"`)
+/// - `OpenAI Response API` (`provider_type = "openai"`): nested
+///   `reasoning.effort` (`"low"` | `"medium"` | `"high"`)
+/// - OpenAI-compatible Chat Completions (`provider_type = "openai-compat"`,
+///   `"custom"`, `"deepseek"`): top-level `reasoning_effort`
+///   (`"low"` | `"medium"` | `"high"`)
+///
+/// `Max` has no `OpenAI` equivalent and is downgraded to `"high"` for both
+/// `OpenAI` shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingEffort {
