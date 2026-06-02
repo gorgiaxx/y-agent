@@ -208,6 +208,13 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
         // OpenAI reasoning models (o1, o3, gpt-5). Default `false` preserves
         // compatibility with the broader OpenAI-compatible ecosystem.
         let use_max_completion_tokens = cfg.use_max_completion_tokens.unwrap_or(false);
+        // The reasoning wire shape follows the provider type: `openai`
+        // (Response API) uses the nested `reasoning: { effort }` object, while
+        // OpenAI-compatible Chat Completions backends use the top-level
+        // `reasoning_effort` string.
+        let use_reasoning_effort = crate::providers::openai::provider_type_uses_reasoning_effort(
+            cfg.provider_type.as_str(),
+        );
         let make_openai = |base: Option<String>| -> Arc<dyn LlmProvider> {
             Arc::new(
                 crate::providers::openai::OpenAiProvider::with_headers(
@@ -225,7 +232,8 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.http_protocol,
                 )
                 .with_include_usage(include_usage)
-                .with_use_max_completion_tokens(use_max_completion_tokens),
+                .with_use_max_completion_tokens(use_max_completion_tokens)
+                .with_use_reasoning_effort(use_reasoning_effort),
             ) as Arc<dyn LlmProvider>
         };
         let make_azure = || -> Arc<dyn LlmProvider> {

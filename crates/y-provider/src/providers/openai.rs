@@ -40,6 +40,11 @@ pub struct OpenAiProvider {
     /// (`o1`, `o3`, `gpt-5`, ...). Defaults to `false`. See
     /// [`crate::config::ProviderConfig::use_max_completion_tokens`].
     use_max_completion_tokens: bool,
+    /// Serialize the reasoning effort as the top-level `reasoning_effort` string
+    /// (OpenAI-compatible Chat Completions shape) instead of the nested
+    /// `reasoning: { effort }` object (`OpenAI` Response API shape). Defaults to
+    /// `false`; set `true` for `openai-compat`/`custom`/`deepseek` provider types.
+    use_reasoning_effort: bool,
 }
 
 impl OpenAiProvider {
@@ -116,6 +121,7 @@ impl OpenAiProvider {
             },
             include_usage: false,
             use_max_completion_tokens: false,
+            use_reasoning_effort: false,
         }
     }
 
@@ -134,6 +140,17 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_use_max_completion_tokens(mut self, use_max_completion_tokens: bool) -> Self {
         self.use_max_completion_tokens = use_max_completion_tokens;
+        self
+    }
+
+    /// Builder-style setter: serialize the reasoning effort as the top-level
+    /// `reasoning_effort` string (OpenAI-compatible Chat Completions shape)
+    /// instead of the nested `reasoning: { effort }` object (`OpenAI` Response
+    /// API shape). Pool wiring derives this from the provider type via
+    /// `provider_type_uses_reasoning_effort`.
+    #[must_use]
+    pub fn with_use_reasoning_effort(mut self, use_reasoning_effort: bool) -> Self {
+        self.use_reasoning_effort = use_reasoning_effort;
         self
     }
 
@@ -485,6 +502,19 @@ impl OpenAiProvider {
             (request.max_tokens, None)
         };
 
+        // Reasoning effort serializes either as the top-level `reasoning_effort`
+        // string (OpenAI-compatible Chat Completions) or the nested
+        // `reasoning: { effort }` object (`OpenAI` Response API) -- never both.
+        let effort = request
+            .thinking
+            .as_ref()
+            .map(|tc| thinking_effort_str(tc.effort));
+        let (reasoning, reasoning_effort) = if self.use_reasoning_effort {
+            (None, effort)
+        } else {
+            (effort.map(|e| OpenAiReasoning { effort: e }), None)
+        };
+
         OpenAiRequest {
             model: model.to_string(),
             messages: Self::build_messages(request),
@@ -506,23 +536,8 @@ impl OpenAiProvider {
             } else {
                 Some(request.stop.clone())
             },
-            reasoning: request.thinking.as_ref().map(|tc| {
-                use y_core::provider::ThinkingEffort;
-                OpenAiReasoning {
-                    effort: match tc.effort {
-                        ThinkingEffort::Low => "low".to_string(),
-                        ThinkingEffort::Medium => "medium".to_string(),
-                        ThinkingEffort::High => "high".to_string(),
-                        ThinkingEffort::Max => {
-                            tracing::warn!(
-                                "ThinkingEffort::Max not supported by OpenAI; \
-                                 downgrading to 'high'"
-                            );
-                            "high".to_string()
-                        }
-                    },
-                }
-            }),
+            reasoning,
+            reasoning_effort,
             response_format: request.response_format.as_ref().map(|rf| {
                 use y_core::provider::ResponseFormat;
                 match rf {
@@ -958,8 +973,14 @@ struct OpenAiRequest {
     tools: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: Option<Vec<String>>,
+    /// `OpenAI` Response API reasoning shape (nested object). Mutually exclusive
+    /// with [`OpenAiRequest::reasoning_effort`]; providers populate exactly one.
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<OpenAiReasoning>,
+    /// OpenAI-compatible Chat Completions reasoning shape (top-level string).
+    /// Mutually exclusive with [`OpenAiRequest::reasoning`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<OpenAiResponseFormat>,
 }
@@ -967,6 +988,32 @@ struct OpenAiRequest {
 #[derive(Debug, Serialize)]
 struct OpenAiReasoning {
     effort: String,
+}
+
+/// Map the unified [`ThinkingEffort`](y_core::provider::ThinkingEffort) to the
+/// `OpenAI` wire string. `Max` is not an `OpenAI` reasoning level and is
+/// downgraded to `"high"`.
+fn thinking_effort_str(effort: y_core::provider::ThinkingEffort) -> String {
+    use y_core::provider::ThinkingEffort;
+    match effort {
+        ThinkingEffort::Low => "low".to_string(),
+        ThinkingEffort::Medium => "medium".to_string(),
+        ThinkingEffort::High => "high".to_string(),
+        ThinkingEffort::Max => {
+            tracing::warn!("ThinkingEffort::Max not supported by OpenAI; downgrading to 'high'");
+            "high".to_string()
+        }
+    }
+}
+
+/// Whether a provider type uses the OpenAI-compatible Chat Completions reasoning
+/// shape (top-level `reasoning_effort` string). `"openai"` uses the `OpenAI`
+/// Response API nested `reasoning: { effort }` object instead.
+pub(crate) fn provider_type_uses_reasoning_effort(provider_type: &str) -> bool {
+    matches!(
+        provider_type,
+        "openai-compat" | "openai_compatible" | "custom" | "deepseek"
+    )
 }
 
 /// `OpenAI` `response_format` for structured output.
@@ -1304,6 +1351,7 @@ mod tests {
             tools: None,
             stop: None,
             reasoning: None,
+            reasoning_effort: None,
             response_format: None,
         };
 
@@ -1333,6 +1381,7 @@ mod tests {
             tools: None,
             stop: None,
             reasoning: None,
+            reasoning_effort: None,
             response_format: None,
         };
 
@@ -1597,6 +1646,107 @@ mod tests {
             let json = serde_json::to_value(provider.build_request_body(&request, false)).unwrap();
             assert!(json.get("max_tokens").is_none(), "{json}");
             assert!(json.get("max_completion_tokens").is_none(), "{json}");
+        }
+    }
+
+    fn reasoning_provider(use_reasoning_effort: bool) -> OpenAiProvider {
+        OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_use_reasoning_effort(use_reasoning_effort)
+    }
+
+    fn reasoning_request(effort: Option<y_core::provider::ThinkingEffort>) -> ChatRequest {
+        ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: Some(256),
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: effort.map(|effort| y_core::provider::ThinkingConfig { effort }),
+            response_format: None,
+            image_generation_options: None,
+        }
+    }
+
+    /// `openai` (Response API) providers keep the nested `reasoning: { effort }`
+    /// object and never emit the top-level `reasoning_effort` string.
+    #[test]
+    fn request_body_uses_nested_reasoning_by_default() {
+        let provider = reasoning_provider(false);
+        let request = reasoning_request(Some(y_core::provider::ThinkingEffort::High));
+        let json = serde_json::to_value(provider.build_request_body(&request, false)).unwrap();
+        assert_eq!(json["reasoning"]["effort"], "high");
+        assert!(json.get("reasoning_effort").is_none(), "{json}");
+    }
+
+    /// `openai-compat`/`custom`/`deepseek` providers emit the top-level
+    /// `reasoning_effort` string and never the nested `reasoning` object.
+    #[test]
+    fn request_body_uses_reasoning_effort_when_opted_in() {
+        let provider = reasoning_provider(true);
+        let request = reasoning_request(Some(y_core::provider::ThinkingEffort::Medium));
+        let json = serde_json::to_value(provider.build_request_body(&request, false)).unwrap();
+        assert_eq!(json["reasoning_effort"], "medium");
+        assert!(json.get("reasoning").is_none(), "{json}");
+    }
+
+    /// No reasoning configured -> neither wire field is sent, in either shape.
+    #[test]
+    fn request_body_omits_reasoning_when_thinking_none() {
+        let request = reasoning_request(None);
+        for use_reasoning_effort in [false, true] {
+            let provider = reasoning_provider(use_reasoning_effort);
+            let json = serde_json::to_value(provider.build_request_body(&request, false)).unwrap();
+            assert!(json.get("reasoning").is_none(), "{json}");
+            assert!(json.get("reasoning_effort").is_none(), "{json}");
+        }
+    }
+
+    /// `Max` is not an `OpenAI` reasoning level; it downgrades to `"high"`.
+    #[test]
+    fn reasoning_effort_max_downgrades_to_high() {
+        let provider = reasoning_provider(true);
+        let request = reasoning_request(Some(y_core::provider::ThinkingEffort::Max));
+        let json = serde_json::to_value(provider.build_request_body(&request, false)).unwrap();
+        assert_eq!(json["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn provider_type_uses_reasoning_effort_mapping() {
+        for ty in ["openai-compat", "openai_compatible", "custom", "deepseek"] {
+            assert!(
+                provider_type_uses_reasoning_effort(ty),
+                "{ty} should use reasoning_effort"
+            );
+        }
+        for ty in ["openai", "azure", "anthropic", "gemini", "ollama"] {
+            assert!(
+                !provider_type_uses_reasoning_effort(ty),
+                "{ty} should use nested reasoning"
+            );
         }
     }
 
