@@ -95,6 +95,21 @@ describe('HttpTransport contract mapping', () => {
     });
   });
 
+  it('sends no usable thinking_effort when the chat box reasoning is "Default"', async () => {
+    const { calls } = installFetchMock({ session_id: 's1', run_id: 'r1' });
+    const transport = new HttpTransport('http://localhost:3000/', 'token-1');
+
+    // Mirrors useChatOperations: an unset chat-box reasoning level is sent as null.
+    await transport.invoke('chat_send', {
+      message: 'hello',
+      sessionId: 's1',
+      thinkingEffort: null,
+    });
+
+    const body = JSON.parse(String(calls[0].init.body)) as Record<string, unknown>;
+    expect(body.thinking_effort ?? null).toBeNull();
+  });
+
   it('routes skill_import to the y-web import endpoint instead of no-oping', async () => {
     const { calls } = installFetchMock({ decision: 'accepted' });
     const transport = new HttpTransport('http://localhost:3000');
