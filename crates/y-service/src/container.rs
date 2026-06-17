@@ -1641,6 +1641,10 @@ mod tests {
                 top_p: None,
                 tool_calling_mode: None,
                 icon: None,
+                azure_resource_name: None,
+                azure_api_version: None,
+                azure_use_deployment_urls: None,
+                azure_auth_mode: None,
             }],
             ..Default::default()
         };
@@ -1674,6 +1678,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 }],
                 ..Default::default()
             };
@@ -1708,6 +1716,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 }],
                 ..Default::default()
             };
@@ -1753,6 +1765,10 @@ mod tests {
                 top_p: None,
                 tool_calling_mode: None,
                 icon: None,
+                azure_resource_name: None,
+                azure_api_version: None,
+                azure_use_deployment_urls: None,
+                azure_auth_mode: None,
             }],
             ..Default::default()
         };
@@ -1811,6 +1827,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 }],
                 ..Default::default()
             };

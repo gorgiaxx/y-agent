@@ -185,6 +185,39 @@ pub struct ProviderConfig {
     /// Matches icon IDs from the @lobehub/icons library.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
+
+    /// Azure resource name (e.g. "myresource" for `myresource.openai.azure.com`).
+    /// When set without `base_url`, the endpoint is constructed as
+    /// `https://{resource_name}.openai.azure.com/openai`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_resource_name: Option<String>,
+
+    /// Azure API version override. Defaults to `2024-10-21` for legacy/deployment
+    /// modes and `preview` for v1 mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_api_version: Option<String>,
+
+    /// Use deployment-based URL format (`{prefix}/deployments/{model}{path}`)
+    /// instead of the v1 format (`{prefix}/v1{path}` with model in body).
+    /// Only relevant when `azure_resource_name` or a bare `base_url` prefix is
+    /// used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_use_deployment_urls: Option<bool>,
+
+    /// Azure authentication mode. Defaults to `ApiKey`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub azure_auth_mode: Option<AzureAuthMode>,
+}
+
+/// Azure authentication mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AzureAuthMode {
+    /// Standard `api-key` header authentication.
+    ApiKey,
+    /// Bearer token authentication (`Authorization: Bearer {token}`).
+    /// Used with Azure AD / Entra ID tokens.
+    Bearer,
 }
 
 /// Multi-level proxy configuration.
@@ -815,6 +848,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                     enabled: true,
                 },
                 ProviderConfig {
@@ -838,6 +875,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                     enabled: true,
                 },
             ],
@@ -883,6 +924,10 @@ mod tests {
             top_p: None,
             tool_calling_mode: None,
             icon: None,
+            azure_resource_name: None,
+            azure_api_version: None,
+            azure_use_deployment_urls: None,
+            azure_auth_mode: None,
         };
 
         // Without env var set, should return None.
@@ -918,6 +963,10 @@ mod tests {
             top_p: None,
             tool_calling_mode: None,
             icon: None,
+            azure_resource_name: None,
+            azure_api_version: None,
+            azure_use_deployment_urls: None,
+            azure_auth_mode: None,
         };
 
         // Direct key takes priority over env var.
@@ -1272,6 +1321,10 @@ mod tests {
             top_p: None,
             tool_calling_mode: None,
             icon: None,
+            azure_resource_name: None,
+            azure_api_version: None,
+            azure_use_deployment_urls: None,
+            azure_auth_mode: None,
         }
     }
 

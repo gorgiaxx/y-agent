@@ -1,9 +1,9 @@
 //! Azure `OpenAI` provider backend.
 //!
 //! Implements the Azure `OpenAI` Service API format with:
-//! - Azure-specific endpoint format: `{resource}.openai.azure.com/openai/deployments/{deployment}`
-//! - `api-key` header authentication (Azure API key)
-//! - `api-version` query parameter
+//! - Three endpoint modes: full-endpoint (legacy), deployment-based, and v1
+//! - `api-key` or Bearer token authentication (Azure AD / Entra ID)
+//! - `api-version` query parameter (configurable)
 //! - Same request/response format as `OpenAI` (reuses `OpenAI` wire types)
 //! - SSE streaming support
 
@@ -15,7 +15,7 @@ use tracing::instrument;
 
 use std::collections::VecDeque;
 
-use crate::config::HttpProtocol;
+use crate::config::{AzureAuthMode, HttpProtocol};
 use crate::inter_stream::InterStreamEvent;
 use crate::tool_call_accumulator::ToolCallAccumulatorSet;
 use y_core::provider::{
@@ -27,31 +27,34 @@ use y_core::types::ToolCallRequest;
 use y_core::types::{ProviderId, TokenUsage};
 
 const DEFAULT_API_VERSION: &str = "2024-10-21";
+const DEFAULT_V1_API_VERSION: &str = "preview";
+
+/// How the provider constructs Azure endpoint URLs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AzureEndpointMode {
+    /// Legacy: `base_url` contains `/deployments/`, used as-is. Model NOT in body.
+    FullEndpoint,
+    /// `{prefix}/deployments/{model}{path}`. Model NOT in body.
+    DeploymentBased,
+    /// `{prefix}/v1{path}`. Model IN body.
+    V1,
+}
 
 /// Azure `OpenAI` Service provider.
 ///
-/// Uses Azure-specific endpoint format and authentication but the same
-/// `OpenAI` request/response wire format internally.
+/// Supports three endpoint modes (full-endpoint legacy, deployment-based, v1)
+/// and two authentication modes (API key, Bearer token).
 #[derive(Debug)]
 pub struct AzureOpenAiProvider {
     client: Client,
     api_key: String,
-    /// Full Azure endpoint URL including deployment.
-    /// Format: `https://{resource}.openai.azure.com/openai/deployments/{deployment}`
-    endpoint: String,
-    /// Azure API version query parameter.
+    endpoint_mode: AzureEndpointMode,
+    endpoint_prefix: String,
     api_version: String,
+    auth_mode: AzureAuthMode,
     custom_headers: reqwest::header::HeaderMap,
     metadata: ProviderMetadata,
-    /// Send `stream_options.include_usage = true` on streaming requests.
-    /// Defaults to `false`; opt in via
-    /// [`crate::config::ProviderConfig::include_usage`].
     include_usage: bool,
-    /// Send the output-token limit as `max_completion_tokens` instead of the
-    /// legacy `max_tokens` field. Required by newer Azure deployments backed
-    /// by `OpenAI` reasoning models (`o1`, `o3`, `gpt-5`, ...). Defaults to
-    /// `false`; opt in via
-    /// [`crate::config::ProviderConfig::use_max_completion_tokens`].
     use_max_completion_tokens: bool,
 }
 
@@ -104,7 +107,7 @@ impl AzureOpenAiProvider {
         headers: &std::collections::HashMap<String, String, S>,
         http_protocol: HttpProtocol,
     ) -> Self {
-        let endpoint = base_url.unwrap_or_default();
+        let endpoint_prefix = base_url.unwrap_or_default();
         let custom_headers = crate::http_headers::custom_header_map(headers).unwrap_or_else(
             |message| {
                 tracing::warn!(provider_id = %id, error = %message, "Ignoring invalid provider custom headers");
@@ -116,8 +119,10 @@ impl AzureOpenAiProvider {
             client: crate::http_headers::provider_http_client(http_protocol, proxy_url)
                 .unwrap_or_else(|_| Client::new()),
             api_key,
-            endpoint,
+            endpoint_mode: AzureEndpointMode::FullEndpoint,
+            endpoint_prefix,
             api_version: DEFAULT_API_VERSION.to_string(),
+            auth_mode: AzureAuthMode::ApiKey,
             custom_headers,
             metadata: ProviderMetadata {
                 id: ProviderId::from_string(id),
@@ -152,21 +157,93 @@ impl AzureOpenAiProvider {
         self
     }
 
-    /// Build the chat completions URL with api-version query parameter.
+    /// Builder-style setter: configure Azure-specific endpoint resolution,
+    /// API version, and authentication mode.
+    #[must_use]
+    pub fn with_azure_config(
+        mut self,
+        resource_name: Option<&str>,
+        use_deployment_urls: bool,
+        api_version: Option<&str>,
+        auth_mode: AzureAuthMode,
+    ) -> Self {
+        let (mode, prefix) =
+            if !self.endpoint_prefix.is_empty() && self.endpoint_prefix.contains("/deployments/") {
+                (
+                    AzureEndpointMode::FullEndpoint,
+                    self.endpoint_prefix.clone(),
+                )
+            } else if let Some(name) = resource_name {
+                let prefix = if self.endpoint_prefix.is_empty() {
+                    format!("https://{name}.openai.azure.com/openai")
+                } else {
+                    self.endpoint_prefix.clone()
+                };
+                if use_deployment_urls {
+                    (AzureEndpointMode::DeploymentBased, prefix)
+                } else {
+                    (AzureEndpointMode::V1, prefix)
+                }
+            } else if !self.endpoint_prefix.is_empty() {
+                if use_deployment_urls {
+                    (
+                        AzureEndpointMode::DeploymentBased,
+                        self.endpoint_prefix.clone(),
+                    )
+                } else {
+                    (AzureEndpointMode::V1, self.endpoint_prefix.clone())
+                }
+            } else {
+                (
+                    AzureEndpointMode::FullEndpoint,
+                    self.endpoint_prefix.clone(),
+                )
+            };
+
+        let default_version = match mode {
+            AzureEndpointMode::V1 => DEFAULT_V1_API_VERSION,
+            _ => DEFAULT_API_VERSION,
+        };
+
+        self.endpoint_mode = mode;
+        self.endpoint_prefix = prefix;
+        self.api_version = api_version.unwrap_or(default_version).to_string();
+        self.auth_mode = auth_mode;
+        self
+    }
+
+    /// Construct endpoint URL for the given path suffix.
+    fn azure_endpoint(&self, path: &str) -> String {
+        let base = self.endpoint_prefix.trim_end_matches('/');
+        let url = match self.endpoint_mode {
+            AzureEndpointMode::FullEndpoint => format!("{base}{path}"),
+            AzureEndpointMode::DeploymentBased => {
+                format!("{base}/deployments/{}{path}", self.metadata.model)
+            }
+            AzureEndpointMode::V1 => format!("{base}/v1{path}"),
+        };
+        format!("{url}?api-version={}", self.api_version)
+    }
+
+    /// Apply authentication headers to a request builder.
+    fn apply_auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        if self.api_key.is_empty() {
+            return builder;
+        }
+        match self.auth_mode {
+            AzureAuthMode::ApiKey => builder.header("api-key", &self.api_key),
+            AzureAuthMode::Bearer => {
+                builder.header("Authorization", format!("Bearer {}", self.api_key))
+            }
+        }
+    }
+
     fn chat_url(&self) -> String {
-        format!(
-            "{}/chat/completions?api-version={}",
-            self.endpoint.trim_end_matches('/'),
-            self.api_version
-        )
+        self.azure_endpoint("/chat/completions")
     }
 
     fn image_generation_url(&self) -> String {
-        format!(
-            "{}/images/generations?api-version={}",
-            self.endpoint.trim_end_matches('/'),
-            self.api_version
-        )
+        self.azure_endpoint("/images/generations")
     }
 
     fn latest_user_prompt(request: &ChatRequest) -> Result<String, ProviderError> {
@@ -239,10 +316,7 @@ impl AzureOpenAiProvider {
         request_builder =
             crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
                 .header("Content-Type", "application/json");
-
-        if !self.api_key.is_empty() {
-            request_builder = request_builder.header("api-key", &self.api_key);
-        }
+        request_builder = self.apply_auth(request_builder);
 
         let response =
             request_builder
@@ -403,7 +477,16 @@ impl AzureOpenAiProvider {
     fn build_request_body(&self, request: &ChatRequest, stream: bool) -> AzureRequest {
         use y_core::provider::ToolCallingMode;
 
-        // PromptBased mode: never send tool definitions to the provider.
+        let model = match self.endpoint_mode {
+            AzureEndpointMode::V1 => Some(
+                request
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| self.metadata.model.clone()),
+            ),
+            _ => None,
+        };
+
         let tools = match request.tool_calling_mode {
             ToolCallingMode::PromptBased => None,
             ToolCallingMode::Native => {
@@ -422,6 +505,7 @@ impl AzureOpenAiProvider {
         };
 
         AzureRequest {
+            model,
             messages: Self::build_messages(request),
             max_tokens,
             max_completion_tokens,
@@ -460,10 +544,7 @@ impl LlmProvider for AzureOpenAiProvider {
         request_builder =
             crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
                 .header("Content-Type", "application/json");
-
-        if !self.api_key.is_empty() {
-            request_builder = request_builder.header("api-key", &self.api_key);
-        }
+        request_builder = self.apply_auth(request_builder);
 
         let response =
             request_builder
@@ -593,10 +674,7 @@ impl LlmProvider for AzureOpenAiProvider {
                 .header("Content-Type", "application/json")
                 // Opt in to SSE — see openai.rs for the rationale.
                 .header("Accept", "text/event-stream");
-
-        if !self.api_key.is_empty() {
-            request_builder = request_builder.header("api-key", &self.api_key);
-        }
+        request_builder = self.apply_auth(request_builder);
 
         let response =
             request_builder
@@ -816,10 +894,13 @@ fn map_to_inter_events(
 // Azure OpenAI API types (same wire format as OpenAI)
 // ---------------------------------------------------------------------------
 
-/// Note: Azure does NOT include `model` in the request body; the model is
-/// specified as the deployment name in the URL.
+/// In V1 endpoint mode, `model` is included in the request body.
+/// In `FullEndpoint` and `DeploymentBased` modes, `model` is `None` (deployment
+/// is specified in the URL).
 #[derive(Debug, Serialize)]
 struct AzureRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
     messages: Vec<AzureMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
@@ -1017,6 +1098,7 @@ mod tests {
     #[test]
     fn test_azure_request_serialization_no_model() {
         let req = AzureRequest {
+            model: None,
             messages: vec![AzureMessage {
                 role: "user".into(),
                 content: Some("Hello".into()),
@@ -1034,7 +1116,6 @@ mod tests {
         };
 
         let json = serde_json::to_value(&req).expect("serialize");
-        // Azure does NOT include `model` in the body.
         assert!(json.get("model").is_none());
         assert_eq!(json["messages"][0]["role"], "user");
         assert_eq!(json["messages"][0]["content"], "Hello");
@@ -1193,5 +1274,281 @@ mod tests {
         .unwrap();
         assert_eq!(json["max_completion_tokens"], 256);
         assert!(json.get("max_tokens").is_none(), "{json}");
+    }
+
+    // -------------------------------------------------------------------
+    // Endpoint resolution tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn full_endpoint_legacy_url_preserved() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            Some("https://myresource.openai.azure.com/openai/deployments/gpt-4o".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(None, false, None, AzureAuthMode::ApiKey);
+
+        assert_eq!(provider.endpoint_mode, AzureEndpointMode::FullEndpoint);
+        assert_eq!(
+            provider.chat_url(),
+            "https://myresource.openai.azure.com/openai/deployments/gpt-4o\
+             /chat/completions?api-version=2024-10-21"
+        );
+    }
+
+    #[test]
+    fn resource_name_v1_mode_default() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(Some("myresource"), false, None, AzureAuthMode::ApiKey);
+
+        assert_eq!(provider.endpoint_mode, AzureEndpointMode::V1);
+        assert_eq!(
+            provider.chat_url(),
+            "https://myresource.openai.azure.com/openai\
+             /v1/chat/completions?api-version=preview"
+        );
+    }
+
+    #[test]
+    fn resource_name_deployment_based_mode() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(Some("myresource"), true, None, AzureAuthMode::ApiKey);
+
+        assert_eq!(provider.endpoint_mode, AzureEndpointMode::DeploymentBased);
+        assert_eq!(
+            provider.chat_url(),
+            "https://myresource.openai.azure.com/openai\
+             /deployments/gpt-4o/chat/completions?api-version=2024-10-21"
+        );
+    }
+
+    #[test]
+    fn bare_prefix_base_url_v1_mode() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            Some("https://custom-proxy.example.com/openai".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(None, false, None, AzureAuthMode::ApiKey);
+
+        assert_eq!(provider.endpoint_mode, AzureEndpointMode::V1);
+        assert_eq!(
+            provider.chat_url(),
+            "https://custom-proxy.example.com/openai\
+             /v1/chat/completions?api-version=preview"
+        );
+    }
+
+    #[test]
+    fn configurable_api_version() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(None, false, Some("2025-01-01"), AzureAuthMode::ApiKey);
+
+        assert_eq!(
+            provider.chat_url(),
+            "https://res.openai.azure.com/openai/deployments/gpt-4o\
+             /chat/completions?api-version=2025-01-01"
+        );
+    }
+
+    #[test]
+    fn v1_mode_includes_model_in_body() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(Some("myresource"), false, None, AzureAuthMode::ApiKey);
+
+        let json = serde_json::to_value(
+            provider.build_request_body(&azure_chat_request(Some(100)), false),
+        )
+        .unwrap();
+        assert_eq!(json["model"], "gpt-4o");
+    }
+
+    #[test]
+    fn full_endpoint_omits_model_in_body() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(None, false, None, AzureAuthMode::ApiKey);
+
+        let json = serde_json::to_value(
+            provider.build_request_body(&azure_chat_request(Some(100)), false),
+        )
+        .unwrap();
+        assert!(json.get("model").is_none(), "{json}");
+    }
+
+    #[test]
+    fn deployment_based_omits_model_in_body() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "key".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(Some("res"), true, None, AzureAuthMode::ApiKey);
+
+        let json = serde_json::to_value(
+            provider.build_request_body(&azure_chat_request(Some(100)), false),
+        )
+        .unwrap();
+        assert!(json.get("model").is_none(), "{json}");
+    }
+
+    #[test]
+    fn image_generation_url_uses_endpoint_resolution() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "dall-e-3",
+            "key".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(Some("myresource"), false, None, AzureAuthMode::ApiKey);
+
+        assert_eq!(
+            provider.image_generation_url(),
+            "https://myresource.openai.azure.com/openai\
+             /v1/images/generations?api-version=preview"
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Auth mode tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn bearer_auth_sets_authorization_header() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "my-entra-token".into(),
+            Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(None, false, None, AzureAuthMode::Bearer);
+
+        let req = provider.client.post("http://test.example.com");
+        let req = provider.apply_auth(req);
+        let built = req.build().expect("build request");
+
+        assert_eq!(
+            built
+                .headers()
+                .get("Authorization")
+                .map(|v| v.to_str().unwrap()),
+            Some("Bearer my-entra-token"),
+        );
+        assert!(built.headers().get("api-key").is_none());
+    }
+
+    #[test]
+    fn api_key_auth_sets_api_key_header() {
+        let provider = AzureOpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "azure-key-123".into(),
+            Some("https://res.openai.azure.com/openai/deployments/gpt-4o".into()),
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+        )
+        .with_azure_config(None, false, None, AzureAuthMode::ApiKey);
+
+        let req = provider.client.post("http://test.example.com");
+        let req = provider.apply_auth(req);
+        let built = req.build().expect("build request");
+
+        assert_eq!(
+            built.headers().get("api-key").map(|v| v.to_str().unwrap()),
+            Some("azure-key-123"),
+        );
+        assert!(built.headers().get("Authorization").is_none());
     }
 }

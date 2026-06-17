@@ -164,20 +164,26 @@ export function SetupWizard({
   // ---- Model discovery ----
   const supportsDiscovery =
     provider.provider_type === 'openai-compat' ||
-    provider.provider_type === 'anthropic';
-  const canDiscoverModels = supportsDiscovery && !!provider.base_url?.trim();
+    provider.provider_type === 'anthropic' ||
+    provider.provider_type === 'azure';
+  const canDiscoverModels = supportsDiscovery
+    && (!!provider.base_url?.trim() || !!provider.azure_resource_name?.trim());
 
   const handleModelSearch = useCallback(async () => {
-    if (!provider.base_url) return;
+    if (!provider.base_url && !provider.azure_resource_name) return;
     setModelLoading(true);
     setModelError(null);
     setModelList([]);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = await transport.invoke<any>('provider_list_models', {
-        baseUrl: provider.base_url,
+        baseUrl: provider.base_url ?? '',
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
+        providerType: provider.provider_type,
+        azureResourceName: provider.azure_resource_name ?? '',
+        azureApiVersion: provider.azure_api_version ?? '',
+        azureAuthMode: provider.azure_auth_mode ?? '',
       });
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const items: ModelItem[] = (result?.data ?? []).map((m: any) => ({
@@ -191,7 +197,7 @@ export function SetupWizard({
     } finally {
       setModelLoading(false);
     }
-  }, [provider.base_url, provider.api_key, provider.api_key_env]);
+  }, [provider.base_url, provider.api_key, provider.api_key_env, provider.provider_type, provider.azure_resource_name, provider.azure_api_version, provider.azure_auth_mode]);
 
   // ---- Handlers ----
 

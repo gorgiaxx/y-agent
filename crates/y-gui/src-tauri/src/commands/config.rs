@@ -308,9 +308,11 @@ pub async fn provider_test(
     .await
 }
 
-/// Fetch available models from an OpenAI-compatible `/v1/models` endpoint.
+/// Fetch available models from a provider's model listing endpoint.
 ///
-/// Returns a JSON array of `{id, display_name}` objects.
+/// For OpenAI-compatible providers, queries `{base_url}/models`.
+/// For Azure, queries `{prefix}/models?api-version={version}` with
+/// `api-key` header authentication.
 #[tauri::command]
 pub async fn provider_list_models(
     base_url: String,
@@ -318,6 +320,10 @@ pub async fn provider_list_models(
     api_key_env: String,
     headers: Option<std::collections::HashMap<String, String>>,
     http_protocol: Option<y_provider::HttpProtocol>,
+    provider_type: Option<String>,
+    azure_resource_name: Option<String>,
+    azure_api_version: Option<String>,
+    azure_auth_mode: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let effective_key = if !api_key.is_empty() {
         api_key
@@ -336,11 +342,16 @@ pub async fn provider_list_models(
     let custom_headers =
         y_service::SystemService::provider_custom_header_map(&headers.unwrap_or_default())?;
 
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let pt = provider_type.as_deref().unwrap_or("");
+    let res_name = azure_resource_name.as_deref().unwrap_or("");
+    let api_ver = azure_api_version.as_deref().unwrap_or("");
+    let auth_mode = azure_auth_mode.as_deref().unwrap_or("");
+
+    let url = resolve_models_url(pt, &base_url, res_name, api_ver);
     let mut req =
         y_service::SystemService::apply_provider_custom_headers(client.get(&url), &custom_headers);
     if !effective_key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {effective_key}"));
+        req = apply_model_list_auth(req, pt, auth_mode, &effective_key);
     }
 
     let response = req
@@ -373,6 +384,50 @@ pub async fn provider_list_models(
     let value: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("Failed to parse response: {e}"))?;
     Ok(value)
+}
+
+fn resolve_models_url(
+    provider_type: &str,
+    base_url: &str,
+    azure_resource_name: &str,
+    azure_api_version: &str,
+) -> String {
+    if provider_type != "azure" {
+        return format!("{}/models", base_url.trim_end_matches('/'));
+    }
+
+    let api_version = if azure_api_version.is_empty() {
+        "2024-10-21"
+    } else {
+        azure_api_version
+    };
+
+    let prefix = if !base_url.is_empty() {
+        if let Some(idx) = base_url.find("/deployments/") {
+            base_url[..idx].to_string()
+        } else {
+            base_url.trim_end_matches('/').to_string()
+        }
+    } else if !azure_resource_name.is_empty() {
+        format!("https://{azure_resource_name}.openai.azure.com/openai")
+    } else {
+        return format!("{}/models", base_url.trim_end_matches('/'));
+    };
+
+    format!("{prefix}/models?api-version={api_version}")
+}
+
+fn apply_model_list_auth(
+    req: reqwest::RequestBuilder,
+    provider_type: &str,
+    azure_auth_mode: &str,
+    key: &str,
+) -> reqwest::RequestBuilder {
+    if provider_type == "azure" && azure_auth_mode != "bearer" {
+        req.header("api-key", key)
+    } else {
+        req.header("Authorization", format!("Bearer {key}"))
+    }
 }
 
 // ---------------------------------------------------------------------------

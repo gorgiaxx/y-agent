@@ -253,7 +253,14 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.http_protocol,
                 )
                 .with_include_usage(include_usage)
-                .with_use_max_completion_tokens(use_max_completion_tokens),
+                .with_use_max_completion_tokens(use_max_completion_tokens)
+                .with_azure_config(
+                    cfg.azure_resource_name.as_deref(),
+                    cfg.azure_use_deployment_urls.unwrap_or(false),
+                    cfg.azure_api_version.as_deref(),
+                    cfg.azure_auth_mode
+                        .unwrap_or(crate::config::AzureAuthMode::ApiKey),
+                ),
             ) as Arc<dyn LlmProvider>
         };
 
@@ -771,6 +778,10 @@ mod tests {
                 top_p: None,
                 tool_calling_mode: None,
                 icon: None,
+                azure_resource_name: None,
+                azure_api_version: None,
+                azure_use_deployment_urls: None,
+                azure_auth_mode: None,
                 http_protocol: crate::config::HttpProtocol::Http1,
                 include_usage: None,
                 use_max_completion_tokens: None,
@@ -1011,6 +1022,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 },
                 ProviderConfig {
                     id: "anthropic-1".into(),
@@ -1034,6 +1049,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 },
                 ProviderConfig {
                     id: "gemini-1".into(),
@@ -1057,6 +1076,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 },
                 ProviderConfig {
                     id: "ollama-local".into(),
@@ -1080,6 +1103,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 },
                 ProviderConfig {
                     id: "azure-1".into(),
@@ -1103,6 +1130,10 @@ mod tests {
                     top_p: None,
                     tool_calling_mode: None,
                     icon: None,
+                    azure_resource_name: None,
+                    azure_api_version: None,
+                    azure_use_deployment_urls: None,
+                    azure_auth_mode: None,
                 },
             ],
             proxy: crate::config::ProxyConfig {
@@ -1177,6 +1208,10 @@ mod tests {
                 top_p: None,
                 tool_calling_mode: None,
                 icon: None,
+                azure_resource_name: None,
+                azure_api_version: None,
+                azure_use_deployment_urls: None,
+                azure_auth_mode: None,
             }],
             ..Default::default()
         };

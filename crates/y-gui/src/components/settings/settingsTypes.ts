@@ -38,6 +38,10 @@ export interface ProviderFormData {
    * (`o1`, `o3`, `gpt-5`, ...). Null = follow Rust default (`false`). */
   use_max_completion_tokens: boolean | null;
   icon: string | null;
+  azure_resource_name: string | null;
+  azure_api_version: string | null;
+  azure_use_deployment_urls: boolean | null;
+  azure_auth_mode: string | null;
 }
 
 export interface SessionFormData {
@@ -228,6 +232,10 @@ export function emptyProvider(): ProviderFormData {
     tool_calling_mode: null,
     use_max_completion_tokens: null,
     icon: null,
+    azure_resource_name: null,
+    azure_api_version: null,
+    azure_use_deployment_urls: null,
+    azure_auth_mode: null,
   };
 }
 
@@ -423,6 +431,12 @@ export function providersToToml(providers: ProviderFormData[]): string {
       lines.push(`use_max_completion_tokens = ${p.use_max_completion_tokens ? 'true' : 'false'}`);
     }
     if (p.icon) lines.push(`icon = "${escapeTomlString(p.icon)}"`);
+    if (p.azure_resource_name) lines.push(`azure_resource_name = "${escapeTomlString(p.azure_resource_name)}"`);
+    if (p.azure_api_version) lines.push(`azure_api_version = "${escapeTomlString(p.azure_api_version)}"`);
+    if (p.azure_use_deployment_urls !== null) {
+      lines.push(`azure_use_deployment_urls = ${p.azure_use_deployment_urls ? 'true' : 'false'}`);
+    }
+    if (p.azure_auth_mode) lines.push(`azure_auth_mode = "${escapeTomlString(p.azure_auth_mode)}"`);
     const headerEntries = Object.entries(p.headers ?? {}).filter(([key]) => key.trim() !== '');
     if (headerEntries.length > 0) {
       lines.push('[providers.headers]');
@@ -478,6 +492,12 @@ export function jsonToProviders(json: unknown): ProviderFormData[] {
       ? (p.use_max_completion_tokens as boolean)
       : null,
     icon: (p.icon as string) ?? null,
+    azure_resource_name: (p.azure_resource_name as string) ?? null,
+    azure_api_version: (p.azure_api_version as string) ?? null,
+    azure_use_deployment_urls: typeof p.azure_use_deployment_urls === 'boolean'
+      ? (p.azure_use_deployment_urls as boolean)
+      : null,
+    azure_auth_mode: (p.azure_auth_mode as string) ?? null,
   }));
 }
 

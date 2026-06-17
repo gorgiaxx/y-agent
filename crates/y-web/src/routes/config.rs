@@ -69,6 +69,14 @@ pub struct ListModelsRequest {
     pub headers: Option<HashMap<String, String>>,
     #[serde(default)]
     pub http_protocol: HttpProtocol,
+    #[serde(default)]
+    pub provider_type: String,
+    #[serde(default)]
+    pub azure_resource_name: String,
+    #[serde(default)]
+    pub azure_api_version: String,
+    #[serde(default)]
+    pub azure_auth_mode: String,
 }
 
 /// Request body for saving a prompt file.
@@ -294,11 +302,21 @@ async fn provider_list_models(
         y_service::SystemService::provider_custom_header_map(&body.headers.unwrap_or_default())
             .map_err(ApiError::BadRequest)?;
 
-    let url = format!("{}/models", body.base_url.trim_end_matches('/'));
+    let url = resolve_models_url(
+        &body.provider_type,
+        &body.base_url,
+        &body.azure_resource_name,
+        &body.azure_api_version,
+    );
     let mut req =
         y_service::SystemService::apply_provider_custom_headers(client.get(&url), &custom_headers);
     if !effective_key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {effective_key}"));
+        req = apply_model_list_auth(
+            req,
+            &body.provider_type,
+            &body.azure_auth_mode,
+            &effective_key,
+        );
     }
 
     let response = req
@@ -318,6 +336,54 @@ async fn provider_list_models(
     let value: Value = serde_json::from_str(&response_body)
         .map_err(|e| ApiError::Internal(format!("Failed to parse response: {e}")))?;
     Ok(Json(value))
+}
+
+/// Build the models-list URL, handling Azure's different endpoint structure.
+fn resolve_models_url(
+    provider_type: &str,
+    base_url: &str,
+    azure_resource_name: &str,
+    azure_api_version: &str,
+) -> String {
+    if provider_type != "azure" {
+        return format!("{}/models", base_url.trim_end_matches('/'));
+    }
+
+    let api_version = if azure_api_version.is_empty() {
+        "2024-10-21"
+    } else {
+        azure_api_version
+    };
+
+    // Compute the Azure OpenAI prefix.
+    let prefix = if !base_url.is_empty() {
+        // Strip deployment path if present (legacy full-endpoint form).
+        if let Some(idx) = base_url.find("/deployments/") {
+            base_url[..idx].to_string()
+        } else {
+            base_url.trim_end_matches('/').to_string()
+        }
+    } else if !azure_resource_name.is_empty() {
+        format!("https://{azure_resource_name}.openai.azure.com/openai")
+    } else {
+        return format!("{}/models", base_url.trim_end_matches('/'));
+    };
+
+    format!("{prefix}/models?api-version={api_version}")
+}
+
+/// Apply auth headers appropriate for the provider type.
+fn apply_model_list_auth(
+    req: reqwest::RequestBuilder,
+    provider_type: &str,
+    azure_auth_mode: &str,
+    key: &str,
+) -> reqwest::RequestBuilder {
+    if provider_type == "azure" && azure_auth_mode != "bearer" {
+        req.header("api-key", key)
+    } else {
+        req.header("Authorization", format!("Bearer {key}"))
+    }
 }
 
 /// `GET /api/v1/config/mcp` -- get MCP server configuration.

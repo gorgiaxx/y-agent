@@ -220,6 +220,10 @@ function providerListModelsBody(a: Record<string, unknown>) {
     api_key_env: arg(a, 'apiKeyEnv', 'api_key_env'),
     headers: arg(a, 'headers'),
     http_protocol: arg(a, 'httpProtocol', 'http_protocol'),
+    provider_type: arg(a, 'providerType', 'provider_type'),
+    azure_resource_name: arg(a, 'azureResourceName', 'azure_resource_name'),
+    azure_api_version: arg(a, 'azureApiVersion', 'azure_api_version'),
+    azure_auth_mode: arg(a, 'azureAuthMode', 'azure_auth_mode'),
   });
 }
 

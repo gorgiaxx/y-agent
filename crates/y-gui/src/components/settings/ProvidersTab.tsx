@@ -83,22 +83,28 @@ function ProviderTabPanel({
   // Determine whether model discovery is available.
   const supportsDiscoveryProvider =
     provider.provider_type === 'openai-compat' ||
-    provider.provider_type === 'anthropic';
+    provider.provider_type === 'anthropic' ||
+    provider.provider_type === 'azure';
 
-  const canDiscoverModels = supportsDiscoveryProvider && !!provider.base_url?.trim();
+  const canDiscoverModels = supportsDiscoveryProvider
+    && (!!provider.base_url?.trim() || !!provider.azure_resource_name?.trim());
 
   const handleModelSearch = async () => {
-    if (!provider.base_url) return;
+    if (!provider.base_url && !provider.azure_resource_name) return;
     setModelLoading(true);
     setModelError(null);
     setModelList([]);
     try {
       const result = await transport.invoke<{ data?: Array<{ id?: string; display_name?: string }> }>('provider_list_models', {
-        baseUrl: provider.base_url,
+        baseUrl: provider.base_url ?? '',
         apiKey: provider.api_key ?? '',
         apiKeyEnv: provider.api_key_env ?? '',
         headers: provider.headers,
         httpProtocol: provider.http_protocol,
+        providerType: provider.provider_type,
+        azureResourceName: provider.azure_resource_name ?? '',
+        azureApiVersion: provider.azure_api_version ?? '',
+        azureAuthMode: provider.azure_auth_mode ?? '',
       });
       const items: ModelItem[] = (result?.data ?? []).map(
         (m) => ({ id: m.id ?? '', display_name: m.display_name ?? m.id ?? '' }),
