@@ -744,6 +744,123 @@ describe('ensureStreamingAssistantMessage', () => {
     ]);
   });
 
+  it('finalizes a stale streaming message when a new run starts for the same session', () => {
+    const messages: Message[] = [
+      {
+        id: 'user-1',
+        role: 'user',
+        content: 'Message B',
+        timestamp: '2026-04-24T00:00:00.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'streaming-session-1',
+        role: 'assistant',
+        content: 'partial B response',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+        _streaming: true,
+      } as Message,
+    ];
+
+    const finalized = finalizeStreamingAssistantMessage(
+      messages,
+      'session-1',
+      'orphaned-old-run-id',
+    );
+
+    expect(finalized).toHaveLength(2);
+    expect(finalized[1]).toMatchObject({
+      id: 'orphaned-old-run-id',
+      role: 'assistant',
+      content: 'partial B response',
+    });
+    expect(finalized[1]).not.toHaveProperty('_streaming');
+
+    const newStreaming = ensureStreamingAssistantMessage(finalized, 'session-1');
+    expect(newStreaming).toHaveLength(3);
+    expect(newStreaming[2].id).toBe('streaming-session-1');
+  });
+
+  it('preserves orphaned message through backend reload after send-after-cancel', () => {
+    const backendMessages: Message[] = [
+      {
+        id: 'backend-user-A',
+        role: 'user',
+        content: 'Message A',
+        timestamp: '2026-04-24T00:00:00.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-A',
+        role: 'assistant',
+        content: 'Reply A',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-user-B',
+        role: 'user',
+        content: 'Message B',
+        timestamp: '2026-04-24T00:00:02.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-user-C',
+        role: 'user',
+        content: 'Message C',
+        timestamp: '2026-04-24T00:00:04.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'backend-assistant-C',
+        role: 'assistant',
+        content: 'Reply C',
+        timestamp: '2026-04-24T00:00:05.000Z',
+        tool_calls: [],
+      },
+    ];
+    const cachedMessages: Message[] = [
+      backendMessages[0],
+      backendMessages[1],
+      {
+        id: 'user-B-optimistic',
+        role: 'user',
+        content: 'Message B',
+        timestamp: '2026-04-24T00:00:02.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'orphaned-old-run',
+        role: 'assistant',
+        content: 'partial B response',
+        timestamp: '2026-04-24T00:00:03.000Z',
+        tool_calls: [],
+      },
+      {
+        id: 'user-C-optimistic',
+        role: 'user',
+        content: 'Message C',
+        timestamp: '2026-04-24T00:00:04.000Z',
+        tool_calls: [],
+      },
+    ];
+
+    const merged = mergeBackendMessagesPreservingLocalStreamState(
+      backendMessages,
+      cachedMessages,
+    );
+
+    expect(merged.map((m) => m.id)).toEqual([
+      'backend-user-A',
+      'backend-assistant-A',
+      'backend-user-B',
+      'orphaned-old-run',
+      'backend-user-C',
+      'backend-assistant-C',
+    ]);
+  });
+
   it('does not place a distant backend assistant at a cancelled message position', () => {
     const backendMessages: Message[] = [
       {

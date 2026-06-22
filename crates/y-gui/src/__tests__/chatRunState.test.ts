@@ -76,4 +76,17 @@ describe('chatRunState', () => {
     expect(state.awaitingInteractionRuns.has('run-1')).toBe(false);
     expect(state.streamingSessions.has('session-1')).toBe(true);
   });
+
+  it('removes runToSession entry on terminal so callers must resolve session before applying', () => {
+    let state = createChatRunState();
+
+    state = applyRunStarted(state, 'run-1', 'session-1');
+    expect(state.runToSession['run-1']).toBe('session-1');
+
+    const resolvedBefore = state.runToSession['run-1'];
+    state = applyRunTerminal(state, 'run-1', '');
+
+    expect(state.runToSession['run-1']).toBeUndefined();
+    expect(resolvedBefore).toBe('session-1');
+  });
 });

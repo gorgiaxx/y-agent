@@ -391,6 +391,7 @@ pub(crate) async fn execute_inner(
             container.diagnostics_broadcast.clone(),
         );
 
+        let mut partial_streaming = llm::PartialStreamingContent::default();
         let llm_result = llm::call_llm(
             &diag_pool,
             &request,
@@ -398,6 +399,7 @@ pub(crate) async fn execute_inner(
             progress.as_ref(),
             cancel.as_ref(),
             &config.agent_name,
+            &mut partial_streaming,
         )
         .await;
 
@@ -539,6 +541,16 @@ pub(crate) async fn execute_inner(
                 .await;
             }
             Err(e) => {
+                if !partial_streaming.content.is_empty() {
+                    ctx.accumulated_content.push_str(&partial_streaming.content);
+                    ctx.iteration_texts
+                        .push(std::mem::take(&mut partial_streaming.content));
+                }
+                if !partial_streaming.reasoning.is_empty() {
+                    ctx.iteration_reasonings
+                        .push(Some(std::mem::take(&mut partial_streaming.reasoning)));
+                    ctx.iteration_reasoning_durations_ms.push(Some(0));
+                }
                 let elapsed_ms = u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(0);
                 let model_name = config.preferred_models.first().cloned().unwrap_or_default();
                 return result::handle_llm_error(

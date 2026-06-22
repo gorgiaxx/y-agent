@@ -244,11 +244,21 @@ impl ImageAccumulator {
     }
 }
 
+/// Partial content accumulated during streaming before cancellation or error.
+#[derive(Default)]
+pub(crate) struct PartialStreamingContent {
+    pub content: String,
+    pub reasoning: String,
+}
+
 /// Dispatch to streaming or non-streaming LLM call.
 ///
 /// Returns `(ChatResponse, Option<reasoning_duration_ms>)`. The duration
 /// is only available when streaming is active and the model produced
 /// reasoning content.
+///
+/// `partial_out` captures text streamed to the frontend before cancellation
+/// so callers can persist partial content that would otherwise be lost.
 pub(crate) async fn call_llm(
     pool: &dyn ProviderPool,
     request: &ChatRequest,
@@ -256,6 +266,7 @@ pub(crate) async fn call_llm(
     progress: Option<&TurnEventSender>,
     cancel: Option<&CancellationToken>,
     agent_name: &str,
+    partial_out: &mut PartialStreamingContent,
 ) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError> {
     let [primary_route, fallback_routes @ ..] = routes else {
         return Err(y_core::provider::ProviderError::NoProviderAvailable { tags: vec![] });
@@ -265,7 +276,16 @@ pub(crate) async fn call_llm(
     let route_iter = std::iter::once(primary_route).chain(fallback_routes.iter());
     for route in route_iter {
         let result = if progress.is_some() {
-            call_llm_streaming(pool, request, route, progress, cancel, agent_name).await
+            call_llm_streaming(
+                pool,
+                request,
+                route,
+                progress,
+                cancel,
+                agent_name,
+                partial_out,
+            )
+            .await
         } else {
             call_llm_non_streaming(pool, request, route, cancel).await
         };
@@ -274,6 +294,8 @@ pub(crate) async fn call_llm(
             Ok(response) => return Ok(response),
             Err(error @ ProviderError::NoProviderAvailable { .. }) => {
                 last_no_provider_error = Some(error);
+                partial_out.content.clear();
+                partial_out.reasoning.clear();
             }
             Err(error) => return Err(error),
         }
@@ -319,6 +341,7 @@ async fn call_llm_streaming(
     progress: Option<&TurnEventSender>,
     cancel: Option<&CancellationToken>,
     agent_name: &str,
+    partial_out: &mut PartialStreamingContent,
 ) -> Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError> {
     use y_core::provider::{ChatResponse, FinishReason, ProviderError};
     use y_core::types::TokenUsage;
@@ -350,6 +373,8 @@ async fn call_llm_streaming(
         // Check cancellation between chunks.
         if let Some(tok) = cancel {
             if tok.is_cancelled() {
+                partial_out.content = std::mem::take(&mut content);
+                partial_out.reasoning = std::mem::take(&mut reasoning_content);
                 return Err(ProviderError::Cancelled);
             }
         }
@@ -358,6 +383,8 @@ async fn call_llm_streaming(
             tokio::select! {
                 next = stream.next() => next,
                 () = tok.cancelled() => {
+                    partial_out.content = std::mem::take(&mut content);
+                    partial_out.reasoning = std::mem::take(&mut reasoning_content);
                     return Err(ProviderError::Cancelled);
                 }
             }
@@ -502,7 +529,10 @@ mod tests {
     use y_core::provider::FinishReason;
     use y_core::types::ToolCallRequest;
 
-    use super::{build_route_requests, build_streaming_raw_response, call_llm, TurnEvent};
+    use super::{
+        build_route_requests, build_streaming_raw_response, call_llm, PartialStreamingContent,
+        TurnEvent,
+    };
     use crate::agent_service::AgentExecutionConfig;
 
     struct MockStreamingPool {
@@ -723,10 +753,17 @@ mod tests {
         let request = test_request();
         let routes = build_route_requests(&test_execution_config());
 
-        let (response, reasoning_duration_ms) =
-            call_llm(&pool, &request, &routes, None, None, "translator")
-                .await
-                .expect("fallback route should succeed");
+        let (response, reasoning_duration_ms) = call_llm(
+            &pool,
+            &request,
+            &routes,
+            None,
+            None,
+            "translator",
+            &mut PartialStreamingContent::default(),
+        )
+        .await
+        .expect("fallback route should succeed");
 
         assert_eq!(response.content.as_deref(), Some("translated text"));
         assert_eq!(reasoning_duration_ms, None);
@@ -777,10 +814,17 @@ mod tests {
         };
         let (tx, _rx) = mpsc::unbounded_channel::<TurnEvent>();
 
-        let (response, reasoning_duration_ms) =
-            call_llm(&pool, &request, &[route], Some(&tx), None, "chat-turn")
-                .await
-                .expect("streaming call should succeed");
+        let (response, reasoning_duration_ms) = call_llm(
+            &pool,
+            &request,
+            &[route],
+            Some(&tx),
+            None,
+            "chat-turn",
+            &mut PartialStreamingContent::default(),
+        )
+        .await
+        .expect("streaming call should succeed");
 
         assert_eq!(response.reasoning_content.as_deref(), Some("step by step"));
         assert_eq!(response.content.as_deref(), Some("Final answer"));
@@ -920,10 +964,17 @@ mod tests {
         };
         let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
 
-        let (response, _reasoning_duration_ms) =
-            call_llm(&pool, &request, &[route], Some(&tx), None, "chat-turn")
-                .await
-                .expect("streaming image call should succeed");
+        let (response, _reasoning_duration_ms) = call_llm(
+            &pool,
+            &request,
+            &[route],
+            Some(&tx),
+            None,
+            "chat-turn",
+            &mut PartialStreamingContent::default(),
+        )
+        .await
+        .expect("streaming image call should succeed");
 
         assert_eq!(
             response.content.as_deref(),

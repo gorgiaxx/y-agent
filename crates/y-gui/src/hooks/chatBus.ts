@@ -117,21 +117,27 @@ async function initialiseChatBus() {
 
   const u1 = await transport.listen<ChatCompletePayload>('chat:complete', (e) => {
     const { run_id } = e.payload;
+    const resolvedSessionId =
+      e.payload.session_id || chatBusState.runToSession[run_id] || '';
     Object.assign(
       chatBusState,
-      applyRunTerminal(chatBusState, run_id, e.payload.session_id),
+      applyRunTerminal(chatBusState, run_id, resolvedSessionId),
     );
-    notifyChatSubscribers({ type: 'complete', payload: e.payload });
+    const enrichedPayload = { ...e.payload, session_id: resolvedSessionId };
+    notifyChatSubscribers({ type: 'complete', payload: enrichedPayload });
   });
   chatUnlistenFns.push(u1);
 
   const u2 = await transport.listen<ChatErrorPayload>('chat:error', (e) => {
     const { run_id } = e.payload;
+    const resolvedSessionId =
+      e.payload.session_id || chatBusState.runToSession[run_id] || '';
     Object.assign(
       chatBusState,
-      applyRunTerminal(chatBusState, run_id, e.payload.session_id),
+      applyRunTerminal(chatBusState, run_id, resolvedSessionId),
     );
-    notifyChatSubscribers({ type: 'error', payload: e.payload });
+    const enrichedPayload = { ...e.payload, session_id: resolvedSessionId };
+    notifyChatSubscribers({ type: 'error', payload: enrichedPayload });
   });
   chatUnlistenFns.push(u2);
 

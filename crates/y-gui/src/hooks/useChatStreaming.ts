@@ -114,6 +114,30 @@ export function useChatStreaming(
       if (event.type === 'started') {
         markSessionActivity(event.session_id);
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+
+        // Defensive: finalize any stale streaming message left by a previous
+        // run whose terminal event failed to resolve the session (e.g.,
+        // chat_cancel emitting session_id="").
+        const staleStreamingId = streamingAssistantMessageId(event.session_id);
+        const cachedMsgs = getCachedMessages(
+          refs.sessionMessagesRef.current,
+          event.session_id,
+        );
+        if (cachedMsgs.some((m) => m.id === staleStreamingId)) {
+          const prevRunId = activeRunIdRef.current;
+          setCachedMessages(
+            refs.sessionMessagesRef.current,
+            event.session_id,
+            (prev) => finalizeStreamingAssistantMessage(
+              prev,
+              event.session_id,
+              `orphaned-${prevRunId || Date.now()}`,
+              refs.toolResultsRef.current.get(event.session_id),
+            ),
+          );
+          syncVisible(event.session_id);
+        }
+
         activeRunIdRef.current = event.run_id;
         setActiveRunId(event.run_id);
         // Clear tool results and stream segments for the new run.
