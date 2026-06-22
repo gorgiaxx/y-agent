@@ -177,17 +177,9 @@ impl AgentRegistry {
 
     /// Search definitions by name, description, or capabilities.
     pub fn search(&self, query: &str) -> Vec<&AgentDefinition> {
-        let query_lower = query.to_lowercase();
         self.definitions
             .values()
-            .filter(|def| {
-                def.name.to_lowercase().contains(&query_lower)
-                    || def.description.to_lowercase().contains(&query_lower)
-                    || def
-                        .capabilities
-                        .iter()
-                        .any(|c| c.to_lowercase().contains(&query_lower))
-            })
+            .filter(|def| matches_query_tokens(query, def))
             .collect()
     }
 
@@ -207,17 +199,9 @@ impl AgentRegistry {
     /// Results are returned as `TieredSearchResult` entries, each tagged
     /// with the agent's `TrustTier` for downstream display/filtering.
     pub fn search_tiered(&self, query: &str) -> Vec<TieredSearchResult<'_>> {
-        let query_lower = query.to_lowercase();
         self.definitions
             .values()
-            .filter(|def| {
-                def.name.to_lowercase().contains(&query_lower)
-                    || def.description.to_lowercase().contains(&query_lower)
-                    || def
-                        .capabilities
-                        .iter()
-                        .any(|c| c.to_lowercase().contains(&query_lower))
-            })
+            .filter(|def| matches_query_tokens(query, def))
             .map(|def| TieredSearchResult {
                 definition: def,
                 source_tier: def.trust_tier,
@@ -233,10 +217,7 @@ impl AgentRegistry {
             .values()
             .filter(|def| {
                 if let Some(ref q) = criteria.name_query {
-                    let q_lower = q.to_lowercase();
-                    if !def.name.to_lowercase().contains(&q_lower)
-                        && !def.description.to_lowercase().contains(&q_lower)
-                    {
+                    if !matches_query_tokens(q, def) {
                         return false;
                     }
                 }
@@ -595,6 +576,10 @@ impl AgentRegistry {
                 include_str!("../../../../config/agents/skill-security-check.toml"),
             ),
             (
+                "skill-creator",
+                include_str!("../../../../config/agents/skill-creator.toml"),
+            ),
+            (
                 "pruning-summarizer",
                 include_str!("../../../../config/agents/pruning-summarizer.toml"),
             ),
@@ -624,6 +609,32 @@ impl AgentRegistry {
             ),
         ]
     }
+}
+
+/// Tokenized query matching for agent search.
+///
+/// Normalizes separators (`-`, `_`) to spaces in both query and target
+/// fields, then checks that every query token appears somewhere in the
+/// concatenation of name, description, and capabilities.
+fn matches_query_tokens(query: &str, def: &AgentDefinition) -> bool {
+    let normalized_query = query.to_lowercase().replace(['-', '_'], " ");
+    let tokens: Vec<&str> = normalized_query.split_whitespace().collect();
+
+    if tokens.is_empty() {
+        return false;
+    }
+
+    let mut haystack = def.name.to_lowercase().replace(['-', '_'], " ");
+    haystack.push(' ');
+    let desc = def.description.to_lowercase().replace(['-', '_'], " ");
+    haystack.push_str(&desc);
+    for cap in &def.capabilities {
+        haystack.push(' ');
+        let cap_norm = cap.to_lowercase().replace(['-', '_'], " ");
+        haystack.push_str(&cap_norm);
+    }
+
+    tokens.iter().all(|token| haystack.contains(token))
 }
 
 impl Default for AgentRegistry {
@@ -739,7 +750,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 18); // 16 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 19); // 17 built-in + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -854,6 +865,33 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         assert!(!results.is_empty());
     }
 
+    /// Tokenized search matches across separator styles (space, hyphen, underscore).
+    #[test]
+    fn test_registry_search_tokenized() {
+        let registry = AgentRegistry::new();
+
+        // "skill creator" (space) matches "skill-creator" (hyphen)
+        let results = registry.search("skill creator");
+        assert!(
+            results.iter().any(|d| d.id == "skill-creator"),
+            "space-separated query should match hyphenated name"
+        );
+
+        // "tool engineer" matches "tool-engineer"
+        let results = registry.search("tool engineer");
+        assert!(
+            results.iter().any(|d| d.id == "tool-engineer"),
+            "space-separated query should match hyphenated name"
+        );
+
+        // underscore in query matches hyphen in name
+        let results = registry.search("skill_creator");
+        assert!(
+            results.iter().any(|d| d.id == "skill-creator"),
+            "underscore query should match hyphenated name"
+        );
+    }
+
     /// Duplicate registration is rejected.
     #[test]
     fn test_registry_duplicate_rejected() {
@@ -897,7 +935,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 16);
+        assert_eq!(builtins.len(), 17);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         assert_eq!(user_defs.len(), 1);
@@ -995,7 +1033,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 16);
+        assert_eq!(builtins.len(), 17);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
@@ -1200,6 +1238,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             "agent-architect",
             "skill-ingestion",
             "skill-security-check",
+            "skill-creator",
             "pruning-summarizer",
             "complexity-classifier",
             "knowledge-metadata",
@@ -1218,7 +1257,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 16);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 17);
     }
 
     /// Override a built-in agent with `register_or_override`.

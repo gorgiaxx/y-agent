@@ -35,6 +35,7 @@ const PROMPT_PERSONA: &str = include_str!("../../../config/prompts/core_persona.
 const PROMPT_PLANNING: &str = include_str!("../../../config/prompts/core_planning.txt");
 const PROMPT_EXPLORATION: &str = include_str!("../../../config/prompts/core_exploration.txt");
 const PROMPT_ORCHESTRATION: &str = include_str!("../../../config/prompts/core_orchestration.txt");
+const PROMPT_SELF_EVOLUTION: &str = include_str!("../../../config/prompts/core_self_evolution.txt");
 const PROMPT_PLAN_MODE_ACTIVE: &str = include_str!("../../../config/prompts/plan_mode_hint.txt");
 const PROMPT_LOOP_MODE_ACTIVE: &str = include_str!("../../../config/prompts/loop_mode_hint.txt");
 const PROMPT_MCP_HINT: &str = include_str!("../../../config/prompts/mcp_hint.txt");
@@ -149,6 +150,15 @@ const BUILTIN_SECTIONS: &[(&str, &str, &str, u32, i32, SectionCategoryTag, Condi
         425,
         SectionCategoryTag::Behavioral,
         ConditionTag::OrchestrationEnabled,
+    ),
+    (
+        "core.self_evolution",
+        PROMPT_SELF_EVOLUTION,
+        "core_self_evolution.txt",
+        400,
+        440,
+        SectionCategoryTag::Behavioral,
+        ConditionTag::Always,
     ),
     (
         "core.mcp_hint",
@@ -307,6 +317,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
     ("core_planning.txt", PROMPT_PLANNING),
     ("core_exploration.txt", PROMPT_EXPLORATION),
     ("core_orchestration.txt", PROMPT_ORCHESTRATION),
+    ("core_self_evolution.txt", PROMPT_SELF_EVOLUTION),
     ("plan_mode_hint.txt", PROMPT_PLAN_MODE_ACTIVE),
     ("loop_mode_hint.txt", PROMPT_LOOP_MODE_ACTIVE),
     ("mcp_hint.txt", PROMPT_MCP_HINT),
@@ -330,6 +341,7 @@ pub fn default_template() -> PromptTemplate {
         section_ref("core.planning"),
         section_ref("core.exploration"),
         section_ref("core.orchestration"),
+        section_ref("core.self_evolution"),
         section_ref("core.mcp_hint"),
     ];
 
@@ -377,9 +389,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_store_has_13_sections() {
+    fn test_builtin_store_has_14_sections() {
         let store = builtin_section_store();
-        assert_eq!(store.len(), 13);
+        assert_eq!(store.len(), 14);
     }
 
     #[test]
@@ -396,6 +408,7 @@ mod tests {
             "core.planning",
             "core.exploration",
             "core.orchestration",
+            "core.self_evolution",
             "core.mcp_hint",
             "core.plan_mode_active",
         ];
@@ -513,9 +526,9 @@ mod tests {
     fn test_default_template_general_mode() {
         let template = default_template();
         let sections = template.effective_sections("general");
-        // general mode: all 13 sections in template, no overlay excludes any
+        // general mode: all 14 sections in template, no overlay excludes any
         // (conditions are evaluated later by the provider, not by effective_sections)
-        assert_eq!(sections.len(), 13);
+        assert_eq!(sections.len(), 14);
     }
 
     #[test]
