@@ -472,15 +472,18 @@ impl AgentRegistry {
         Ok(id)
     }
 
-    /// Check if a built-in agent has been overridden by a user-defined agent.
+    /// Check if a shipped agent has been overridden by a user-defined agent.
     pub fn is_overridden(&self, id: &str) -> bool {
-        if !self.builtin_originals.contains_key(id) {
+        let Some(original) = self.builtin_originals.get(id) else {
             return false;
-        }
-        // Overridden if the current definition's trust tier differs from BuiltIn.
+        };
+        // Overridden if the current definition's trust tier differs from the
+        // shipped original's tier. Built-ins ship as BuiltIn, so a user override
+        // (UserDefined) is detected. Agents that ship as user-tier defaults
+        // (e.g. general-purpose) are user-owned by design and not flagged here.
         self.definitions
             .get(id)
-            .is_some_and(|def| def.trust_tier != TrustTier::BuiltIn)
+            .is_some_and(|def| def.trust_tier != original.trust_tier)
     }
 
     /// Return the IDs of all built-in agents that have been overridden.
@@ -606,6 +609,14 @@ impl AgentRegistry {
             (
                 "plan-phase-executor",
                 include_str!("../../../../config/agents/plan-phase-executor.toml"),
+            ),
+            // Ships as a default user-tier agent (trust_tier = user_defined) so its
+            // tool permissions follow the active session rather than the built-in
+            // auto-allow path. It is seeded, override-able, and reset-able like the
+            // others, but is not counted among the BuiltIn-tier agents.
+            (
+                "general-purpose",
+                include_str!("../../../../config/agents/general-purpose.toml"),
             ),
         ]
     }
@@ -750,7 +761,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 19); // 17 built-in + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 20); // 17 built-in + 1 user-tier default + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -938,7 +949,10 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         assert_eq!(builtins.len(), 17);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
-        assert_eq!(user_defs.len(), 1);
+        // user-1 plus the shipped user-tier default (general-purpose).
+        assert_eq!(user_defs.len(), 2);
+        assert!(user_defs.iter().any(|d| d.id == "user-1"));
+        assert!(user_defs.iter().any(|d| d.id == "general-purpose"));
 
         let dynamics = registry.list_by_tier(TrustTier::Dynamic);
         assert_eq!(dynamics.len(), 0);
@@ -1037,7 +1051,8 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
-        assert_eq!(user_defs.len(), 1);
+        // user-1 plus the shipped user-tier default (general-purpose).
+        assert_eq!(user_defs.len(), 2);
         assert!(user_defs
             .iter()
             .all(|d| d.trust_tier == TrustTier::UserDefined));
@@ -1092,8 +1107,10 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             trust_tier: Some(TrustTier::UserDefined),
             ..Default::default()
         });
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].id, "user-1");
+        // user-1 and the shipped general-purpose default are both General + UserDefined.
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|d| d.id == "user-1"));
+        assert!(results.iter().any(|d| d.id == "general-purpose"));
 
         let results = registry.search_advanced(&SearchCriteria {
             name_query: Some("engineer".to_string()),
@@ -1146,6 +1163,40 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         assert!(def.allowed_tools.contains(&"FileWrite".to_string()));
         assert!(def.allowed_tools.contains(&"ToolSearch".to_string()));
         assert!(!def.allowed_tools.contains(&"Task".to_string()));
+    }
+
+    /// General-purpose agent ships as a default user-tier agent so its tool
+    /// permissions follow the active session (not the built-in auto-allow path).
+    #[test]
+    fn test_builtin_agent_general_purpose() {
+        let registry = AgentRegistry::new();
+        let def = registry.get("general-purpose").unwrap();
+
+        assert_eq!(def.mode, AgentMode::General);
+        assert_eq!(def.trust_tier, TrustTier::UserDefined);
+        assert!(def.user_callable, "general-purpose must be Task-invokable");
+        assert!(def.toolcall_enabled_resolved());
+
+        for tool in [
+            "FileRead",
+            "FileWrite",
+            "FileEdit",
+            "Glob",
+            "Grep",
+            "ShellExec",
+            "ToolSearch",
+        ] {
+            assert!(
+                def.allowed_tools.iter().any(|t| t == tool),
+                "general-purpose should allow '{tool}'"
+            );
+        }
+
+        // It ships as user-tier, so it is not counted among built-in agents.
+        assert!(!registry
+            .list_by_tier(TrustTier::BuiltIn)
+            .iter()
+            .any(|d| d.id == "general-purpose"));
     }
 
     /// T-MA-P4-15: Skill ingestion declares a structured JSON schema response format.

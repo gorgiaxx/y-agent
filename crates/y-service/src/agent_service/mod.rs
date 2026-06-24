@@ -18,6 +18,7 @@
 //! - `result` -- result building, progress events, diagnostics recording
 //! - `subagent` -- `ServiceAgentRunner`, sub-agent prompt construction
 
+mod delegation_ctx;
 mod executor;
 mod llm;
 mod pruning;

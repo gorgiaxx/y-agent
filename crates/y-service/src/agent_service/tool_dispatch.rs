@@ -691,12 +691,27 @@ async fn execute_tool_call(
 
         let session_uuid =
             uuid::Uuid::parse_str(session_id.as_str()).unwrap_or_else(|_| uuid::Uuid::new_v4());
-        return crate::task_delegation_orchestrator::TaskDelegationOrchestrator::handle(
-            &tc.arguments,
-            container.agent_delegator.as_ref(),
-            Some(session_uuid),
-        )
-        .await;
+
+        // Run the delegation under the parent turn's interaction context so the
+        // sub-agent executes against this session: its tool permissions follow
+        // the active session's mode (incl. HITL), and progress/cancel are wired
+        // to the parent turn. Read by `ServiceAgentRunner` across the delegator
+        // boundary. See `delegation_ctx`.
+        let interaction_ctx = super::delegation_ctx::DelegationInteractionCtx {
+            session_id: session_id.clone(),
+            progress: progress.cloned(),
+            cancel: cancel.cloned(),
+        };
+        return super::delegation_ctx::DELEGATION_INTERACTION_CTX
+            .scope(
+                interaction_ctx,
+                crate::task_delegation_orchestrator::TaskDelegationOrchestrator::handle(
+                    &tc.arguments,
+                    container.agent_delegator.as_ref(),
+                    Some(session_uuid),
+                ),
+            )
+            .await;
     }
 
     // Intercept Plan tool -- route through PlanOrchestrator.

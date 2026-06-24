@@ -171,6 +171,23 @@ impl AgentRunner for ServiceAgentRunner {
             .try_with(|ctx| ctx.trace_id)
             .ok();
 
+        // Pick up the parent turn's interaction context (set at the `Task`
+        // interception in tool_dispatch). When present, the sub-agent runs
+        // under the parent session so its tool permissions follow the active
+        // session's mode (incl. HITL), and progress/cancel are wired to the
+        // parent turn. When absent (internal/system delegations), the sub-agent
+        // stays detached as before.
+        let interaction = crate::agent_service::delegation_ctx::DELEGATION_INTERACTION_CTX
+            .try_with(Clone::clone)
+            .ok();
+        let (session_id, session_uuid, progress, cancel) = match interaction {
+            Some(ctx) => {
+                let uuid = Uuid::parse_str(ctx.session_id.as_str()).unwrap_or_else(|_| Uuid::nil());
+                (Some(ctx.session_id), uuid, ctx.progress, ctx.cancel)
+            }
+            None => (None, Uuid::nil(), None, None),
+        };
+
         let exec_config = AgentExecutionConfig {
             agent_name: config.agent_name.clone(),
             system_prompt,
@@ -189,8 +206,8 @@ impl AgentRunner for ServiceAgentRunner {
             temperature: config.temperature,
             max_tokens: config.max_tokens,
             thinking: None,
-            session_id: None,
-            session_uuid: Uuid::nil(),
+            session_id,
+            session_uuid,
             knowledge_collections: vec![],
             use_context_pipeline: false,
             user_query: user_content,
@@ -203,7 +220,7 @@ impl AgentRunner for ServiceAgentRunner {
             inherited_constraints: None,
         };
 
-        let result = AgentService::execute(&self.container, &exec_config, None, None)
+        let result = AgentService::execute(&self.container, &exec_config, progress, cancel)
             .await
             .map_err(|e| DelegationError::DelegationFailed {
                 message: format!(
