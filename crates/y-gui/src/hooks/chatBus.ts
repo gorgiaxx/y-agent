@@ -14,6 +14,7 @@ import type {
   ChatErrorPayload,
   ChatStartedPayload,
   ProgressPayload,
+  SteerMessage,
 } from '../types';
 import {
   applyAwaitingInteraction,
@@ -48,6 +49,8 @@ export type ChatBusEvent =
   | { type: 'stream_image_complete'; run_id: string; session_id: string; index: number; mime_type: string; data: string; agent_name?: string }
   | { type: 'tool_start'; session_id: string; name: string; input_preview: string; agent_name?: string }
   | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown> }
+  | { type: 'steer_injected'; run_id: string; session_id: string; steer_id: string; text: string }
+  | { type: 'steer_queue'; session_id: string; queue: SteerMessage[] }
   | { type: 'heartbeat'; run_id: string; session_id: string };
 
 // ---------------------------------------------------------------------------
@@ -237,9 +240,29 @@ async function initialiseChatBus() {
           session_id,
         });
       }
+    } else if (event.type === 'steer_injected') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'steer_injected',
+          run_id,
+          session_id,
+          steer_id: event.steer_id,
+          text: event.text,
+        });
+      }
     }
   });
   chatUnlistenFns.push(u3);
+
+  const u4 = await transport.listen<{ session_id: string; queue: SteerMessage[] }>(
+    'chat:steer_queue',
+    (e) => {
+      const { session_id, queue } = e.payload;
+      notifyChatSubscribers({ type: 'steer_queue', session_id, queue: queue ?? [] });
+    },
+  );
+  chatUnlistenFns.push(u4);
 }
 
 // Kick off immediately so events are never missed due to mount timing.

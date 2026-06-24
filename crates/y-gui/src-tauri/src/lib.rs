@@ -386,6 +386,9 @@ pub fn run() {
             // Chat
             commands::chat::chat_send,
             commands::chat::chat_cancel,
+            commands::chat::chat_add_steer,
+            commands::chat::chat_delete_steer,
+            commands::chat::chat_list_steers,
             commands::chat::session_last_turn_meta,
             commands::chat::chat_undo,
             commands::chat::chat_checkpoint_list,

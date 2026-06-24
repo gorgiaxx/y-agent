@@ -245,6 +245,7 @@ mod tests {
             pending_interactions: pending_interactions(),
             pending_permissions: pending_permissions(),
             cancel_token: None,
+            injected_steers: vec![],
         }
     }
 

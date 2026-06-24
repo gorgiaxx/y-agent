@@ -1027,6 +1027,7 @@ mod tests {
                 | TurnEvent::UserInteractionRequest { .. }
                 | TurnEvent::PermissionRequest { .. }
                 | TurnEvent::PlanReviewRequest { .. }
+                | TurnEvent::SteerInjected { .. }
                 | TurnEvent::Heartbeat { .. } => {}
             }
         }

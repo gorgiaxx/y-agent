@@ -106,6 +106,17 @@ export function NativeSegmentList({ segments, markdownComponents }: NativeSegmen
             />
           );
         }
+        if (seg.type === 'steer') {
+          return (
+            <div key={`steer-${idx}`} className="steer-injected-segment">
+              <ThinkContentBlock
+                content={seg.text}
+                markdownComponents={markdownComponents}
+                className="markdown-body"
+              />
+            </div>
+          );
+        }
         return null;
       })}
     </>

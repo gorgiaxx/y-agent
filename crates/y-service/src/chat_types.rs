@@ -187,6 +187,13 @@ pub enum TurnEvent {
     Heartbeat {
         agent_name: String,
     },
+    /// A queued steering message was drained and injected into the running
+    /// agent's conversation at an LLM-call boundary. Lets the GUI render the
+    /// injected user bubble live and drop the item from its steering queue.
+    SteerInjected {
+        steer_id: String,
+        text: String,
+    },
 }
 
 pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;
@@ -316,6 +323,36 @@ pub type PendingPermissions =
 
 pub type PendingPlanReviews =
     std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, PendingPlanReview>>>;
+
+// ---------------------------------------------------------------------------
+// Steering queue
+// ---------------------------------------------------------------------------
+
+/// A queued steering message: user text awaiting injection into a running
+/// turn at the next LLM-call boundary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SteerMessage {
+    pub id: String,
+    pub text: String,
+    /// Unix epoch milliseconds when the steer was enqueued.
+    pub created_at: i64,
+}
+
+impl SteerMessage {
+    /// Build a steer with a freshly generated id and current timestamp.
+    pub fn new(text: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            text,
+            created_at: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+}
+
+/// Per-session FIFO queue of pending steering messages, keyed by session id.
+/// Drained at LLM-call boundaries by the agent execution loop.
+pub type SteeringQueues =
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<SessionId, Vec<SteerMessage>>>>;
 
 // ---------------------------------------------------------------------------
 // Turn result / error

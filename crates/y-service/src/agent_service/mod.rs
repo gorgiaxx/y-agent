@@ -194,6 +194,23 @@ pub struct AgentExecutionResult {
     /// `StreamDelta` (content) or end-of-stream, whichever comes first.
     /// `None` when no reasoning was produced or when using non-streaming.
     pub reasoning_duration_ms: Option<u64>,
+    /// Steering messages drained and injected into `working_history` during
+    /// this run, in injection order. Used by the root turn's post-processing
+    /// to persist each as a user-message bubble at its injection position.
+    /// Empty for the common (no-steering) case.
+    pub injected_steers: Vec<InjectedSteer>,
+}
+
+/// A user steering message injected mid-run at an LLM-call boundary.
+#[derive(Debug, Clone)]
+pub struct InjectedSteer {
+    /// Originating queue entry id (for live GUI reconciliation).
+    pub steer_id: String,
+    /// The injected user message (already present in `working_history`).
+    pub message: Message,
+    /// Count of completed LLM iterations at the moment of injection. Used to
+    /// split the consolidated assistant message at the right boundary.
+    pub after_iteration: usize,
 }
 
 /// Error returned by [`AgentService::execute`].
@@ -311,6 +328,8 @@ pub(crate) struct ToolExecContext {
     pub(crate) pending_permissions: crate::chat::PendingPermissions,
     /// Shared cancellation token for the execution subtree rooted at this agent.
     pub(crate) cancel_token: Option<tokio_util::sync::CancellationToken>,
+    /// Steering messages injected during this run, in injection order.
+    pub(crate) injected_steers: Vec<InjectedSteer>,
 }
 
 /// Per-iteration LLM response data bundle.

@@ -253,6 +253,21 @@ export interface HeartbeatEvent {
   agent_name?: string;
 }
 
+/** A queued steering message awaiting injection into a running turn. */
+export interface SteerMessage {
+  id: string;
+  text: string;
+  /** Unix epoch milliseconds when the steer was enqueued. */
+  created_at: number;
+}
+
+/** Emitted when a queued steer is injected at an LLM-call boundary. */
+export interface SteerInjectedEvent {
+  type: 'steer_injected';
+  steer_id: string;
+  text: string;
+}
+
 export type TurnEvent =
   | LlmResponseEvent
   | ToolStartEvent
@@ -267,6 +282,7 @@ export type TurnEvent =
   | UserInteractionRequestEvent
   | PermissionRequestEvent
   | PlanReviewRequestEvent
+  | SteerInjectedEvent
   | HeartbeatEvent;
 
 export interface ProgressPayload {

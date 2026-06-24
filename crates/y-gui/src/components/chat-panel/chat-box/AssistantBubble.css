@@ -211,3 +211,15 @@
   border-radius: var(--radius-lg);
   object-fit: contain;
 }
+
+/* Injected steering message rendered inline within the streaming assistant
+   bubble. Distinguished with an accent left border to mark a mid-run user
+   intervention. On reload it renders as a normal top-level user bubble. */
+.steer-injected-segment {
+  margin: var(--space-2, 8px) 0;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}

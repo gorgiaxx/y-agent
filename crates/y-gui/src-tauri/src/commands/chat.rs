@@ -19,7 +19,7 @@ use y_service::decode_session_prompt_config;
 use y_service::event_sink::EventSink;
 use y_service::{
     ChatService, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn, ResendTurnRequest,
-    TurnEvent,
+    SteerMessage, TurnEvent,
 };
 
 use crate::state::AppState;
@@ -510,6 +510,71 @@ pub async fn chat_cancel(
         },
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Steering queue commands
+// ---------------------------------------------------------------------------
+
+/// Payload emitted on `chat:steer_queue` when a session's queue changes.
+#[derive(Debug, Serialize, Clone)]
+pub struct SteerQueuePayload {
+    pub session_id: String,
+    pub queue: Vec<SteerMessage>,
+}
+
+/// Emit the current steering queue for a session so the UI stays in sync.
+async fn emit_steer_queue(app: &AppHandle, state: &AppState, session_id: &SessionId) {
+    let queue = ChatService::list_steers(&state.container, session_id).await;
+    let _ = app.emit(
+        "chat:steer_queue",
+        SteerQueuePayload {
+            session_id: session_id.0.clone(),
+            queue,
+        },
+    );
+}
+
+/// Enqueue a steering message for a session (injected at the next LLM boundary).
+#[tauri::command]
+pub async fn chat_add_steer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    text: String,
+) -> Result<SteerMessage, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("steer text must not be empty".to_string());
+    }
+    let sid = SessionId(session_id);
+    let steer = ChatService::add_steer(&state.container, &sid, trimmed.to_string()).await;
+    emit_steer_queue(&app, &state, &sid).await;
+    Ok(steer)
+}
+
+/// Remove a pending steering message by id.
+#[tauri::command]
+pub async fn chat_delete_steer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    steer_id: String,
+) -> Result<bool, String> {
+    let sid = SessionId(session_id);
+    let deleted = ChatService::delete_steer(&state.container, &sid, &steer_id).await;
+    emit_steer_queue(&app, &state, &sid).await;
+    Ok(deleted)
+}
+
+/// List the pending steering messages for a session (FIFO order).
+#[tauri::command]
+pub async fn chat_list_steers(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<SteerMessage>, String> {
+    let sid = SessionId(session_id);
+    Ok(ChatService::list_steers(&state.container, &sid).await)
 }
 
 // ---------------------------------------------------------------------------

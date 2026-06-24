@@ -310,6 +310,7 @@ pub(crate) async fn build_final_result(
         iteration_tool_counts: ctx.iteration_tool_counts,
         reasoning_content: response.reasoning_content.clone(),
         reasoning_duration_ms,
+        injected_steers: ctx.injected_steers,
     })
 }
 

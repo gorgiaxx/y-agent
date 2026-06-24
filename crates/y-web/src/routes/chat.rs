@@ -152,6 +152,20 @@ pub struct RestorePendingReviewsRequest {
     pub session_id: String,
 }
 
+/// Request body for `POST /api/v1/chat/steer`.
+#[derive(Debug, Deserialize)]
+pub struct SteerAddRequest {
+    pub session_id: String,
+    pub text: String,
+}
+
+/// Request body for `DELETE /api/v1/chat/steer`.
+#[derive(Debug, Deserialize)]
+pub struct SteerDeleteRequest {
+    pub session_id: String,
+    pub steer_id: String,
+}
+
 // ---------------------------------------------------------------------------
 // SseEventSink -- EventSink implementation for SSE transport
 // ---------------------------------------------------------------------------
@@ -902,6 +916,55 @@ async fn last_turn_meta(
 }
 
 // ---------------------------------------------------------------------------
+// Steering queue
+// ---------------------------------------------------------------------------
+
+/// Broadcast a session's current steering queue over SSE so all clients sync.
+async fn broadcast_steer_queue(state: &AppState, session_id: &SessionId) {
+    let queue = ChatService::list_steers(&state.container, session_id).await;
+    let _ = state.event_tx.send(SseEvent::SteerQueueUpdated {
+        session_id: session_id.0.clone(),
+        queue: serde_json::to_value(&queue).unwrap_or_else(|_| serde_json::Value::Array(vec![])),
+    });
+}
+
+/// `POST /api/v1/chat/steer` -- enqueue a steering message for a session.
+async fn steer_add(
+    State(state): State<AppState>,
+    Json(body): Json<SteerAddRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Err(ApiError::BadRequest("steer text must not be empty".into()));
+    }
+    let sid = SessionId(body.session_id);
+    let steer = ChatService::add_steer(&state.container, &sid, text.to_string()).await;
+    broadcast_steer_queue(&state, &sid).await;
+    Ok(Json(steer))
+}
+
+/// `DELETE /api/v1/chat/steer` -- remove a pending steering message by id.
+async fn steer_delete(
+    State(state): State<AppState>,
+    Json(body): Json<SteerDeleteRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(body.session_id);
+    let deleted = ChatService::delete_steer(&state.container, &sid, &body.steer_id).await;
+    broadcast_steer_queue(&state, &sid).await;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
+/// `GET /api/v1/chat/steer/{session_id}` -- list pending steering messages.
+async fn steer_list(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(session_id);
+    let steers = ChatService::list_steers(&state.container, &sid).await;
+    Ok(Json(steers))
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -935,6 +998,8 @@ pub fn router() -> Router<AppState> {
             "/api/v1/chat/last-turn-meta/{session_id}",
             get(last_turn_meta),
         )
+        .route("/api/v1/chat/steer", post(steer_add).delete(steer_delete))
+        .route("/api/v1/chat/steer/{session_id}", get(steer_list))
 }
 
 #[cfg(test)]
@@ -961,5 +1026,27 @@ mod tests {
         assert!(options.watermark);
         assert_eq!(options.max_images, 2);
         assert_eq!(options.size.as_deref(), Some("1024x1024"));
+    }
+
+    #[test]
+    fn test_steer_add_request_deserializes() {
+        let req: SteerAddRequest = serde_json::from_value(serde_json::json!({
+            "session_id": "sess-1",
+            "text": "focus on the failing test"
+        }))
+        .expect("steer add request should deserialize");
+        assert_eq!(req.session_id, "sess-1");
+        assert_eq!(req.text, "focus on the failing test");
+    }
+
+    #[test]
+    fn test_steer_delete_request_deserializes() {
+        let req: SteerDeleteRequest = serde_json::from_value(serde_json::json!({
+            "session_id": "sess-1",
+            "steer_id": "abc-123"
+        }))
+        .expect("steer delete request should deserialize");
+        assert_eq!(req.session_id, "sess-1");
+        assert_eq!(req.steer_id, "abc-123");
     }
 }

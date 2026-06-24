@@ -181,6 +181,11 @@ pub struct ServiceContainer {
     /// Decoupled from the LLM -- the GUI talks directly to the orchestrator.
     pub pending_plan_reviews: crate::chat::PendingPlanReviews,
 
+    /// Per-session steering queues. Holds user messages enqueued while a turn
+    /// is streaming; drained and injected at LLM-call boundaries by the agent
+    /// execution loop (root and sub-agents alike, keyed by session id).
+    pub steering_queues: crate::chat::SteeringQueues,
+
     /// Session-scoped permission overrides.
     pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
 
@@ -377,6 +382,7 @@ impl ServiceContainer {
             pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_plan_reviews: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            steering_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
             session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
             persona_dir: config.persona_dir.clone(),

@@ -1081,6 +1081,7 @@ mod tests {
             pending_interactions: pending_interactions.clone(),
             pending_permissions,
             cancel_token: None,
+            injected_steers: Vec::new(),
         };
         let config = AgentExecutionConfig {
             agent_name: "test-agent".to_string(),

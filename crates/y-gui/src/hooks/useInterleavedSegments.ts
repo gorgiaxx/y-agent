@@ -7,10 +7,12 @@
 
 import type { ToolResultRecord } from './chatStreamTypes';
 
-/** A display segment: text, tool result card, or reasoning card. */
+/** A display segment: text, tool result card, reasoning card, or an
+ *  injected steering user message (rendered inline while streaming). */
 export type InterleavedSegment =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; record: ToolResultRecord }
+  | { type: 'steer'; text: string }
   | { type: 'reasoning'; content: string; durationMs?: number; isStreaming?: boolean;
       /** Stable source for concurrent streams (for example a plan phase executor). */
       sourceKey?: string;

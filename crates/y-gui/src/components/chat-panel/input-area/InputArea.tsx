@@ -131,6 +131,11 @@ interface InputAreaProps {
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
+  /** When true, a run is streaming: typing is allowed and Enter/Send enqueues
+   *  a steering message instead of starting a new turn. */
+  steerActive?: boolean;
+  /** Called with the message text to enqueue while a run is streaming. */
+  onSteer?: (text: string) => void;
   sendOnEnter: boolean;
   expanded?: boolean;
   onExpandChange?: (expanded: boolean) => void;
@@ -160,6 +165,7 @@ interface InputAreaProps {
 export function InputArea(props: InputAreaProps) {
   const {
     onSend, onStop, onCommand, disabled, sendOnEnter,
+    steerActive = false, onSteer,
     expanded = false, onExpandChange, onClearSession, onAddContextReset,
     isCompacting = false, sessionId, skills = [], knowledgeCollections = [],
     hasCustomPrompt = false, onManagePrompts, onSessionPromptApplied,
@@ -466,9 +472,25 @@ export function InputArea(props: InputAreaProps) {
   }, [onSessionPromptApplied, sessionId]);
 
   const handleSend = useCallback(() => {
-    if (disabled) return;
     // Prevent double-send from rapid Enter key events (common on Windows).
     if (sendingRef.current) return;
+
+    // While a run is streaming, route the message to the steering queue
+    // instead of starting a new turn. The text is injected at the next
+    // LLM-call boundary (see useSteering / backend executor).
+    if (steerActive) {
+      const { text } = contentEditableRef.current?.extractContent() ?? { text: '' };
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      sendingRef.current = true;
+      onSteer?.(trimmed);
+      resetInput();
+      exitCommandMode();
+      queueMicrotask(() => { sendingRef.current = false; });
+      return;
+    }
+
+    if (disabled) return;
 
     const { text, skills: extractedSkills } = contentEditableRef.current?.extractContent() ?? { text: '', skills: [] };
     const trimmed = text.trim();
@@ -506,7 +528,7 @@ export function InputArea(props: InputAreaProps) {
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions]);
+  }, [disabled, steerActive, onSteer, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     // Check for pasted images first.
@@ -716,7 +738,8 @@ export function InputArea(props: InputAreaProps) {
         {/* Editable div with inline skill mentions */}
         <ContentEditableInput
           ref={contentEditableRef}
-          disabled={disabled}
+          disabled={disabled && !steerActive}
+          steerActive={steerActive}
           translating={translating}
           isCompacting={isCompacting}
           attachments={attachments}

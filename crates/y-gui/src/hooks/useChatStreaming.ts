@@ -682,6 +682,23 @@ export function useChatStreaming(
         syncVisible(sid);
       } else if (event.type === 'heartbeat') {
         markSessionActivity(event.session_id);
+      } else if (event.type === 'steer_injected') {
+        // A queued steer was injected at an LLM-call boundary. Render it inline
+        // as a user segment so it appears between assistant output live; on
+        // reload it becomes a proper top-level user bubble from the transcript.
+        const sid = event.session_id;
+        markSessionActivity(sid);
+        const segs = refs.streamSegsRef.current.get(sid) ?? [];
+        const preparedSegs = completeStreamingReasoningSegments(segs);
+        refs.streamSegsRef.current.set(
+          sid,
+          capSegments([...preparedSegs, { type: 'steer', text: event.text }]),
+        );
+        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
+          ensureStreamingAssistantMessage(prev, sid),
+        );
+        setStreamSegsVersion((v) => v + 1);
+        syncVisible(sid);
       }
     };
 

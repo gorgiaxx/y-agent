@@ -21,7 +21,7 @@ use y_core::provider::{RequestMode, ToolCallingMode};
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore, SessionNode};
 use y_core::types::{Message, Role, SessionId};
 
-use crate::agent_service::{AgentExecutionConfig, AgentExecutionError};
+use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentExecutionResult};
 use crate::container::ServiceContainer;
 
 // Re-export types from chat_types for backward compatibility.
@@ -29,8 +29,8 @@ pub use crate::chat_types::{
     OperationMode, PendingInteractions, PendingPermissions, PendingPlanReviews,
     PermissionPromptResponse, PlanReviewDecision, PrepareTurnError, PrepareTurnRequest,
     PreparedTurn, ResendTurnError, ResendTurnRequest, SessionAgentConfig, SessionAgentFeatures,
-    ToolCallRecord, TurnCancellationToken, TurnError, TurnEvent, TurnEventSender, TurnInput,
-    TurnMetaSummary, TurnResult,
+    SteerMessage, SteeringQueues, ToolCallRecord, TurnCancellationToken, TurnError, TurnEvent,
+    TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -45,6 +45,70 @@ pub use crate::chat_types::{
 pub struct ChatService;
 
 impl ChatService {
+    // -- Steering queue management -----------------------------------------
+    //
+    // Per-session FIFO queues of user messages enqueued while a turn is
+    // streaming. The agent execution loop drains them at LLM-call boundaries
+    // (see `agent_service::executor`). These methods are the only mutators;
+    // presentation layers call them via the transport endpoints.
+
+    /// Enqueue a steering message for a session. Returns the created entry.
+    pub async fn add_steer(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        text: String,
+    ) -> SteerMessage {
+        let steer = SteerMessage::new(text);
+        let mut queues = container.steering_queues.lock().await;
+        queues
+            .entry(session_id.clone())
+            .or_default()
+            .push(steer.clone());
+        steer
+    }
+
+    /// List the pending steering messages for a session (FIFO order).
+    pub async fn list_steers(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Vec<SteerMessage> {
+        let queues = container.steering_queues.lock().await;
+        queues.get(session_id).cloned().unwrap_or_default()
+    }
+
+    /// Remove a single steering message by id. Returns true if it was present.
+    pub async fn delete_steer(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        steer_id: &str,
+    ) -> bool {
+        let mut queues = container.steering_queues.lock().await;
+        let Some(queue) = queues.get_mut(session_id) else {
+            return false;
+        };
+        let before = queue.len();
+        queue.retain(|s| s.id != steer_id);
+        queue.len() != before
+    }
+
+    /// Take all pending steering messages for a session, leaving it empty.
+    pub async fn drain_steers(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Vec<SteerMessage> {
+        let mut queues = container.steering_queues.lock().await;
+        queues
+            .get_mut(session_id)
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// Clear a session's steering queue (called at run start).
+    pub async fn clear_steers(container: &ServiceContainer, session_id: &SessionId) {
+        let mut queues = container.steering_queues.lock().await;
+        queues.remove(session_id);
+    }
+
     /// Execute a single chat turn (no progress events).
     pub async fn execute_turn(
         container: &ServiceContainer,
@@ -407,6 +471,10 @@ impl ChatService {
             (session, true)
         };
         let session_id = session.id.clone();
+        // A fresh run starts with an empty steering queue. Steers are enqueued
+        // by the client only while a run is streaming, so clearing here just
+        // guards against stale entries leaking across runs.
+        Self::clear_steers(container, &session_id).await;
         let agent_config = Self::resolve_session_agent_config(container, &session)
             .await
             .map_err(PrepareTurnError::SessionAgentNotFound)?;
@@ -603,6 +671,8 @@ impl ChatService {
             .get_session(&request.session_id)
             .await
             .map_err(|e| ResendTurnError::TranscriptReadFailed(e.to_string()))?;
+        // Start the resend run with an empty steering queue (see prepare_turn).
+        Self::clear_steers(container, &request.session_id).await;
         let agent_config = Self::resolve_session_agent_config(container, &session)
             .await
             .map_err(ResendTurnError::SessionAgentNotFound)?;
@@ -959,73 +1029,31 @@ impl ChatService {
         //    create checkpoint. AgentService doesn't handle session storage —
         //    that's the ChatService's responsibility.
 
-        // Build tool_results metadata for frontend rendering after session reload.
-        let tool_results_meta: Vec<serde_json::Value> =
-            Self::build_tool_results_metadata(&result.tool_calls_executed);
-
-        let mut meta = serde_json::json!({
-            "model": result.model,
-            "input_tokens": result.input_tokens,
-            "output_tokens": result.output_tokens,
-            "cost_usd": result.cost_usd,
-            "tool_results": tool_results_meta,
-            "context_window": result.context_window,
-            "context_tokens_used": result.last_input_tokens,
-            "final_response": result.final_response,
-            "iteration_texts": result.iteration_texts,
-            "iteration_reasonings": result.iteration_reasonings,
-            "iteration_reasoning_durations_ms": result.iteration_reasoning_durations_ms,
-            "iteration_tool_counts": result.iteration_tool_counts,
-        });
-
-        if !result.generated_images.is_empty() {
-            meta["generated_images"] = serde_json::to_value(&result.generated_images)
-                .unwrap_or(serde_json::Value::Array(vec![]));
-        }
-
-        // Preserve reasoning_content: prefer the direct field (always available),
-        // then fall back to scanning new_messages (for multi-iteration cases where
-        // reasoning was produced in an earlier iteration).
-        if let Some(ref rc) = result.reasoning_content {
-            meta["reasoning_content"] = serde_json::Value::String(rc.clone());
-        } else if let Some(last_assistant) = result
-            .new_messages
-            .iter()
-            .rev()
-            .find(|m| m.role == Role::Assistant)
-        {
-            if let Some(rc) = last_assistant.metadata.get("reasoning_content") {
-                meta["reasoning_content"] = rc.clone();
+        // Persist the assistant output. With steering this is an interleaved
+        // sequence of assistant segments and injected user-message bubbles;
+        // without steering it is a single consolidated assistant message.
+        let messages = Self::build_steered_messages(&result);
+        for msg in &messages {
+            if let Err(e) = container
+                .session_manager
+                .append_message(&input.session_id, msg)
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    session_id = %input.session_id,
+                    role = ?msg.role,
+                    "failed to persist turn message to session transcript"
+                );
             }
         }
 
-        // Persist reasoning/thinking duration so the frontend can show it
-        // after page reload (without relying on client-side timestamps).
-        if let Some(rd) = result.reasoning_duration_ms {
-            meta["reasoning_duration_ms"] = serde_json::json!(rd);
-        }
-
-        let assistant_msg = Message {
-            message_id: y_core::types::generate_message_id(),
-            role: Role::Assistant,
-            content: result.content.clone(),
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: meta,
-        };
-
-        if let Err(e) = container
-            .session_manager
-            .append_message(&input.session_id, &assistant_msg)
-            .await
-        {
-            tracing::warn!(
-                error = %e,
-                session_id = %input.session_id,
-                "failed to persist assistant message to session transcript"
-            );
-        }
+        // The final assistant segment carries the turn-level metadata; use it
+        // for the pruning-engine mirror and the returned `new_messages`.
+        let assistant_msg = messages
+            .last()
+            .cloned()
+            .expect("build_steered_messages always yields a final assistant message");
 
         // Mirror to SQLite chat_message_store for pruning engine visibility.
         Self::mirror_to_chat_message_store(
@@ -1112,6 +1140,117 @@ impl ChatService {
                 entry
             })
             .collect()
+    }
+
+    /// Split a turn's consolidated assistant output into segments at each
+    /// steering-injection boundary, interleaving the injected user messages so
+    /// the persisted transcript reads `[asst seg][steer][asst seg]...`.
+    ///
+    /// With no steers (the common case) this returns a single assistant message
+    /// identical to the non-steered consolidation.
+    fn build_steered_messages(result: &AgentExecutionResult) -> Vec<Message> {
+        let total_blocks = result.iteration_texts.len();
+        let mut messages = Vec::new();
+        let mut prev = 0usize;
+        let mut idx = 0usize;
+        let steers = &result.injected_steers;
+
+        while idx < steers.len() {
+            let gap = steers[idx].after_iteration.min(total_blocks);
+            // Assistant segment for blocks [prev, gap); skip empty ranges (e.g.
+            // multiple steers at the same boundary, or a steer before any text).
+            if gap > prev {
+                messages.push(Self::build_segment_message(result, prev, gap, false));
+                prev = gap;
+            }
+            // Emit every steer anchored at this boundary, in injection order.
+            while idx < steers.len() && steers[idx].after_iteration.min(total_blocks) == gap {
+                messages.push(steers[idx].message.clone());
+                idx += 1;
+            }
+        }
+
+        // Final segment: remaining blocks plus the final response + turn metadata.
+        messages.push(Self::build_segment_message(
+            result,
+            prev,
+            total_blocks,
+            true,
+        ));
+        messages
+    }
+
+    /// Build one assistant message covering iteration blocks `[start, end)`.
+    /// When `is_final`, appends the final response text and attaches the
+    /// turn-level token/cost/reasoning metadata (matching the non-steered
+    /// consolidated message).
+    fn build_segment_message(
+        result: &AgentExecutionResult,
+        start: usize,
+        end: usize,
+        is_final: bool,
+    ) -> Message {
+        let tool_start: usize = result.iteration_tool_counts[..start].iter().sum();
+        let tool_end: usize = result.iteration_tool_counts[..end].iter().sum();
+        let tool_results_meta =
+            Self::build_tool_results_metadata(&result.tool_calls_executed[tool_start..tool_end]);
+
+        let mut content = result.iteration_texts[start..end].concat();
+        if is_final {
+            content.push_str(&result.final_response);
+        }
+
+        let mut meta = serde_json::json!({
+            "model": result.model,
+            "context_window": result.context_window,
+            "tool_results": tool_results_meta,
+            "iteration_texts": &result.iteration_texts[start..end],
+            "iteration_reasonings": &result.iteration_reasonings[start..end],
+            "iteration_reasoning_durations_ms": &result.iteration_reasoning_durations_ms[start..end],
+            "iteration_tool_counts": &result.iteration_tool_counts[start..end],
+        });
+
+        if is_final {
+            meta["input_tokens"] = serde_json::json!(result.input_tokens);
+            meta["output_tokens"] = serde_json::json!(result.output_tokens);
+            meta["cost_usd"] = serde_json::json!(result.cost_usd);
+            meta["context_tokens_used"] = serde_json::json!(result.last_input_tokens);
+            meta["final_response"] = serde_json::json!(result.final_response);
+
+            if !result.generated_images.is_empty() {
+                meta["generated_images"] = serde_json::to_value(&result.generated_images)
+                    .unwrap_or(serde_json::Value::Array(vec![]));
+            }
+
+            // Preserve reasoning_content: prefer the direct field, then fall back
+            // to scanning new_messages for an earlier iteration's reasoning.
+            if let Some(ref rc) = result.reasoning_content {
+                meta["reasoning_content"] = serde_json::Value::String(rc.clone());
+            } else if let Some(last_assistant) = result
+                .new_messages
+                .iter()
+                .rev()
+                .find(|m| m.role == Role::Assistant)
+            {
+                if let Some(rc) = last_assistant.metadata.get("reasoning_content") {
+                    meta["reasoning_content"] = rc.clone();
+                }
+            }
+
+            if let Some(rd) = result.reasoning_duration_ms {
+                meta["reasoning_duration_ms"] = serde_json::json!(rd);
+            }
+        }
+
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content,
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: meta,
+        }
     }
 
     async fn persist_llm_error_partial_state(
@@ -1778,6 +1917,220 @@ mod tests {
             .await
             .expect("test container should build");
         (container, tmpdir)
+    }
+
+    #[tokio::test]
+    async fn steer_queue_add_list_preserves_fifo_order() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("steer-sess".into());
+
+        let a = ChatService::add_steer(&container, &sid, "first".into()).await;
+        let b = ChatService::add_steer(&container, &sid, "second".into()).await;
+
+        let listed = ChatService::list_steers(&container, &sid).await;
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, a.id);
+        assert_eq!(listed[0].text, "first");
+        assert_eq!(listed[1].id, b.id);
+        assert_eq!(listed[1].text, "second");
+    }
+
+    #[tokio::test]
+    async fn steer_queue_delete_removes_only_matching_id() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("steer-sess".into());
+        let a = ChatService::add_steer(&container, &sid, "keep".into()).await;
+        let b = ChatService::add_steer(&container, &sid, "drop".into()).await;
+
+        assert!(ChatService::delete_steer(&container, &sid, &b.id).await);
+        assert!(!ChatService::delete_steer(&container, &sid, "missing").await);
+
+        let listed = ChatService::list_steers(&container, &sid).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, a.id);
+    }
+
+    #[tokio::test]
+    async fn steer_queue_drain_takes_all_and_empties() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("steer-sess".into());
+        ChatService::add_steer(&container, &sid, "one".into()).await;
+        ChatService::add_steer(&container, &sid, "two".into()).await;
+
+        let drained = ChatService::drain_steers(&container, &sid).await;
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].text, "one");
+        assert_eq!(drained[1].text, "two");
+
+        assert!(ChatService::list_steers(&container, &sid).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn steer_queue_clear_and_isolation_between_sessions() {
+        let (container, _tmp) = make_test_container().await;
+        let sid_a = SessionId("sess-a".into());
+        let sid_b = SessionId("sess-b".into());
+        ChatService::add_steer(&container, &sid_a, "a1".into()).await;
+        ChatService::add_steer(&container, &sid_b, "b1".into()).await;
+
+        ChatService::clear_steers(&container, &sid_a).await;
+
+        assert!(ChatService::list_steers(&container, &sid_a)
+            .await
+            .is_empty());
+        let b = ChatService::list_steers(&container, &sid_b).await;
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].text, "b1");
+    }
+
+    fn steer_user_msg(text: &str) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::User,
+            content: text.to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn make_steer_result(
+        iteration_texts: Vec<String>,
+        iteration_tool_counts: Vec<usize>,
+        final_response: &str,
+        injected_steers: Vec<crate::agent_service::InjectedSteer>,
+    ) -> AgentExecutionResult {
+        let content = format!("{}{final_response}", iteration_texts.concat());
+        let n = iteration_texts.len();
+        let total_tools: usize = iteration_tool_counts.iter().sum();
+        AgentExecutionResult {
+            content,
+            model: "test-model".into(),
+            provider_id: None,
+            input_tokens: 10,
+            output_tokens: 20,
+            last_input_tokens: 5,
+            context_window: 1000,
+            cost_usd: 0.1,
+            tool_calls_executed: (0..total_tools)
+                .map(|i| crate::agent_service::ToolCallRecord {
+                    name: format!("tool{i}"),
+                    arguments: "{}".into(),
+                    success: true,
+                    duration_ms: 1,
+                    result_content: String::new(),
+                    url_meta: None,
+                    metadata: None,
+                })
+                .collect(),
+            iterations: n,
+            generated_images: vec![],
+            new_messages: vec![],
+            final_response: final_response.to_string(),
+            iteration_texts,
+            iteration_reasonings: vec![None; n],
+            iteration_reasoning_durations_ms: vec![None; n],
+            iteration_tool_counts,
+            reasoning_content: None,
+            reasoning_duration_ms: None,
+            injected_steers,
+        }
+    }
+
+    #[test]
+    fn build_steered_messages_no_steers_yields_single_message() {
+        let result = make_steer_result(vec!["alpha\n".into()], vec![1], "final answer", vec![]);
+        let msgs = ChatService::build_steered_messages(&result);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, Role::Assistant);
+        assert_eq!(msgs[0].content, "alpha\nfinal answer");
+        assert_eq!(msgs[0].metadata["input_tokens"], serde_json::json!(10));
+        assert_eq!(
+            msgs[0].metadata["final_response"],
+            serde_json::json!("final answer")
+        );
+        assert_eq!(
+            msgs[0].metadata["tool_results"].as_array().unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_steered_messages_splits_at_boundary_and_slices_tools() {
+        let steer = crate::agent_service::InjectedSteer {
+            steer_id: "s1".into(),
+            message: steer_user_msg("redirect now"),
+            after_iteration: 1,
+        };
+        let result = make_steer_result(
+            vec!["seg0\n".into(), "seg1\n".into()],
+            vec![1, 1],
+            "done",
+            vec![steer],
+        );
+        let msgs = ChatService::build_steered_messages(&result);
+        assert_eq!(msgs.len(), 3);
+
+        // Segment 0 (block 0): one tool, no turn-level metadata.
+        assert_eq!(msgs[0].role, Role::Assistant);
+        assert_eq!(msgs[0].content, "seg0\n");
+        assert_eq!(
+            msgs[0].metadata["tool_results"].as_array().unwrap().len(),
+            1
+        );
+        assert!(msgs[0].metadata.get("input_tokens").is_none());
+
+        // Injected steer bubble.
+        assert_eq!(msgs[1].role, Role::User);
+        assert_eq!(msgs[1].content, "redirect now");
+
+        // Final segment (block 1 + final): one tool + turn-level metadata.
+        assert_eq!(msgs[2].role, Role::Assistant);
+        assert_eq!(msgs[2].content, "seg1\ndone");
+        assert_eq!(
+            msgs[2].metadata["tool_results"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(msgs[2].metadata["input_tokens"], serde_json::json!(10));
+    }
+
+    #[test]
+    fn build_steered_messages_multiple_steers_same_boundary() {
+        let s1 = crate::agent_service::InjectedSteer {
+            steer_id: "a".into(),
+            message: steer_user_msg("one"),
+            after_iteration: 1,
+        };
+        let s2 = crate::agent_service::InjectedSteer {
+            steer_id: "b".into(),
+            message: steer_user_msg("two"),
+            after_iteration: 1,
+        };
+        let result = make_steer_result(vec!["seg0\n".into()], vec![0], "fin", vec![s1, s2]);
+        let msgs = ChatService::build_steered_messages(&result);
+        // [asst seg0][steer one][steer two][asst final]
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[0].content, "seg0\n");
+        assert_eq!(msgs[1].content, "one");
+        assert_eq!(msgs[2].content, "two");
+        assert_eq!(msgs[3].content, "fin");
+    }
+
+    #[test]
+    fn build_steered_messages_steer_before_any_text() {
+        let s = crate::agent_service::InjectedSteer {
+            steer_id: "x".into(),
+            message: steer_user_msg("early"),
+            after_iteration: 0,
+        };
+        let result = make_steer_result(vec!["seg0\n".into()], vec![0], "fin", vec![s]);
+        let msgs = ChatService::build_steered_messages(&result);
+        // No leading assistant segment: [steer][asst seg0+final].
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[0].content, "early");
+        assert_eq!(msgs[1].content, "seg0\nfin");
     }
 
     #[tokio::test]
