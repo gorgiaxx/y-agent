@@ -683,21 +683,33 @@ export function useChatStreaming(
       } else if (event.type === 'heartbeat') {
         markSessionActivity(event.session_id);
       } else if (event.type === 'steer_injected') {
-        // A queued steer was injected at an LLM-call boundary. Render it inline
-        // as a user segment so it appears between assistant output live; on
-        // reload it becomes a proper top-level user bubble from the transcript.
+        // A queued steer was injected at an LLM-call boundary. Insert a
+        // synthetic user message into the cached messages so it renders as a
+        // normal UserBubble inline. On reload the backend returns the
+        // persisted user message at the same position, so the rendering is
+        // consistent across streaming and native modes.
         const sid = event.session_id;
         markSessionActivity(sid);
-        const segs = refs.streamSegsRef.current.get(sid) ?? [];
-        const preparedSegs = completeStreamingReasoningSegments(segs);
-        refs.streamSegsRef.current.set(
-          sid,
-          capSegments([...preparedSegs, { type: 'steer', text: event.text }]),
-        );
-        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
-          ensureStreamingAssistantMessage(prev, sid),
-        );
-        setStreamSegsVersion((v) => v + 1);
+        const steerMsg: Message = {
+          id: `steer-${event.steer_id || Date.now()}`,
+          role: 'user' as const,
+          content: event.text,
+          timestamp: new Date().toISOString(),
+          tool_calls: [],
+        };
+        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) => {
+          // Find the streaming assistant message and insert the steer
+          // user message before it, so the user bubble appears between
+          // the previous assistant content and the streaming continuation.
+          const streamingId = streamingAssistantMessageId(sid);
+          const streamingIdx = prev.findIndex((m) => m.id === streamingId);
+          if (streamingIdx >= 0) {
+            const next = [...prev];
+            next.splice(streamingIdx, 0, steerMsg);
+            return next;
+          }
+          return [...prev, steerMsg];
+        });
         syncVisible(sid);
       }
     };
