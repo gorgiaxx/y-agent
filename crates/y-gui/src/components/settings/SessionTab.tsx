@@ -5,13 +5,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { transport } from '../../lib';
 import type { AppConfigResponse } from '../../types';
-import type { SessionFormData } from './settingsTypes';
-import { jsonToSession } from './settingsTypes';
+import type { SessionFormData, RetryFormData } from './settingsTypes';
+import { jsonToSession, jsonToRetry } from './settingsTypes';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { SESSION_SCHEMA } from '../../utils/settingsSchemas';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
+import { Checkbox, Input, Switch, SettingsGroup, SettingsItem } from '../ui';
 
 interface SessionTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -19,6 +19,9 @@ interface SessionTabProps {
   setSessionForm: React.Dispatch<React.SetStateAction<SessionFormData>>;
   setDirtySession: React.Dispatch<React.SetStateAction<boolean>>;
   setRawSessionToml: React.Dispatch<React.SetStateAction<string | undefined>>;
+  retryForm: RetryFormData;
+  setRetryForm: React.Dispatch<React.SetStateAction<RetryFormData>>;
+  setDirtyProviders: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export function SessionTab({
@@ -27,6 +30,9 @@ export function SessionTab({
   setSessionForm,
   setDirtySession,
   setRawSessionToml,
+  retryForm,
+  setRetryForm,
+  setDirtyProviders,
 }: SessionTabProps) {
   const [loading, setLoading] = useState(false);
   const [rawMode, setRawMode] = useState(false);
@@ -39,6 +45,7 @@ export function SessionTab({
             const allConfig = await transport.invoke<AppConfigResponse>('config_get');
       const sessionJson = allConfig?.session ?? {};
       setSessionForm(jsonToSession(sessionJson));
+      setRetryForm(jsonToRetry(allConfig));
       // Cache raw TOML for comment preservation.
       try {
         const raw = await loadSection('session');
@@ -53,7 +60,7 @@ export function SessionTab({
     } finally {
       setLoading(false);
     }
-  }, [loadSection, setSessionForm, setRawSessionToml]);
+  }, [loadSection, setSessionForm, setRetryForm, setRawSessionToml]);
 
   useEffect(() => {
     loadSessionForm();
@@ -69,6 +76,11 @@ export function SessionTab({
   if (loading) {
     return <div className="section-loading">Loading...</div>;
   }
+
+  const updateRetry = (patch: Partial<RetryFormData>) => {
+    setRetryForm((prev) => ({ ...prev, ...patch }));
+    setDirtyProviders(true);
+  };
 
   if (rawMode) {
     return (
@@ -189,6 +201,68 @@ export function SessionTab({
             checked={sessionForm.pruning_progressive_preserve_identifiers}
             onCheckedChange={(c) => { setSessionForm({ ...sessionForm, pruning_progressive_preserve_identifiers: c === true }); setDirtySession(true); }}
           />
+        </SettingsItem>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Retry Policy"
+        description="Automatically retry timeout / 5xx provider errors (e.g. HTTP 504) against the same provider before it is frozen. Applies to all providers."
+      >
+        <SettingsItem title="Enable automatic retry">
+          <Switch
+            checked={retryForm.enabled}
+            onCheckedChange={(checked) => updateRetry({ enabled: checked })}
+          />
+        </SettingsItem>
+        <SettingsItem title="Max retries" description="Extra attempts after the first failure">
+          <Input
+            numeric
+            type="number"
+            min={0}
+            className="w-[100px]"
+            disabled={!retryForm.enabled}
+            value={retryForm.max_retries}
+            onChange={(e) => updateRetry({ max_retries: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </SettingsItem>
+        <SettingsItem title="Initial delay (ms)" description="Delay before the first retry">
+          <Input
+            numeric
+            type="number"
+            min={0}
+            step={100}
+            className="w-[120px]"
+            disabled={!retryForm.enabled}
+            value={retryForm.initial_delay_ms}
+            onChange={(e) => updateRetry({ initial_delay_ms: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </SettingsItem>
+        <SettingsItem title="Max delay (ms)" description="Upper bound for any single backoff delay">
+          <Input
+            numeric
+            type="number"
+            min={0}
+            step={1000}
+            className="w-[120px]"
+            disabled={!retryForm.enabled}
+            value={retryForm.max_delay_ms}
+            onChange={(e) => updateRetry({ max_delay_ms: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </SettingsItem>
+        <SettingsItem title="Backoff" description="How the delay grows across retries">
+          <Select
+            value={retryForm.backoff}
+            onValueChange={(val) => updateRetry({ backoff: val === 'fixed' ? 'fixed' : 'exponential' })}
+            disabled={!retryForm.enabled}
+          >
+            <SelectTrigger className="w-[200px]">
+              <SelectValue placeholder="Select backoff" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="exponential">Exponential (1s, 2s, 4s, ...)</SelectItem>
+              <SelectItem value="fixed">Fixed (constant interval)</SelectItem>
+            </SelectContent>
+          </Select>
         </SettingsItem>
       </SettingsGroup>
     </div>

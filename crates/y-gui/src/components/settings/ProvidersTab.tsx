@@ -10,8 +10,13 @@ import './ProvidersTab.css';
 import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicker';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
 import { TagChipInput } from './TagChipInput';
-import type { ProviderFormData } from './settingsTypes';
-import { emptyProvider, jsonToProviders, providersToToml } from './settingsTypes';
+import type { ProviderFormData, RetryFormData } from './settingsTypes';
+import {
+  emptyProvider,
+  jsonToProviders,
+  stripRetrySection,
+  buildProvidersToml,
+} from './settingsTypes';
 import { ProviderHeadersEditor } from './ProviderHeadersEditor';
 import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
@@ -408,6 +413,7 @@ interface ProvidersTabProps {
   setProvidersList: React.Dispatch<React.SetStateAction<ProviderFormData[]>>;
   providersMeta: string;
   setProvidersMeta: React.Dispatch<React.SetStateAction<string>>;
+  retryForm: RetryFormData;
   setDirtyProviders: React.Dispatch<React.SetStateAction<boolean>>;
   rawProvidersToml: string | undefined;
   setRawProvidersToml: React.Dispatch<React.SetStateAction<string | undefined>>;
@@ -420,6 +426,7 @@ export function ProvidersTab({
   setProvidersList,
   providersMeta,
   setProvidersMeta,
+  retryForm,
   setDirtyProviders,
   setRawProvidersToml,
 }: ProvidersTabProps) {
@@ -435,12 +442,13 @@ export function ProvidersTab({
       setProvidersList(jsonToProviders(allConfig));
 
       // Also read raw TOML to cache pool-level meta fields (lines before the
-      // first [[providers]] table, e.g. default_freeze_duration_secs).
+      // first [[providers]] table, e.g. default_freeze_duration_secs). The
+      // [retry] table is form-managed, so strip it from the opaque meta.
       try {
         const raw: string = await loadSection('providers');
         const tableMatch = raw.match(/^\s*\[\[providers\]\]/m);
         const firstTable = tableMatch?.index ?? -1;
-        setProvidersMeta(firstTable > 0 ? raw.slice(0, firstTable) : '');
+        setProvidersMeta(stripRetrySection(firstTable > 0 ? raw.slice(0, firstTable) : ''));
       } catch {
         setProvidersMeta('');
       }
@@ -520,9 +528,8 @@ export function ProvidersTab({
 
   const handleToggleRaw = (next: boolean) => {
     if (next) {
-      // Serialize current providers list to TOML for raw editing
-      const body = providersToToml(providersList);
-      setRawContent(providersMeta ? `${providersMeta}${body}` : body);
+      // Serialize current providers list (with the [retry] table) for raw editing.
+      setRawContent(buildProvidersToml(providersMeta, retryForm, providersList));
     }
     setRawMode(next);
   };

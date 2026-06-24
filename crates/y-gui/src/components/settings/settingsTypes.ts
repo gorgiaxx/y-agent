@@ -44,6 +44,29 @@ export interface ProviderFormData {
   azure_auth_mode: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Retry policy form type (mirrors Rust RetryConfig; lives in the [retry] table
+// of providers.toml)
+// ---------------------------------------------------------------------------
+
+export type BackoffStrategy = 'exponential' | 'fixed';
+
+export interface RetryFormData {
+  enabled: boolean;
+  max_retries: number;
+  initial_delay_ms: number;
+  max_delay_ms: number;
+  backoff: BackoffStrategy;
+}
+
+export const RETRY_DEFAULTS: RetryFormData = {
+  enabled: true,
+  max_retries: 3,
+  initial_delay_ms: 1000,
+  max_delay_ms: 30000,
+  backoff: 'exponential',
+};
+
 export interface SessionFormData {
   max_depth: number;
   max_active_per_root: number;
@@ -447,6 +470,82 @@ export function providersToToml(providers: ProviderFormData[]): string {
     lines.push('');
   }
   return lines.join('\n');
+}
+
+/** Serialize the [retry] table for providers.toml. */
+export function retryToToml(retry: RetryFormData): string {
+  return [
+    '[retry]',
+    `enabled = ${retry.enabled ? 'true' : 'false'}`,
+    `max_retries = ${Math.max(0, Math.trunc(retry.max_retries))}`,
+    `initial_delay_ms = ${Math.max(0, Math.trunc(retry.initial_delay_ms))}`,
+    `max_delay_ms = ${Math.max(0, Math.trunc(retry.max_delay_ms))}`,
+    `backoff = "${retry.backoff === 'fixed' ? 'fixed' : 'exponential'}"`,
+    '',
+  ].join('\n');
+}
+
+/** Remove a top-level `[retry]` table from raw TOML "meta" text (line-based so
+ *  unrelated tables / scalars are preserved). */
+export function stripRetrySection(text: string): string {
+  const lines = (text ?? '').split('\n');
+  const out: string[] = [];
+  let inRetry = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!inRetry && trimmed.startsWith('[retry]')) {
+      inRetry = true;
+      continue;
+    }
+    if (inRetry) {
+      // A new table / array-of-tables header ends the retry section.
+      if (trimmed.startsWith('[')) {
+        inRetry = false;
+        out.push(line);
+      }
+      // else: skip retry key / comment / blank lines.
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
+/** Parse the [retry] table from config_get JSON (providers.toml is nested under
+ *  `providers`), falling back to RETRY_DEFAULTS for any missing field. */
+export function jsonToRetry(json: unknown): RetryFormData {
+  const root = json as Record<string, unknown> | null;
+  const providers = root?.providers as Record<string, unknown> | undefined;
+  const retry = (providers?.retry ?? root?.retry) as Record<string, unknown> | undefined;
+  if (!retry || typeof retry !== 'object') return { ...RETRY_DEFAULTS };
+  const backoff = retry.backoff === 'fixed' ? 'fixed' : 'exponential';
+  return {
+    enabled: typeof retry.enabled === 'boolean' ? retry.enabled : RETRY_DEFAULTS.enabled,
+    max_retries:
+      typeof retry.max_retries === 'number' ? retry.max_retries : RETRY_DEFAULTS.max_retries,
+    initial_delay_ms:
+      typeof retry.initial_delay_ms === 'number'
+        ? retry.initial_delay_ms
+        : RETRY_DEFAULTS.initial_delay_ms,
+    max_delay_ms:
+      typeof retry.max_delay_ms === 'number' ? retry.max_delay_ms : RETRY_DEFAULTS.max_delay_ms,
+    backoff,
+  };
+}
+
+/** Assemble the full providers.toml body: preserved meta (sans [retry]),
+ *  the [retry] table from the form, then the [[providers]] blocks. */
+export function buildProvidersToml(
+  meta: string,
+  retry: RetryFormData,
+  providers: ProviderFormData[],
+): string {
+  const metaTrimmed = (meta ?? '').replace(/\s+$/, '');
+  const head = [metaTrimmed, retryToToml(retry).replace(/\s+$/, '')]
+    .filter((part) => part.length > 0)
+    .join('\n\n');
+  const body = providersToToml(providers);
+  return head ? `${head}\n\n${body}` : body;
 }
 
 function stringRecord(value: unknown): Record<string, string> {

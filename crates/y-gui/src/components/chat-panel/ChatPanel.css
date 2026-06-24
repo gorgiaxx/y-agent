@@ -153,9 +153,37 @@
 .error-text {
   font-size: 13px;
   color: var(--error);
+  flex: 1;
   min-width: 0;
   overflow-wrap: break-word;
   word-break: break-word;
+}
+
+.chat-error-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--error);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--error) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.chat-error-retry-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  border-color: var(--error);
+}
+
+.chat-error-retry-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 

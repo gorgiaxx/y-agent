@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use axum::extract::State;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 
@@ -104,6 +104,12 @@ async fn provider_list(State(state): State<AppState>) -> Json<serde_json::Value>
     Json(serde_json::to_value(providers).unwrap_or_default())
 }
 
+/// `POST /api/v1/providers/thaw` -- thaw all frozen providers; returns count.
+async fn provider_thaw_all(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let thawed = SystemService::thaw_frozen_providers(&state.container).await;
+    Json(serde_json::json!({ "thawed": thawed }))
+}
+
 /// `GET /api/v1/app-paths` -- return config and data directory paths.
 async fn app_paths(State(state): State<AppState>) -> Json<AppPaths> {
     let config = state.config_dir.display().to_string();
@@ -174,6 +180,7 @@ pub fn protected_router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/status", get(system_status))
         .route("/api/v1/providers", get(provider_list))
+        .route("/api/v1/providers/thaw", post(provider_thaw_all))
         .route("/api/v1/app-paths", get(app_paths))
         .route("/api/v1/memory-stats", get(memory_stats))
 }

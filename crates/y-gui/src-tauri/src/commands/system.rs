@@ -512,6 +512,13 @@ pub async fn provider_list(state: State<'_, AppState>) -> Result<Vec<ProviderInf
     Ok(SystemService::list_providers(&state.container).await)
 }
 
+/// Thaw all frozen providers so an explicit retry can hit the same provider.
+/// Returns the number of providers thawed.
+#[tauri::command]
+pub async fn provider_thaw_all(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(SystemService::thaw_frozen_providers(&state.container).await)
+}
+
 // ---------------------------------------------------------------------------
 // DevTools
 // ---------------------------------------------------------------------------

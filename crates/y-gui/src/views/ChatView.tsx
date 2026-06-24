@@ -108,6 +108,7 @@ export function ChatView() {
     handleCancelEdit,
     handleRestoreBranch,
     handleResendMessage,
+    handleRetryTurn,
     handleClearSession,
     handleCreateWorkspace,
     handleCommand,
@@ -207,6 +208,7 @@ export function ChatView() {
             onEditMessage={handleEditMessage}
             onUndoMessage={handleUndoMessage}
             onResendMessage={handleResendMessage}
+            onRetryTurn={handleRetryTurn}
             onForkMessage={handleForkMessage}
             onRestoreBranch={handleRestoreBranch}
             toolResults={chatHooks.toolResults}

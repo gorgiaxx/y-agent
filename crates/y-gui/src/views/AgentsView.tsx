@@ -407,6 +407,7 @@ export function AgentsView() {
                   onEditMessage={chatHandlers.handleEditMessage}
                   onUndoMessage={chatHandlers.handleUndoMessage}
                   onResendMessage={chatHandlers.handleResendMessage}
+                  onRetryTurn={chatHandlers.handleRetryTurn}
                   onRestoreBranch={chatHandlers.handleRestoreBranch}
                   provider={{
                     providers: providerHooks.providers,

@@ -446,6 +446,7 @@ pub fn run() {
             commands::system::health_check,
             commands::system::save_remote_image,
             commands::system::provider_list,
+            commands::system::provider_thaw_all,
             commands::system::show_window,
             commands::system::heartbeat_pong,
             commands::system::toggle_devtools,

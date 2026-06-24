@@ -11,7 +11,7 @@
  */
 
 import { useMemo, memo } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import type { Message } from '../../../types';
 import type { ToolResultRecord } from '../../../hooks/chatStreamTypes';
 import {
@@ -32,10 +32,12 @@ import { extractGeneratedImages } from '../../../lib/generatedImages';
 
 export interface StaticBubbleProps {
   message: Message;
+  /** Retry the turn that produced this errored reply (provider errors only). */
+  onRetry?: () => void;
 }
 
 
-export const StaticBubble = memo(function StaticBubble({ message }: StaticBubbleProps) {
+export const StaticBubble = memo(function StaticBubble({ message, onRetry }: StaticBubbleProps) {
   const effectiveContent = message.content;
   const generatedImages = useMemo(
     () => extractGeneratedImages(message.metadata),
@@ -162,9 +164,21 @@ export const StaticBubble = memo(function StaticBubble({ message }: StaticBubble
       {streamError && (
         <div className="assistant-error-notice">
           <AlertTriangle size={14} />
-          <div>
+          <div className="assistant-error-notice-content">
             <div className="assistant-error-notice-title">Provider error</div>
             <div className="assistant-error-notice-body">{streamError}</div>
+            {onRetry && (
+              <button
+                type="button"
+                className="assistant-error-retry-btn"
+                onClick={onRetry}
+                title="Retry this request"
+                aria-label="Retry this request"
+              >
+                <RefreshCw size={13} />
+                <span>Retry</span>
+              </button>
+            )}
           </div>
         </div>
       )}

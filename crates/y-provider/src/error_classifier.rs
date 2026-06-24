@@ -93,6 +93,17 @@ impl StandardError {
             Self::ContextWindowExceeded | Self::ContentFiltered | Self::NetworkError
         )
     }
+
+    /// Whether this error should be automatically retried against the *same*
+    /// provider before any freeze/failover.
+    ///
+    /// Scoped to timeout-style failures: 5xx server errors (including HTTP 504
+    /// gateway timeouts) and network errors. Rate-limits (429) are excluded
+    /// because they carry their own `Retry-After` backoff, and permanent
+    /// errors (auth/quota/key) are never worth retrying.
+    pub fn should_auto_retry(&self) -> bool {
+        matches!(self, Self::ServerError | Self::NetworkError)
+    }
 }
 
 /// Classify a provider error from HTTP status code and response body.
@@ -380,6 +391,20 @@ mod tests {
         assert!(!StandardError::ContentFiltered.should_freeze());
         assert!(StandardError::RateLimited { retry_after: None }.should_freeze());
         assert!(StandardError::KeyInvalid.should_freeze());
+    }
+
+    #[test]
+    fn test_should_auto_retry() {
+        // Timeout-style transient errors are retried.
+        assert!(StandardError::ServerError.should_auto_retry());
+        assert!(StandardError::NetworkError.should_auto_retry());
+        // Rate-limit has its own backoff; permanent errors are pointless to retry.
+        assert!(!StandardError::RateLimited { retry_after: None }.should_auto_retry());
+        assert!(!StandardError::KeyInvalid.should_auto_retry());
+        assert!(!StandardError::QuotaExhausted.should_auto_retry());
+        assert!(!StandardError::AuthenticationFailed.should_auto_retry());
+        assert!(!StandardError::ContextWindowExceeded.should_auto_retry());
+        assert!(!StandardError::Unknown.should_auto_retry());
     }
 
     #[test]

@@ -106,6 +106,7 @@ const KNOWN_TOOL_NAMES = [
   'Loop',
   'Plan',
   'ShellExec',
+  'Task',
   'ToolSearch',
   'WebFetch',
 ];

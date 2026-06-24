@@ -20,6 +20,75 @@ pub enum HttpProtocol {
     Http2,
 }
 
+/// Backoff growth strategy for delays between automatic retries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BackoffStrategy {
+    /// Delay grows as `initial_delay_ms * 2^(attempt-1)`, capped at `max_delay_ms`.
+    #[default]
+    Exponential,
+    /// Delay is a constant `initial_delay_ms` for every retry.
+    Fixed,
+}
+
+/// Automatic retry policy for transient provider failures.
+///
+/// Applies to the *same* provider before the freeze/failover machinery kicks
+/// in: a transient error (5xx server error or network error) is retried up to
+/// `max_retries` times with a backoff delay, and the provider is only frozen
+/// (via [`ProviderPoolImpl::report_error`](crate::pool)) once those retries are
+/// exhausted. Rate-limit (429) and permanent errors (auth/quota/key) are never
+/// auto-retried here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetryConfig {
+    /// Whether automatic retry is enabled.
+    pub enabled: bool,
+
+    /// Additional attempts after the first failure. `0` disables retrying.
+    /// Total attempts made = `1 + max_retries`.
+    pub max_retries: u32,
+
+    /// Delay before the first retry, in milliseconds. Also the constant delay
+    /// for [`BackoffStrategy::Fixed`].
+    pub initial_delay_ms: u64,
+
+    /// Upper bound for any single backoff delay, in milliseconds.
+    pub max_delay_ms: u64,
+
+    /// How the delay grows across successive retries.
+    pub backoff: BackoffStrategy,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_retries: 3,
+            initial_delay_ms: 1000,
+            max_delay_ms: 30_000,
+            backoff: BackoffStrategy::Exponential,
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Backoff delay to wait *before* the `attempt`-th retry (1-based: `attempt
+    /// = 1` is the delay before the first retry). Saturating and capped at
+    /// `max_delay_ms` so large retry counts cannot overflow.
+    pub fn delay_for(&self, attempt: u32) -> std::time::Duration {
+        let millis = match self.backoff {
+            BackoffStrategy::Fixed => self.initial_delay_ms,
+            BackoffStrategy::Exponential => {
+                let shift = attempt.saturating_sub(1).min(63);
+                self.initial_delay_ms
+                    .saturating_mul(1u64.checked_shl(shift).unwrap_or(u64::MAX))
+            }
+        };
+        std::time::Duration::from_millis(millis.min(self.max_delay_ms))
+    }
+}
+
 /// Configuration for the entire provider pool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,6 +124,11 @@ pub struct ProviderPoolConfig {
     /// `None` means no global limit (only per-provider limits apply).
     #[serde(default)]
     pub max_global_concurrency: Option<usize>,
+
+    /// Automatic retry policy for transient provider failures (5xx / network).
+    /// Loaded from the `[retry]` section in `providers.toml`.
+    #[serde(default)]
+    pub retry: RetryConfig,
 }
 
 /// Configuration for a single LLM provider.
@@ -427,6 +501,7 @@ impl Default for ProviderPoolConfig {
             health_check_interval_secs: default_health_check_interval_secs(),
             selection_strategy: SelectionStrategy::default(),
             max_global_concurrency: None,
+            retry: RetryConfig::default(),
         }
     }
 }
@@ -1391,5 +1466,98 @@ mod tests {
             cfg.resolve_capabilities(),
             vec![ProviderCapability::Text, ProviderCapability::Vision]
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Retry policy
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_retry_config_defaults_enabled_exponential() {
+        let cfg = RetryConfig::default();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.max_retries, 3);
+        assert_eq!(cfg.initial_delay_ms, 1000);
+        assert_eq!(cfg.max_delay_ms, 30_000);
+        assert_eq!(cfg.backoff, BackoffStrategy::Exponential);
+    }
+
+    #[test]
+    fn test_pool_config_default_has_retry_enabled() {
+        // Configs without a [retry] section must opt-in to retry by default.
+        let cfg = ProviderPoolConfig::default();
+        assert!(cfg.retry.enabled);
+        assert_eq!(cfg.retry.max_retries, 3);
+    }
+
+    #[test]
+    fn test_retry_config_deserializes_from_providers_toml() {
+        let toml_str = r#"
+            [[providers]]
+            id = "deepseek"
+            provider_type = "deepseek"
+            model = "deepseek-chat"
+
+            [retry]
+            enabled = true
+            max_retries = 5
+            initial_delay_ms = 2000
+            max_delay_ms = 60000
+            backoff = "fixed"
+        "#;
+        let cfg: ProviderPoolConfig = toml::from_str(toml_str).expect("should parse");
+        assert!(cfg.retry.enabled);
+        assert_eq!(cfg.retry.max_retries, 5);
+        assert_eq!(cfg.retry.initial_delay_ms, 2000);
+        assert_eq!(cfg.retry.max_delay_ms, 60_000);
+        assert_eq!(cfg.retry.backoff, BackoffStrategy::Fixed);
+    }
+
+    #[test]
+    fn test_retry_config_partial_section_uses_field_defaults() {
+        // Only some keys present: the rest fall back to RetryConfig::default().
+        let toml_str = r#"
+            [[providers]]
+            id = "p"
+            provider_type = "openai"
+            model = "gpt-4o"
+
+            [retry]
+            max_retries = 1
+        "#;
+        let cfg: ProviderPoolConfig = toml::from_str(toml_str).expect("should parse");
+        assert_eq!(cfg.retry.max_retries, 1);
+        assert!(cfg.retry.enabled, "omitted enabled should default to true");
+        assert_eq!(cfg.retry.backoff, BackoffStrategy::Exponential);
+    }
+
+    #[test]
+    fn test_retry_delay_exponential_growth_and_cap() {
+        let cfg = RetryConfig {
+            enabled: true,
+            max_retries: 10,
+            initial_delay_ms: 1000,
+            max_delay_ms: 30_000,
+            backoff: BackoffStrategy::Exponential,
+        };
+        assert_eq!(cfg.delay_for(1).as_millis(), 1000); // 1000 * 2^0
+        assert_eq!(cfg.delay_for(2).as_millis(), 2000); // 1000 * 2^1
+        assert_eq!(cfg.delay_for(3).as_millis(), 4000); // 1000 * 2^2
+        assert_eq!(cfg.delay_for(4).as_millis(), 8000); // 1000 * 2^3
+                                                        // Capped at max_delay_ms once 2^n exceeds it.
+        assert_eq!(cfg.delay_for(20).as_millis(), 30_000);
+    }
+
+    #[test]
+    fn test_retry_delay_fixed_is_constant() {
+        let cfg = RetryConfig {
+            enabled: true,
+            max_retries: 5,
+            initial_delay_ms: 2000,
+            max_delay_ms: 60_000,
+            backoff: BackoffStrategy::Fixed,
+        };
+        assert_eq!(cfg.delay_for(1).as_millis(), 2000);
+        assert_eq!(cfg.delay_for(4).as_millis(), 2000);
     }
 }

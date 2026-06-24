@@ -12,6 +12,7 @@ import { PlanRenderer } from './PlanRenderer';
 import { LoopRenderer } from './LoopRenderer';
 import { AskUserRenderer } from './AskUserRenderer';
 import { KnowledgeSearchRenderer } from './KnowledgeSearchRenderer';
+import { TaskRenderer } from './TaskRenderer';
 
 export type { ToolRendererProps } from './types';
 export { DefaultRenderer } from './DefaultRenderer';
@@ -34,4 +35,5 @@ export const TOOL_RENDERERS: Record<string, ComponentType<ToolRendererProps>> = 
   Loop: LoopRenderer,
   AskUser: AskUserRenderer,
   KnowledgeSearch: KnowledgeSearchRenderer,
+  Task: TaskRenderer,
 };

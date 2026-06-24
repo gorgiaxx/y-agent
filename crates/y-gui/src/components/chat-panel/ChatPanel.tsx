@@ -1,5 +1,5 @@
 import { Fragment, useRef, useCallback, useLayoutEffect, useMemo, useState, memo, type UIEvent } from 'react';
-import { Sparkles, AlertTriangle, ChevronDown } from 'lucide-react';
+import { Sparkles, AlertTriangle, ChevronDown, RefreshCw } from 'lucide-react';
 import type { Message } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
 import type { CompactInfo } from '../../hooks/useChat';
@@ -37,6 +37,8 @@ interface ChatPanelProps {
   onEditMessage?: (content: string, messageId: string) => void;
   onUndoMessage?: (messageId: string) => void;
   onResendMessage?: (content: string, messageId: string) => void;
+  /** Retry a turn that ended in a provider error (thaws frozen providers first). */
+  onRetryTurn?: (content: string, messageId: string) => void;
   onForkMessage?: (messageIndex: number) => void;
   tombstonedSegments?: TombstonedSegment[];
   onRestoreBranch?: (checkpointId: string) => void;
@@ -161,6 +163,14 @@ function buildDisplayItems(
   return items;
 }
 
+/** Nearest preceding user message before `beforeIdx`, for retrying a failed turn. */
+function findPrecedingUserMessage(messages: Message[], beforeIdx: number): Message | null {
+  for (let i = Math.min(beforeIdx, messages.length) - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i];
+  }
+  return null;
+}
+
 function getDisplayItemKey(item: DisplayItem): string {
   if (item.kind === 'message') return item.msg.id;
   if (item.kind === 'restore-divider') return `restore-${item.segment.checkpointId}`;
@@ -180,6 +190,7 @@ function ChatPanelInner({
   onEditMessage,
   onUndoMessage,
   onResendMessage,
+  onRetryTurn,
   onForkMessage,
   tombstonedSegments,
   onRestoreBranch,
@@ -340,6 +351,22 @@ function ChatPanelInner({
           <div className="chat-error">
             <span className="error-icon"><AlertTriangle size={14} /></span>
             <span className="error-text">{item.error}</span>
+            {onRetryTurn && (() => {
+              const lastUser = findPrecedingUserMessage(messages, messages.length);
+              return lastUser ? (
+                <button
+                  type="button"
+                  className="chat-error-retry-btn"
+                  onClick={() => onRetryTurn(lastUser.content, lastUser.id)}
+                  title="Retry this request"
+                  aria-label="Retry this request"
+                  disabled={isStreaming}
+                >
+                  <RefreshCw size={13} />
+                  <span>Retry</span>
+                </button>
+              ) : null;
+            })()}
           </div>
         );
 
@@ -362,6 +389,18 @@ function ChatPanelInner({
             message={item.msg}
             toolResults={item.toolResults}
             getStreamSegments={getStreamSegments}
+            onRetry={
+              onRetryTurn
+              && typeof item.msg.metadata?.stream_error === 'string'
+              && item.msg.metadata.stream_error !== ''
+                ? (() => {
+                    const prevUser = findPrecedingUserMessage(messages, item.msgIdx);
+                    return prevUser
+                      ? () => onRetryTurn(prevUser.content, prevUser.id)
+                      : undefined;
+                  })()
+                : undefined
+            }
           />
         );
       }
@@ -369,7 +408,7 @@ function ChatPanelInner({
       default:
         return null;
     }
-  }, [isStreaming, onEditMessage, onUndoMessage, onResendMessage, onForkMessage, onRestoreBranch, getStreamSegments]);
+  }, [isStreaming, messages, onEditMessage, onUndoMessage, onResendMessage, onRetryTurn, onForkMessage, onRestoreBranch, getStreamSegments]);
 
   if (isLoading) {
     return (

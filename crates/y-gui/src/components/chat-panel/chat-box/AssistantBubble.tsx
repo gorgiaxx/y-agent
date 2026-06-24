@@ -21,15 +21,17 @@ export interface AssistantBubbleProps {
   toolResults?: ToolResultRecord[];
   /** Lazy getter for event-ordered segments (only called for streaming messages). */
   getStreamSegments?: () => InterleavedSegment[] | null;
+  /** Retry the turn that produced this errored reply (static/history messages only). */
+  onRetry?: () => void;
 }
 
 
 export const AssistantBubble = memo(function AssistantBubble(
-  { message, toolResults, getStreamSegments }: AssistantBubbleProps,
+  { message, toolResults, getStreamSegments, onRetry }: AssistantBubbleProps,
 ) {
   if (isLiveStreamingAssistantMessage(message)) {
     const streamSegments = getStreamSegments?.() ?? null;
     return <StreamingBubble message={message} toolResults={toolResults} streamSegments={streamSegments} />;
   }
-  return <StaticBubble message={message} />;
+  return <StaticBubble message={message} onRetry={onRetry} />;
 });

@@ -269,6 +269,7 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   health_check:        { method: 'GET',  path: '/health' },
   system_status:       { method: 'GET',  path: '/api/v1/status', response: systemStatusResponse },
   provider_list:       { method: 'GET',  path: '/api/v1/providers' },
+  provider_thaw_all:   { method: 'POST', path: '/api/v1/providers/thaw' },
   app_paths:           { method: 'GET',  path: '/api/v1/app-paths' },
   ide_list:            { method: 'GET',  path: '/__noop__' },
 

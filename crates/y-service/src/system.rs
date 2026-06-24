@@ -153,6 +153,23 @@ impl SystemService {
             .collect()
     }
 
+    /// Thaw every currently-frozen provider, returning the number thawed.
+    ///
+    /// Drives the GUI "Retry" affordance: after automatic retries are exhausted
+    /// a provider is frozen, and an explicit user retry should be able to force
+    /// another attempt at the same provider rather than wait out the freeze.
+    pub async fn thaw_frozen_providers(container: &ServiceContainer) -> usize {
+        let pool = container.provider_pool().await;
+        let statuses = pool.provider_statuses().await;
+        let mut thawed = 0usize;
+        for status in statuses {
+            if status.is_frozen && pool.thaw(&status.id).await.is_ok() {
+                thawed += 1;
+            }
+        }
+        thawed
+    }
+
     /// Hot-reload the provider pool from a TOML config string.
     ///
     /// Parses the TOML into `ProviderPoolConfig` and delegates to

@@ -36,7 +36,11 @@ import {
   DEFAULT_KNOWLEDGE_FORM,
   DEFAULT_LANGFUSE_FORM,
   jsonToProviders,
-  providersToToml,
+  buildProvidersToml,
+  jsonToRetry,
+  stripRetrySection,
+  RETRY_DEFAULTS,
+  type RetryFormData,
   mcpServersToJson,
   TAB_LABELS,
 } from './settingsTypes';
@@ -99,6 +103,7 @@ export function SettingsPanel({
 
   // Session
   const [sessionForm, setSessionForm] = useState<SessionFormData>({ ...DEFAULT_SESSION_FORM });
+  const [retryForm, setRetryForm] = useState<RetryFormData>(RETRY_DEFAULTS);
   const [dirtySession, setDirtySession] = useState(false);
   const [rawSessionToml, setRawSessionToml] = useState<string | undefined>(undefined);
 
@@ -173,7 +178,7 @@ export function SettingsPanel({
       try {
         const toml = rawProvidersToml !== undefined
           ? rawProvidersToml
-          : (providersMeta ? `${providersMeta}${providersToToml(providersList)}` : providersToToml(providersList));
+          : buildProvidersToml(providersMeta, retryForm, providersList);
         await saveSection('providers', toml);
         setRawProvidersToml(undefined);
         setDirtyProviders(false);
@@ -182,10 +187,11 @@ export function SettingsPanel({
         try {
           const allConfig = await transport.invoke<AppConfigResponse>('config_get');
           setProvidersList(jsonToProviders(allConfig));
+          setRetryForm(jsonToRetry(allConfig));
           const raw = await loadSection('providers');
           const tableMatch = raw.match(/^\s*\[\[providers\]\]/m);
           const firstTable = tableMatch?.index ?? -1;
-          setProvidersMeta(firstTable > 0 ? raw.slice(0, firstTable) : '');
+          setProvidersMeta(stripRetrySection(firstTable > 0 ? raw.slice(0, firstTable) : ''));
         } catch (refreshErr) {
           console.warn('Providers refresh after save failed:', refreshErr);
         }
@@ -322,7 +328,7 @@ export function SettingsPanel({
   }, [
     dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser, dirtyMcp,
     dirtyStorage, dirtyHooks, dirtyTools, dirtyGuardrails, dirtyKnowledge, dirtyLangfuse,
-    providersList, providersMeta, sessionForm, runtimeForm, browserForm, mcpServersList,
+    providersList, providersMeta, retryForm, sessionForm, runtimeForm, browserForm, mcpServersList,
     storageForm, hooksForm, toolsForm, guardrailsForm, knowledgeForm, langfuseForm,
     rawSessionToml, rawRuntimeToml, rawBrowserToml, rawProvidersToml,
     rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml, rawLangfuseToml,
@@ -371,6 +377,7 @@ export function SettingsPanel({
             setProvidersList={setProvidersList}
             providersMeta={providersMeta}
             setProvidersMeta={setProvidersMeta}
+            retryForm={retryForm}
             setDirtyProviders={setDirtyProviders}
             rawProvidersToml={rawProvidersToml}
             setRawProvidersToml={setRawProvidersToml}
@@ -384,6 +391,9 @@ export function SettingsPanel({
             setSessionForm={setSessionForm}
             setDirtySession={setDirtySession}
             setRawSessionToml={setRawSessionToml}
+            retryForm={retryForm}
+            setRetryForm={setRetryForm}
+            setDirtyProviders={setDirtyProviders}
           />
         </TabsContent>
 

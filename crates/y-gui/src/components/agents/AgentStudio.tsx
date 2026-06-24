@@ -44,6 +44,7 @@ interface AgentStudioProps {
   onEditMessage: (content: string, messageId: string) => void;
   onUndoMessage: (messageId: string) => void;
   onResendMessage: (content: string, messageId: string) => void;
+  onRetryTurn: (content: string, messageId: string) => void;
   onRestoreBranch: (checkpointId: string) => void;
   onForkMessage: (messageIndex: number) => void;
   // InputArea callbacks
@@ -92,6 +93,7 @@ export function AgentStudio({
   onEditMessage,
   onUndoMessage,
   onResendMessage,
+  onRetryTurn,
   onRestoreBranch,
   onForkMessage,
   onSend,
@@ -128,6 +130,7 @@ export function AgentStudio({
             onEditMessage={onEditMessage}
             onUndoMessage={onUndoMessage}
             onResendMessage={onResendMessage}
+            onRetryTurn={onRetryTurn}
             onForkMessage={onForkMessage}
             onRestoreBranch={onRestoreBranch}
             toolResults={toolResults}

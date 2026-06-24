@@ -32,6 +32,8 @@ pub struct ProviderPoolImpl {
     health_checker: HealthChecker,
     /// Global concurrency semaphore (across all providers).
     global_semaphore: Option<Arc<tokio::sync::Semaphore>>,
+    /// Automatic retry policy for transient (5xx / network) failures.
+    retry: crate::config::RetryConfig,
 }
 
 /// An entry in the pool combining provider, freeze state, semaphore, and metrics.
@@ -117,6 +119,7 @@ impl ProviderPoolImpl {
             router: TagBasedRouter::with_strategy(config.selection_strategy),
             health_checker: HealthChecker::new(Duration::from_secs(10)),
             global_semaphore,
+            retry: config.retry.clone(),
         }
     }
 
@@ -323,6 +326,12 @@ impl ProviderPoolImpl {
             .find(|e| e.provider.metadata().id == *provider_id)
     }
 
+    /// Whether `error` should be retried against the same provider, given the
+    /// configured retry policy. Only timeout-style transient errors qualify.
+    fn should_retry(&self, error: &ProviderError) -> bool {
+        self.retry.enabled && error_classifier::classify_provider_error(error).should_auto_retry()
+    }
+
     /// Apply provider-level sampling defaults without overriding explicit request values.
     fn apply_request_defaults(request: &ChatRequest, entry: &ProviderEntry) -> ChatRequest {
         let mut effective_request = request.clone();
@@ -441,7 +450,28 @@ impl ProviderPool for ProviderPoolImpl {
         entry.active_requests.fetch_add(1, Ordering::Relaxed);
         let effective_request = Self::apply_request_defaults(request, entry);
 
-        let result = entry.provider.chat_completion(&effective_request).await;
+        // Retry transient (5xx / network) errors against the same provider
+        // before falling through to freeze/failover, per the retry policy.
+        let mut attempt: u32 = 0;
+        let result = loop {
+            match entry.provider.chat_completion(&effective_request).await {
+                Ok(response) => break Ok(response),
+                Err(e) if attempt < self.retry.max_retries && self.should_retry(&e) => {
+                    attempt += 1;
+                    let delay = self.retry.delay_for(attempt);
+                    tracing::warn!(
+                        provider_id = %entry.provider.metadata().id,
+                        error = %e,
+                        attempt,
+                        max_retries = self.retry.max_retries,
+                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        "transient provider error; retrying same provider after backoff"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(e) => break Err(e),
+            }
+        };
 
         // Decrement active counter after request completes.
         entry.active_requests.fetch_sub(1, Ordering::Relaxed);
@@ -504,10 +534,35 @@ impl ProviderPool for ProviderPoolImpl {
         // because the stream has not started consuming yet.
 
         let meta = entry.provider.metadata();
-        let stream_result = entry
-            .provider
-            .chat_completion_stream(&effective_request)
-            .await;
+
+        // Retry transient (5xx / network) establishment errors against the same
+        // provider before freeze/failover. Only the initial request/handshake
+        // is retried here; once a stream is returned, mid-stream errors surface
+        // to the consumer and are not retried (partial content already emitted).
+        let mut attempt: u32 = 0;
+        let stream_result = loop {
+            match entry
+                .provider
+                .chat_completion_stream(&effective_request)
+                .await
+            {
+                Ok(stream_response) => break Ok(stream_response),
+                Err(e) if attempt < self.retry.max_retries && self.should_retry(&e) => {
+                    attempt += 1;
+                    let delay = self.retry.delay_for(attempt);
+                    tracing::warn!(
+                        provider_id = %meta.id,
+                        error = %e,
+                        attempt,
+                        max_retries = self.retry.max_retries,
+                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        "transient provider error on stream start; retrying same provider after backoff"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+                Err(e) => break Err(e),
+            }
+        };
 
         match stream_result {
             Ok(mut stream_response) => {
@@ -745,6 +800,148 @@ mod tests {
         }
     }
 
+    /// Provider that fails its first `fail_times` calls then succeeds, counting
+    /// total invocations. `transient` selects whether the failures are
+    /// retryable (`ServerError`, like an HTTP 504) or not (`AuthenticationFailed`).
+    struct FlakyProvider {
+        meta: ProviderMetadata,
+        remaining_failures: AtomicUsize,
+        total_calls: Arc<AtomicUsize>,
+        transient: bool,
+    }
+
+    impl FlakyProvider {
+        fn new(
+            id: &str,
+            fail_times: usize,
+            transient: bool,
+        ) -> (Arc<dyn LlmProvider>, Arc<AtomicUsize>) {
+            let total_calls = Arc::new(AtomicUsize::new(0));
+            (
+                Arc::new(Self {
+                    meta: ProviderMetadata {
+                        id: ProviderId::from_string(id),
+                        provider_type: ProviderType::OpenAi,
+                        model: "test-model".into(),
+                        tags: vec!["gen".into()],
+                        capabilities: vec![],
+                        max_concurrency: 5,
+                        context_window: 128_000,
+                        cost_per_1k_input: 0.0,
+                        cost_per_1k_output: 0.0,
+                        tool_calling_mode: ToolCallingMode::default(),
+                    },
+                    remaining_failures: AtomicUsize::new(fail_times),
+                    total_calls: Arc::clone(&total_calls),
+                    transient,
+                }),
+                total_calls,
+            )
+        }
+
+        /// Record one call; return an error if failures remain, else `None`.
+        fn try_fail(&self) -> Option<ProviderError> {
+            self.total_calls.fetch_add(1, Ordering::SeqCst);
+            loop {
+                let cur = self.remaining_failures.load(Ordering::SeqCst);
+                if cur == 0 {
+                    return None;
+                }
+                if self
+                    .remaining_failures
+                    .compare_exchange(cur, cur - 1, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    return Some(if self.transient {
+                        ProviderError::ServerError {
+                            provider: self.meta.id.to_string(),
+                            message: "HTTP 504: gateway timeout".into(),
+                        }
+                    } else {
+                        ProviderError::AuthenticationFailed {
+                            provider: self.meta.id.to_string(),
+                            message: "invalid credentials".into(),
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for FlakyProvider {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            if let Some(e) = self.try_fail() {
+                return Err(e);
+            }
+            Ok(ChatResponse {
+                id: "resp-ok".into(),
+                model: self.meta.model.clone(),
+                content: Some("recovered".into()),
+                reasoning_content: None,
+                tool_calls: vec![],
+                usage: TokenUsage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                    ..Default::default()
+                },
+                finish_reason: FinishReason::Stop,
+                raw_request: None,
+                raw_response: None,
+                provider_id: None,
+                generated_images: vec![],
+            })
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            if let Some(e) = self.try_fail() {
+                return Err(e);
+            }
+            Ok(ChatStreamResponse {
+                stream: Box::pin(futures::stream::iter(Vec::<
+                    Result<ChatStreamChunk, ProviderError>,
+                >::new())),
+                raw_request: None,
+                provider_id: Some(self.meta.id.clone()),
+                model: self.meta.model.clone(),
+                context_window: self.meta.context_window,
+            })
+        }
+
+        fn metadata(&self) -> &ProviderMetadata {
+            &self.meta
+        }
+    }
+
+    /// A pool config with retry enabled and negligible delays for fast tests.
+    fn fast_retry_config(max_retries: u32) -> ProviderPoolConfig {
+        ProviderPoolConfig {
+            retry: crate::config::RetryConfig {
+                enabled: true,
+                max_retries,
+                initial_delay_ms: 1,
+                max_delay_ms: 2,
+                backoff: crate::config::BackoffStrategy::Fixed,
+            },
+            ..test_config()
+        }
+    }
+
+    fn gen_route() -> RouteRequest {
+        RouteRequest {
+            required_tags: vec!["gen".into()],
+            ..Default::default()
+        }
+    }
+
     fn test_config() -> ProviderPoolConfig {
         ProviderPoolConfig {
             providers: vec![],
@@ -754,6 +951,12 @@ mod tests {
             health_check_interval_secs: 60,
             selection_strategy: Default::default(),
             max_global_concurrency: None,
+            // Disabled by default so existing routing/freeze/failover tests keep
+            // their immediate-failure semantics; retry tests opt in explicitly.
+            retry: crate::config::RetryConfig {
+                enabled: false,
+                ..Default::default()
+            },
         }
     }
 
@@ -928,6 +1131,98 @@ mod tests {
         // Now p1 should be frozen from the error report.
         let result = pool.chat_completion(&test_request(), &route).await;
         assert!(result.is_ok(), "should route to p2 after p1 is frozen");
+    }
+
+    // -----------------------------------------------------------------------
+    // Automatic retry (same provider, before freeze)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_retry_recovers_transient_error_before_freeze() {
+        // Fails twice with a 504, succeeds on the third attempt.
+        let (provider, calls) = FlakyProvider::new("flaky", 2, true);
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(3));
+
+        let result = pool.chat_completion(&test_request(), &gen_route()).await;
+
+        assert!(
+            result.is_ok(),
+            "should recover after retrying transient errors"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "1 initial + 2 retries");
+        assert!(
+            !pool.providers[0].freeze_manager.is_frozen(),
+            "a provider that recovered must NOT be frozen"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retry_exhausted_then_reports_error_and_freezes() {
+        // Always fails with a 504; only 2 retries allowed.
+        let (provider, calls) = FlakyProvider::new("down", usize::MAX, true);
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(2));
+
+        let result = pool.chat_completion(&test_request(), &gen_route()).await;
+
+        assert!(matches!(result, Err(ProviderError::ServerError { .. })));
+        assert_eq!(calls.load(Ordering::SeqCst), 3, "1 initial + 2 retries");
+        assert!(
+            pool.providers[0].freeze_manager.is_frozen(),
+            "provider should freeze only after retries are exhausted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_non_retryable_error_is_not_retried() {
+        // Auth failures are permanent — must not be retried even with retries left.
+        let (provider, calls) = FlakyProvider::new("auth", usize::MAX, false);
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(5));
+
+        let result = pool.chat_completion(&test_request(), &gen_route()).await;
+
+        assert!(matches!(
+            result,
+            Err(ProviderError::AuthenticationFailed { .. })
+        ));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "non-retryable error: no retries"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_retry_disabled_makes_single_attempt() {
+        let (provider, calls) = FlakyProvider::new("flaky", usize::MAX, true);
+        // test_config() has retry disabled.
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &test_config());
+
+        let result = pool.chat_completion(&test_request(), &gen_route()).await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "retry disabled: one attempt only"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stream_retry_recovers_transient_error_before_freeze() {
+        // Stream establishment fails once with a 504, then succeeds.
+        let (provider, calls) = FlakyProvider::new("flaky-stream", 1, true);
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(3));
+
+        let result = pool
+            .chat_completion_stream(&test_request(), &gen_route())
+            .await;
+
+        assert!(result.is_ok(), "stream should establish after one retry");
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "1 initial + 1 retry");
+        assert!(
+            !pool.providers[0].freeze_manager.is_frozen(),
+            "recovered stream provider must NOT be frozen"
+        );
     }
 
     #[tokio::test]

@@ -74,6 +74,7 @@ export interface UseChatHandlersReturn {
   handleCancelEdit: () => void;
   handleRestoreBranch: (checkpointId: string) => Promise<void>;
   handleResendMessage: (content: string, messageId: string) => Promise<void>;
+  handleRetryTurn: (content: string, messageId: string) => Promise<void>;
   handleClearSession: () => Promise<void>;
   handleNewChat: () => Promise<void>;
   handleNewChatInWorkspace: (workspaceId: string) => Promise<void>;
@@ -212,6 +213,24 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     [activeSessionId, resendLastTurn, selectedProviderId, thinkingEffort, planMode],
   );
 
+  // Retry a turn that ended in a provider error. Unlike a plain resend, this
+  // first thaws any providers frozen by the failed turn so the retry can hit
+  // the same provider instead of waiting out the freeze. Reuses the resend
+  // path, so it re-runs from the checkpoint without adding a new user message.
+  const handleRetryTurn = useCallback(
+    async (content: string, messageId: string) => {
+      if (!activeSessionId) return;
+      try {
+        await transport.invoke('provider_thaw_all');
+      } catch (e) {
+        logger.warn('[chat] provider_thaw_all failed before retry (continuing):', e);
+      }
+      const providerArg = selectedProviderId === 'auto' ? undefined : selectedProviderId;
+      await resendLastTurn(activeSessionId, messageId, content, providerArg, thinkingEffort, planMode);
+    },
+    [activeSessionId, resendLastTurn, selectedProviderId, thinkingEffort, planMode],
+  );
+
   const handleClearSession = useCallback(async () => {
     if (!activeSessionId) return;
     await deleteSession(activeSessionId);
@@ -338,6 +357,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     handleCancelEdit,
     handleRestoreBranch,
     handleResendMessage,
+    handleRetryTurn,
     handleClearSession,
     handleNewChat,
     handleNewChatInWorkspace,
