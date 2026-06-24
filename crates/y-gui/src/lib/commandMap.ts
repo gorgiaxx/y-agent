@@ -380,6 +380,12 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   skill_save_file:     { method: 'PUT',  path: (a) => `/api/v1/skills/${encodeURIComponent(String(a.name))}/files/${encodePathSegments(arg(a, 'relativePath', 'path'))}`,
                          body: (a) => ({ content: a.content }) },
   skill_import:        { method: 'POST', path: '/api/v1/skills/import', body: id },
+  skill_create:        { method: 'POST', path: '/api/v1/skills/create',
+                         body: (a) => ({
+                           request: a.request,
+                           domain_hints: arg(a, 'domainHints', 'domain_hints'),
+                           language: a.language,
+                         }) },
 
   // -- Workflows --
   workflow_list:       { method: 'GET',  path: '/api/v1/workflows' },

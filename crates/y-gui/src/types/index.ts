@@ -316,6 +316,7 @@ export interface DiagLlmCallFailed {
   model: string;
   error: string;
   duration_ms: number;
+  prompt_preview: string;
 }
 
 export interface DiagToolCallCompleted {

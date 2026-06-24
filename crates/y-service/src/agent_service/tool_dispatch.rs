@@ -662,6 +662,33 @@ async fn execute_tool_call(
 
     // Intercept task calls -- delegate to a sub-agent via AgentDelegator.
     if tc.name == "Task" {
+        // skill-creator is a side-effecting, structured-output agent. Route it
+        // through SkillCreationService so the generated skill is registered in
+        // the on-disk store (the same store the GUI panel and search index read
+        // from) and a concise summary -- not the agent's raw JSON -- is returned
+        // to the conversation.
+        if tc.arguments.get("agent_name").and_then(|v| v.as_str()) == Some("skill-creator") {
+            let skills_dir = container.skills_dir.clone().ok_or_else(|| {
+                y_core::tool::ToolError::RuntimeError {
+                    name: "skill-creator".into(),
+                    message: "skills directory is not configured".into(),
+                }
+            })?;
+            let output = run_skill_creation(
+                Arc::clone(&container.agent_delegator),
+                &skills_dir,
+                &tc.arguments,
+            )
+            .await?;
+            // Make the newly created skill discoverable via ToolSearch in this
+            // session; the GUI panel reads the store from disk and needs no
+            // refresh.
+            if output.success {
+                container.refresh_skill_search().await;
+            }
+            return Ok(output);
+        }
+
         let session_uuid =
             uuid::Uuid::parse_str(session_id.as_str()).unwrap_or_else(|_| uuid::Uuid::new_v4());
         return crate::task_delegation_orchestrator::TaskDelegationOrchestrator::handle(
@@ -749,6 +776,51 @@ async fn execute_tool_call(
     } else {
         tool.execute(input).await
     }
+}
+
+/// Route a `Task(skill-creator)` call through the skill-creation service so the
+/// generated skill is registered on disk, returning a concise summary to the
+/// conversation instead of the agent's raw structured output.
+async fn run_skill_creation(
+    delegator: Arc<dyn y_core::agent::AgentDelegator>,
+    skills_dir: &std::path::Path,
+    arguments: &serde_json::Value,
+) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
+    let request = arguments
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| y_core::tool::ToolError::ValidationError {
+            message: "'prompt' is required".into(),
+        })?;
+
+    let outcome = crate::skill_creation::create_skill_from_request(
+        delegator, skills_dir, request, None, None,
+    )
+    .await
+    .map_err(|message| y_core::tool::ToolError::RuntimeError {
+        name: "skill-creator".into(),
+        message,
+    })?;
+
+    let created = outcome.decision == "created";
+    let mut content = serde_json::Map::new();
+    content.insert(
+        "decision".into(),
+        serde_json::Value::String(outcome.decision),
+    );
+    if let Some(skill_id) = outcome.skill_id {
+        content.insert("skill_id".into(), serde_json::Value::String(skill_id));
+    }
+    if let Some(error) = outcome.error {
+        content.insert("error".into(), serde_json::Value::String(error));
+    }
+
+    Ok(y_core::tool::ToolOutput {
+        success: created,
+        content: serde_json::Value::Object(content),
+        warnings: vec![],
+        metadata: serde_json::json!({ "action": "skill_create" }),
+    })
 }
 
 /// Check if a successful `FileWrite` just created an agent TOML and, if
@@ -1083,5 +1155,148 @@ mod tests {
             parsed.get("retryable").and_then(serde_json::Value::as_bool),
             Some(false)
         );
+    }
+
+    // -- run_skill_creation -------------------------------------------------
+
+    #[derive(Debug)]
+    struct SkillCreatorDelegator {
+        response: String,
+        root_md: Option<String>,
+    }
+
+    #[async_trait::async_trait]
+    impl y_core::agent::AgentDelegator for SkillCreatorDelegator {
+        async fn delegate(
+            &self,
+            _agent_name: &str,
+            input: serde_json::Value,
+            _context_strategy: y_core::agent::ContextStrategyHint,
+            _session_id: Option<Uuid>,
+        ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
+            // Mirror the real agent: write root.md into the provided output dir.
+            if let Some(root_md) = &self.root_md {
+                let input_str = input.as_str().unwrap_or_default();
+                for line in input_str.lines() {
+                    if let Some(rest) = line.strip_prefix("- **Output directory**: `") {
+                        if let Some(dir) = rest.strip_suffix('`') {
+                            std::fs::write(std::path::Path::new(dir).join("root.md"), root_md)
+                                .unwrap();
+                        }
+                    }
+                }
+            }
+            Ok(y_core::agent::DelegationOutput {
+                text: self.response.clone(),
+                tokens_used: 10,
+                input_tokens: 8,
+                output_tokens: 2,
+                model_used: "mock".into(),
+                duration_ms: 1,
+            })
+        }
+    }
+
+    fn created_agent_response() -> String {
+        // Note the leading narration: the helper must not surface it.
+        let json = serde_json::json!({
+            "decision": "created",
+            "manifest": {
+                "name": "summarize-academic",
+                "version": "1.0.0",
+                "description": "Summarize academic papers",
+                "author": "skill-creator-agent",
+                "classification": {
+                    "type": "llm_reasoning",
+                    "domain": ["academic"],
+                    "tags": ["summarize"],
+                    "atomic": true
+                },
+                "constraints": {},
+                "root": { "path": "root.md", "token_count": 50 },
+                "references": { "tools": [], "skills": [], "knowledge_bases": [] }
+            },
+            "sub_documents": [],
+            "extracted_tools": []
+        })
+        .to_string();
+        format!("Now I have a clear understanding. Let me create the skill.\n\n{json}")
+    }
+
+    #[tokio::test]
+    async fn test_run_skill_creation_returns_clean_summary() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let delegator = Arc::new(SkillCreatorDelegator {
+            response: created_agent_response(),
+            root_md: Some("# Summarize Academic\n\nSummarize papers.".into()),
+        });
+        let args = serde_json::json!({
+            "agent_name": "skill-creator",
+            "prompt": "Summarize academic papers",
+        });
+
+        let output = run_skill_creation(delegator, tmp.path(), &args)
+            .await
+            .unwrap();
+
+        assert!(output.success);
+        assert_eq!(output.content["decision"], "created");
+        assert_eq!(output.content["skill_id"], "summarize-academic");
+        // The conversation must not see the agent's raw structured output or
+        // its narration -- only the concise summary fields.
+        assert!(output.content.get("manifest").is_none());
+        assert!(output.content.get("output").is_none());
+        let serialized = serde_json::to_string(&output.content).unwrap();
+        assert!(!serialized.contains("Now I have"));
+        assert!(!serialized.contains("optimization_notes"));
+        assert_eq!(output.metadata["action"], "skill_create");
+    }
+
+    #[tokio::test]
+    async fn test_run_skill_creation_rejected_is_unsuccessful() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let response = serde_json::json!({
+            "decision": "rejected",
+            "rejection_reason": "This is a CLI wrapper, not an LLM reasoning task",
+            "redirect_suggestion": "Tool System"
+        })
+        .to_string();
+        let delegator = Arc::new(SkillCreatorDelegator {
+            response,
+            root_md: None,
+        });
+        let args = serde_json::json!({
+            "agent_name": "skill-creator",
+            "prompt": "Wrap the curl command",
+        });
+
+        let output = run_skill_creation(delegator, tmp.path(), &args)
+            .await
+            .unwrap();
+
+        assert!(!output.success);
+        assert_eq!(output.content["decision"], "rejected");
+        assert!(output.content.get("skill_id").is_none());
+        assert!(output.content["error"]
+            .as_str()
+            .unwrap()
+            .contains("CLI wrapper"));
+    }
+
+    #[tokio::test]
+    async fn test_run_skill_creation_missing_prompt() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let delegator = Arc::new(SkillCreatorDelegator {
+            response: String::new(),
+            root_md: None,
+        });
+        let args = serde_json::json!({ "agent_name": "skill-creator" });
+
+        let result = run_skill_creation(delegator, tmp.path(), &args).await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            y_core::tool::ToolError::ValidationError { .. }
+        ));
     }
 }

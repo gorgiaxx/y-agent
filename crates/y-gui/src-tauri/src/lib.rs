@@ -473,6 +473,7 @@ pub fn run() {
             commands::skills::skill_set_enabled,
             commands::skills::skill_open_folder,
             commands::skills::skill_import,
+            commands::skills::skill_create,
             commands::skills::skill_get_files,
             commands::skills::skill_read_file,
             commands::skills::skill_save_file,

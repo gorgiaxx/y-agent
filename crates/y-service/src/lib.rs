@@ -39,6 +39,7 @@ pub mod plan_orchestrator;
 pub mod prompt_templates;
 pub mod rewind;
 pub mod scheduler_service;
+pub mod skill_creation;
 pub mod skill_evolution;
 pub mod skill_files;
 pub mod skill_ingestion;
@@ -87,6 +88,10 @@ pub use rewind::{FileHistoryManagers, RewindError, RewindPointInfo, RewindResult
 pub use scheduler_service::{
     CreateScheduleRequest, ExecutionSummary, ScheduleSummary, SchedulerService,
     SchedulerServiceError, UpdateScheduleRequest,
+};
+pub use skill_creation::{
+    create_skill_from_request, CreationDecision, CreationError, CreationResult, SkillCreateOutcome,
+    SkillCreationService,
 };
 pub use skill_evolution::{
     CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,

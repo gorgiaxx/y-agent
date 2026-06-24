@@ -439,7 +439,7 @@ async function initialiseBus() {
           model: ev.model,
           error: ev.error,
           duration_ms: ev.duration_ms,
-          prompt_preview: '',
+          prompt_preview: ev.prompt_preview,
           context_window: 0,
           agent_name: ev.agent_name,
         },

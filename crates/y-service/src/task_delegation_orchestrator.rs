@@ -58,7 +58,6 @@ impl TaskDelegationOrchestrator {
             "task": prompt,
             "mode": mode,
         });
-        let input_snapshot = input.clone();
 
         let result = delegator
             .delegate(agent_name, input, context_strategy, session_id)
@@ -78,21 +77,24 @@ impl TaskDelegationOrchestrator {
                 },
             })?;
 
+        // The content returned to the LLM is the delegated agent's output only.
+        // Diagnostics fields (model, tokens, duration) are recorded separately
+        // via the trace pipeline in `DiagnosticsAgentDelegator`; surfacing them
+        // here would pollute the conversation context with non-semantic noise.
         Ok(ToolOutput {
             success: true,
             content: serde_json::json!({
                 "agent_name": agent_name,
-                "input": input_snapshot,
                 "output": result.text,
-                "model_used": result.model_used,
-                "tokens_used": result.tokens_used,
-                "duration_ms": result.duration_ms,
             }),
             warnings: vec![],
             metadata: serde_json::json!({
                 "action": "delegate",
+                "model_used": result.model_used,
+                "tokens_used": result.tokens_used,
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
+                "duration_ms": result.duration_ms,
             }),
         })
     }
@@ -205,17 +207,23 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(result.content["agent_name"], "agent-architect");
-        assert!(result.content["input"]["task"]
-            .as_str()
-            .unwrap()
-            .contains("Design a disk info agent"));
         assert!(result.content["output"]
             .as_str()
             .unwrap()
             .contains("completed the task"));
-        assert_eq!(result.content["model_used"], "test-model");
-        assert_eq!(result.content["tokens_used"], 100);
-        assert_eq!(result.content["duration_ms"], 500);
+        // The LLM-facing content must not carry the echoed input or any
+        // diagnostics telemetry -- those would only pollute the context.
+        assert!(result.content.get("input").is_none());
+        assert!(result.content.get("model_used").is_none());
+        assert!(result.content.get("tokens_used").is_none());
+        assert!(result.content.get("duration_ms").is_none());
+        // Diagnostics telemetry lives in metadata (presentation/diagnostics
+        // path only; never injected into the conversation).
+        assert_eq!(result.metadata["model_used"], "test-model");
+        assert_eq!(result.metadata["tokens_used"], 100);
+        assert_eq!(result.metadata["input_tokens"], 60);
+        assert_eq!(result.metadata["output_tokens"], 40);
+        assert_eq!(result.metadata["duration_ms"], 500);
     }
 
     #[tokio::test]

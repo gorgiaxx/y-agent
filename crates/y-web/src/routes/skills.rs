@@ -101,6 +101,22 @@ fn default_import_sanitize() -> bool {
     true
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CreateSkillRequest {
+    pub request: String,
+    #[serde(default)]
+    pub domain_hints: Option<Vec<String>>,
+    #[serde(default)]
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkillCreateResult {
+    pub decision: String,
+    pub skill_id: Option<String>,
+    pub error: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -461,6 +477,51 @@ async fn import_skill(
     Ok(Json(result))
 }
 
+/// `POST /api/v1/skills/create` -- create a skill from a description.
+async fn create_skill(
+    State(state): State<AppState>,
+    Json(body): Json<CreateSkillRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let skills_dir = skills_store_path(&state.config_dir);
+    tokio::fs::create_dir_all(&skills_dir)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to create skills dir: {e}")))?;
+
+    let store = FilesystemSkillStore::new(&skills_dir)
+        .map_err(|e| ApiError::Internal(format!("Failed to open skill store: {e}")))?;
+    let registry = Arc::new(tokio::sync::RwLock::new(
+        SkillRegistryImpl::with_store(store)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to create registry: {e}")))?,
+    ));
+    let creation_service = state.container.skill_creation_service(registry);
+
+    let result = creation_service
+        .create(
+            &body.request,
+            body.domain_hints.as_deref(),
+            body.language.as_deref(),
+        )
+        .await
+        .map_or_else(
+            |e| SkillCreateResult {
+                decision: "rejected".to_string(),
+                skill_id: None,
+                error: Some(e.to_string()),
+            },
+            |r| SkillCreateResult {
+                decision: match r.decision {
+                    y_service::CreationDecision::Created => "created".to_string(),
+                    y_service::CreationDecision::Rejected => "rejected".to_string(),
+                },
+                skill_id: r.skill_id,
+                error: r.rejection_reason,
+            },
+        );
+
+    Ok(Json(result))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -470,6 +531,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/skills", get(list_skills))
         .route("/api/v1/skills/import", post(import_skill))
+        .route("/api/v1/skills/create", post(create_skill))
         .route(
             "/api/v1/skills/{name}",
             get(get_skill).delete(uninstall_skill),

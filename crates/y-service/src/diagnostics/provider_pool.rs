@@ -160,6 +160,7 @@ impl DiagnosticsProviderPool {
         error: &ProviderError,
         elapsed_ms: u64,
         model: &str,
+        prompt_preview: &str,
     ) {
         let iteration = ctx.iteration.load(std::sync::atomic::Ordering::Relaxed) + 1;
         let _ = self.broadcast_tx.send(DiagnosticsEvent::LlmCallFailed {
@@ -171,6 +172,7 @@ impl DiagnosticsProviderPool {
             model: model.to_string(),
             error: format!("{error}"),
             duration_ms: elapsed_ms,
+            prompt_preview: prompt_preview.to_string(),
         });
     }
 }
@@ -211,7 +213,7 @@ impl ProviderPool for DiagnosticsProviderPool {
                 }
                 Err(e) => {
                     let model = request.model.as_deref().unwrap_or("unknown");
-                    self.emit_failure(&ctx, e, elapsed_ms, model);
+                    self.emit_failure(&ctx, e, elapsed_ms, model, &fallback);
                 }
             }
         }

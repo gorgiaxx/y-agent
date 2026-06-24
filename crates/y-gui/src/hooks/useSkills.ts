@@ -1,8 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import { transport } from '../lib';
-import type { SkillInfo, SkillDetail, SkillFileEntry, SkillImportResult } from '../types';
+import type { SkillInfo, SkillDetail, SkillFileEntry, SkillImportResult, DiagnosticsGatewayEvent } from '../types';
 
 export type ImportStatus = 'idle' | 'importing' | 'success' | 'error';
+
+/** The agent whose successful completion means a new skill was registered. */
+const SKILL_CREATOR_AGENT = 'skill-creator';
+
+/**
+ * True when a diagnostics event signals that a skill was just created via chat
+ * (the skill-creator sub-agent finished successfully). Used to live-refresh the
+ * skills list so chat-created skills appear without a manual reload.
+ */
+export function isSkillCreatedEvent(
+  payload: DiagnosticsGatewayEvent | null | undefined,
+): boolean {
+  return (
+    payload?.type === 'subagent_completed'
+    && payload.agent_name === SKILL_CREATOR_AGENT
+    && payload.success === true
+  );
+}
 
 export interface UseSkillsReturn {
   skills: SkillInfo[];
@@ -42,6 +60,21 @@ export function useSkills(): UseSkillsReturn {
   // Initial load on mount.
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // Live-refresh when a skill is created from chat. The skill-creator agent
+  // runs as a sub-agent, so its successful completion is the signal that a new
+  // skill was registered on disk. Without this the panel only updates on mount,
+  // view activation, or panel-initiated actions (import/uninstall/toggle).
+  useEffect(() => {
+    const unlisten = transport.listen<DiagnosticsGatewayEvent>('diagnostics:event', ({ payload }) => {
+      if (isSkillCreatedEvent(payload)) {
+        void refresh();
+      }
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
   }, [refresh]);
 
   // Expose refresh for external callers (e.g., view activation).

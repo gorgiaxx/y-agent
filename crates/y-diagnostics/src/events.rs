@@ -46,6 +46,7 @@ pub enum DiagnosticsEvent {
         model: String,
         error: String,
         duration_ms: u64,
+        prompt_preview: String,
     },
     /// A tool call completed (or failed).
     ToolCallCompleted {

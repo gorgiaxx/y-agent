@@ -40,6 +40,20 @@ pub enum SkillAction {
         name: String,
     },
 
+    /// Create a new skill from a natural-language description (uses AI agent).
+    Create {
+        /// Natural-language description of the skill to create.
+        request: String,
+
+        /// Optional domain hints (comma-separated).
+        #[arg(long)]
+        domain: Option<String>,
+
+        /// Optional target language (ISO 639-1).
+        #[arg(long)]
+        language: Option<String>,
+    },
+
     /// Validate all registered skills.
     Validate,
 
@@ -178,6 +192,50 @@ pub async fn run(
             let store = FilesystemSkillStore::new(store_path)?;
             store.delete_skill(name)?;
             output::print_success(&format!("Skill '{name}' has been deprecated and removed"));
+        }
+
+        SkillAction::Create {
+            request,
+            domain,
+            language,
+        } => {
+            let store = FilesystemSkillStore::new(store_path)?;
+            let registry = std::sync::Arc::new(tokio::sync::RwLock::new(
+                SkillRegistryImpl::with_store(store).await?,
+            ));
+            let creation_service = services.skill_creation_service(registry);
+
+            output::print_info("Creating skill (agent-assisted)...");
+
+            let domain_hints: Option<Vec<String>> = domain
+                .as_deref()
+                .map(|d| d.split(',').map(|s| s.trim().to_string()).collect());
+
+            match creation_service
+                .create(request, domain_hints.as_deref(), language.as_deref())
+                .await
+            {
+                Ok(result) => match result.decision {
+                    y_service::CreationDecision::Created => {
+                        let notes = result.optimization_notes.as_deref().unwrap_or("(none)");
+                        output::print_success(&format!(
+                            "Skill created successfully\n  ID: {}\n  Notes: {}",
+                            result.skill_id.unwrap_or_default(),
+                            notes
+                        ));
+                    }
+                    y_service::CreationDecision::Rejected => {
+                        output::print_error(&format!(
+                            "Skill creation rejected\n  Reason: {}\n  Suggestion: {}",
+                            result.rejection_reason.unwrap_or_default(),
+                            result.redirect_suggestion.unwrap_or_default()
+                        ));
+                    }
+                },
+                Err(e) => {
+                    output::print_error(&format!("Creation failed: {e}"));
+                }
+            }
         }
 
         SkillAction::Validate => {

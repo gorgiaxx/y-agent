@@ -42,6 +42,7 @@ use crate::chat_types::OperationMode;
 use crate::config::ServiceConfig;
 
 use crate::knowledge_service::KnowledgeService;
+use crate::skill_creation::{create_skill_from_request, SkillCreateOutcome, SkillCreationService};
 use crate::skill_ingestion::{import_skill_from_path, SkillImportOutcome, SkillIngestionService};
 
 use y_mcp::McpConnectionManager;
@@ -201,6 +202,11 @@ pub struct ServiceContainer {
     /// Data directory root (parent of the `SQLite` database file).
     /// Used for constructing file-history backup paths.
     pub data_dir: PathBuf,
+
+    /// Skills store directory (`<config_dir>/skills`). Registration targets
+    /// this path so newly created skills surface in the same store the
+    /// presentation layers read.
+    pub skills_dir: Option<PathBuf>,
 
     #[cfg(feature = "langfuse")]
     langfuse_state: tokio::sync::Mutex<LangfuseState>,
@@ -398,6 +404,7 @@ impl ServiceContainer {
                 importer_handle: None,
                 shutdown: tokio_util::sync::CancellationToken::new(),
             }),
+            skills_dir: config.skills_dir.clone(),
         })
     }
 
@@ -777,6 +784,16 @@ tools = ["ToolSearch"]
         }
 
         index
+    }
+
+    /// Rebuild the in-memory skill search index from `skills_dir`.
+    ///
+    /// Call after a skill is added or removed so `ToolSearch` reflects the
+    /// change within the current session. Presentation layers that read the
+    /// store from disk (e.g. the GUI skill panel) need no refresh.
+    pub async fn refresh_skill_search(&self) {
+        let index = Self::build_skill_search_index(self.skills_dir.as_deref());
+        *self.skill_search.write().await = index;
     }
 }
 
@@ -1185,6 +1202,34 @@ impl ServiceContainer {
             store_path,
             source_path,
             sanitize,
+        )
+        .await
+    }
+
+    /// Construct a [`SkillCreationService`] wired to this container's
+    /// agent delegator.
+    pub fn skill_creation_service(
+        &self,
+        registry: Arc<RwLock<SkillRegistryImpl>>,
+    ) -> SkillCreationService {
+        SkillCreationService::new(Arc::clone(&self.agent_delegator), registry)
+    }
+
+    /// Create a skill from a natural-language description using the
+    /// service-layer workflow.
+    pub async fn create_skill(
+        &self,
+        store_path: &std::path::Path,
+        request: &str,
+        domain_hints: Option<&[String]>,
+        language: Option<&str>,
+    ) -> Result<SkillCreateOutcome, String> {
+        create_skill_from_request(
+            Arc::clone(&self.agent_delegator),
+            store_path,
+            request,
+            domain_hints,
+            language,
         )
         .await
     }

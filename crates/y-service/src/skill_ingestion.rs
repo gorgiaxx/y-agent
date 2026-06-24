@@ -845,7 +845,7 @@ fn format_to_str(format: IngestionFormat) -> &'static str {
 /// (from tool-calling iterations like `ShellExec` / `FileRead`) before the
 /// final JSON output. This finds the first `{` and last `}` to extract the
 /// JSON object, discarding any prefix or suffix.
-fn extract_json_from_response(text: &str) -> &str {
+pub(crate) fn extract_json_from_response(text: &str) -> &str {
     let trimmed = text.trim();
     if let Some(start) = trimmed.find('{') {
         if let Some(end) = trimmed.rfind('}') {

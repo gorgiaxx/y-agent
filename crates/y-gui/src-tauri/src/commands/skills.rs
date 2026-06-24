@@ -27,6 +27,9 @@ pub type SkillDetail = y_service::SkillDetail;
 /// Result of a skill import operation.
 pub type SkillImportResult = y_service::SkillImportOutcome;
 
+/// Result of a skill creation operation.
+pub type SkillCreateResult = y_service::SkillCreateOutcome;
+
 /// A file/directory entry within a skill directory.
 #[derive(Debug, Serialize, Clone)]
 pub struct SkillFileEntry {
@@ -181,6 +184,29 @@ pub async fn skill_import(
     state
         .container
         .import_skill_from_path(&store_path, Path::new(&path), sanitize)
+        .await
+}
+
+/// Create a new skill from a natural-language description. Delegates to the
+/// `skill-creator` agent, which generates the skill content and metadata,
+/// then registers the result in the skill store.
+#[tauri::command]
+pub async fn skill_create(
+    _app: AppHandle,
+    state: State<'_, AppState>,
+    request: String,
+    domain_hints: Option<Vec<String>>,
+    language: Option<String>,
+) -> Result<SkillCreateResult, String> {
+    let store_path = skills_store_path(&state.config_dir);
+    state
+        .container
+        .create_skill(
+            &store_path,
+            &request,
+            domain_hints.as_deref(),
+            language.as_deref(),
+        )
         .await
 }
 
