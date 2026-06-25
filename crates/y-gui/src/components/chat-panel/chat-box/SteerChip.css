@@ -1,0 +1,48 @@
+/* Inline steer chip: marks a mid-run user intervention within the assistant
+   bubble. Modeled on .tool-call-tag, accented to distinguish it from tool cards
+   and to read as a user action rather than assistant output. */
+.steer-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  max-width: 100%;
+  margin: var(--space-2, 8px) 0;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent, var(--border));
+  background: var(--accent-subtle, var(--surface-code));
+  user-select: none;
+}
+
+.steer-chip-action-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.steer-chip-icon {
+  color: var(--accent, var(--text-muted));
+  flex-shrink: 0;
+}
+
+.steer-chip-key {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--accent, var(--text-muted));
+  letter-spacing: 0.03em;
+  flex-shrink: 0;
+}
+
+.steer-chip-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
