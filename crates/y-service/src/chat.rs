@@ -1081,6 +1081,10 @@ impl ChatService {
                         "persisted partial messages before LLM error"
                     );
                 }
+                // Record the turn boundary so a retry can anchor to it and
+                // resume from the partial tool-call state, instead of falling
+                // back to a destructive full-turn resend.
+                Self::persist_turn_checkpoint(container, input).await;
                 return Err(TurnError::LlmError(message));
             }
             Err(AgentExecutionError::Cancelled {
@@ -1218,22 +1222,8 @@ impl ChatService {
         let mut new_messages = result.new_messages.clone();
         new_messages.push(assistant_msg);
 
-        // Checkpoint.
-        // When pre_turn_message_count is set (intra-turn retry), the history
-        // includes partial tool-call state from the failed attempt, so
-        // history.len() - 1 would overcount. Use the original pre-turn count.
-        let msg_count_before = input
-            .pre_turn_message_count
-            .unwrap_or_else(|| u32::try_from(input.history.len().saturating_sub(1)).unwrap_or(0));
-        let turn = input.turn_number + 1;
-        let scope_id = format!("turn-{}-{}", input.session_id.0, turn);
-        if let Err(e) = container
-            .chat_checkpoint_manager
-            .create_checkpoint(&input.session_id, turn, msg_count_before, scope_id)
-            .await
-        {
-            tracing::warn!(error = %e, "failed to create chat checkpoint");
-        }
+        // Checkpoint the completed turn boundary.
+        Self::persist_turn_checkpoint(container, input).await;
 
         // Post-turn context optimization (pruning + conditional compaction).
         if let Err(e) = crate::context_optimization::ContextOptimizationService::optimize_post_turn(
@@ -1402,6 +1392,32 @@ impl ChatService {
             tool_calls: vec![],
             timestamp: y_core::types::now(),
             metadata: meta,
+        }
+    }
+
+    /// Create (or refresh) the chat checkpoint marking this turn's boundary.
+    ///
+    /// Called from both the success path and the LLM-error path so that a
+    /// failed turn still has a checkpoint to anchor an intra-turn retry. The
+    /// checkpoint manager keys on `(session_id, turn_number)`, so calling this
+    /// twice for the same turn (failure then a successful retry) reuses the
+    /// same checkpoint slot rather than creating a duplicate.
+    ///
+    /// When `pre_turn_message_count` is set (intra-turn retry), the history
+    /// includes partial tool-call state from the failed attempt, so
+    /// `history.len() - 1` would overcount; the original pre-turn count is used.
+    async fn persist_turn_checkpoint(container: &ServiceContainer, input: &TurnInput<'_>) {
+        let msg_count_before = input
+            .pre_turn_message_count
+            .unwrap_or_else(|| u32::try_from(input.history.len().saturating_sub(1)).unwrap_or(0));
+        let turn = input.turn_number + 1;
+        let scope_id = format!("turn-{}-{}", input.session_id.0, turn);
+        if let Err(e) = container
+            .chat_checkpoint_manager
+            .create_checkpoint(&input.session_id, turn, msg_count_before, scope_id)
+            .await
+        {
+            tracing::warn!(error = %e, "failed to create chat checkpoint");
         }
     }
 
@@ -2579,6 +2595,105 @@ mod tests {
             RequestMode::ImageGeneration
         );
         assert_eq!(resent.history.len(), 1);
+        assert_eq!(resent.history[0].role, Role::User);
+    }
+
+    #[tokio::test]
+    async fn failed_turn_records_checkpoint_for_intra_turn_resend() {
+        let (container, _tmp) = make_test_container().await;
+
+        // 1. Start a turn -- persists the user message at display index 0.
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: None,
+                user_input: "run the task".into(),
+                provider_id: None,
+                request_mode: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+                operation_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
+                image_generation_options: None,
+            },
+        )
+        .await
+        .expect("prepare_turn should succeed");
+
+        let input = prepared.as_turn_input();
+
+        // 2. Simulate an LLM error after one tool call ran -- exactly what
+        //    execute_turn_inner's LlmError branch does: persist the partial
+        //    tool-call state plus the turn-boundary checkpoint.
+        let assistant = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: "calling the tool".into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        };
+        let tool = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Tool,
+            content: "tool result".into(),
+            tool_call_id: Some("call-1".into()),
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        };
+        ChatService::persist_llm_error_partial_state(
+            &container,
+            &input,
+            "LLM error: HTTP 504 Gateway Timeout",
+            &[assistant, tool],
+        )
+        .await;
+        ChatService::persist_turn_checkpoint(&container, &input).await;
+
+        // 3. The failed turn must now have a checkpoint at its boundary.
+        let checkpoint = container
+            .chat_checkpoint_manager
+            .list_checkpoints(&prepared.session_id)
+            .await
+            .expect("list checkpoints")
+            .into_iter()
+            .find(|cp| cp.message_count_before == 0)
+            .expect("failed turn should record a boundary checkpoint");
+
+        // 4. Resend must take the intra-turn branch: resume from the pre-turn
+        //    count and keep the partial tool-call state, not wipe the turn.
+        let resent = ChatService::prepare_resend_turn(
+            &container,
+            ResendTurnRequest {
+                session_id: prepared.session_id.clone(),
+                checkpoint_id: checkpoint.checkpoint_id,
+                provider_id: None,
+                request_mode: None,
+                knowledge_collections: None,
+                thinking: None,
+                plan_mode: None,
+                operation_mode: None,
+            },
+        )
+        .await
+        .expect("prepare_resend_turn should succeed");
+
+        assert_eq!(
+            resent.pre_turn_message_count,
+            Some(0),
+            "intra-turn retry should resume from the pre-turn message count"
+        );
+        assert!(
+            resent.history.len() >= 3,
+            "partial tool-call state must be preserved (user + assistant + tool), got {}",
+            resent.history.len()
+        );
         assert_eq!(resent.history[0].role, Role::User);
     }
 

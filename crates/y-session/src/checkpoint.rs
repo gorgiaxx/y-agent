@@ -71,8 +71,21 @@ impl ChatCheckpointManager {
         message_count_before: u32,
         journal_scope_id: String,
     ) -> Result<ChatCheckpoint, SessionError> {
+        // Reuse the existing id for this turn if the slot is already occupied.
+        // A turn is checkpointed on failure (so a retry can anchor to it) and
+        // again on the subsequent successful retry; reusing the id keeps the
+        // (session_id, turn_number) slot stable instead of churning ids or
+        // colliding with the UNIQUE(session_id, turn_number) constraint.
+        let existing_id = self
+            .checkpoint_store
+            .list_by_session(session_id)
+            .await?
+            .into_iter()
+            .find(|cp| cp.turn_number == turn_number)
+            .map(|cp| cp.checkpoint_id);
+
         let checkpoint = ChatCheckpoint {
-            checkpoint_id: uuid::Uuid::new_v4().to_string(),
+            checkpoint_id: existing_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             session_id: session_id.clone(),
             turn_number,
             message_count_before,
@@ -349,6 +362,33 @@ mod tests {
         assert_eq!(cp.message_count_before, 0);
         assert_eq!(cp.journal_scope_id, "scope-turn-1");
         assert!(!cp.invalidated);
+    }
+
+    // A turn is checkpointed on LLM failure and again on the successful retry.
+    // The second call must reuse the same (session, turn) slot rather than
+    // creating a duplicate, so an intra-turn retry can still anchor to it.
+    #[tokio::test]
+    async fn test_create_checkpoint_idempotent_per_turn() {
+        let (mgr, sid) = setup().await;
+
+        let first = mgr
+            .create_checkpoint(&sid, 1, 0, "scope-turn-1".into())
+            .await
+            .unwrap();
+
+        let second = mgr
+            .create_checkpoint(&sid, 1, 0, "scope-turn-1-retry".into())
+            .await
+            .unwrap();
+
+        // Same turn -> same checkpoint id, refreshed fields, single slot.
+        assert_eq!(first.checkpoint_id, second.checkpoint_id);
+        assert_eq!(second.journal_scope_id, "scope-turn-1-retry");
+        assert!(!second.invalidated);
+
+        let all = mgr.checkpoint_store.list_by_session(&sid).await.unwrap();
+        assert_eq!(all.len(), 1, "turn 1 must occupy exactly one slot");
+        assert_eq!(all[0].turn_number, 1);
     }
 
     // T-CP-11: rollback_last truncates transcript.
