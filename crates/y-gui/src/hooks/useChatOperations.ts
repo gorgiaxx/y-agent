@@ -629,11 +629,23 @@ export function useChatOperations(
           }
 
           // 2. Remove the assistant reply from the cache.
-          const keepCount = checkpoint.message_count_before + 1;
+          //    For intra-turn retry (last message has stream_error), keep the
+          //    partial tool-call state and remove only the error-marked message.
+          const lastMsg = freshMsgs[freshMsgs.length - 1];
+          const isIntraTurnRetry =
+            lastMsg?.role === 'assistant' &&
+            typeof (lastMsg?.metadata as Record<string, unknown> | undefined)
+              ?.stream_error === 'string' &&
+            (
+              lastMsg?.metadata as Record<string, unknown> | undefined
+            )?.stream_error !== '';
+          const keepCount = isIntraTurnRetry
+            ? freshMsgs.length - 1
+            : checkpoint.message_count_before + 1;
           const keptMsgs = freshMsgs.slice(0, keepCount);
           const removedMsgs = freshMsgs.slice(keepCount);
           logger.debug(
-            `[chat] resendLastTurn: checkpoint.message_count_before=${checkpoint.message_count_before}, keepCount=${keepCount}, total=${freshMsgs.length}`,
+            `[chat] resendLastTurn: checkpoint.message_count_before=${checkpoint.message_count_before}, keepCount=${keepCount}, total=${freshMsgs.length}, isIntraTurnRetry=${isIntraTurnRetry}`,
           );
           logger.debug(
             '[chat] resendLastTurn: keeping:',
