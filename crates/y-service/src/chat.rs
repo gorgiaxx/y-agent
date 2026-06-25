@@ -653,6 +653,7 @@ impl ChatService {
             skills,
             agent_config,
             image_generation_options: request.image_generation_options,
+            pre_turn_message_count: None,
         })
     }
 
@@ -684,6 +685,151 @@ impl ChatService {
             .load(&request.checkpoint_id)
             .await
             .map_err(|e| ResendTurnError::CheckpointNotFound(e.to_string()))?;
+
+        // 2. Read display transcript to detect intra-turn retry (partial state
+        //    from a failed LLM call that had already executed some tool calls).
+        let display_msgs = container
+            .session_manager
+            .read_display_transcript(&request.session_id)
+            .await
+            .map_err(|e| ResendTurnError::TranscriptReadFailed(e.to_string()))?;
+
+        let is_intra_turn_retry = display_msgs.last().is_some_and(|msg| {
+            msg.role == Role::Assistant
+                && msg
+                    .metadata
+                    .get("stream_error")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| !s.is_empty())
+        });
+
+        if is_intra_turn_retry {
+            // -- Intra-turn retry: keep partial state, continue from the last
+            //    successfully executed tool call. --
+
+            // 2a. Remove the error-marked message from the display transcript.
+            let display_len = display_msgs.len();
+            container
+                .session_manager
+                .display_transcript_store()
+                .truncate(&request.session_id, display_len.saturating_sub(1))
+                .await
+                .map_err(|e| ResendTurnError::TruncateFailed(e.to_string()))?;
+
+            // 2b. Do NOT truncate the context transcript -- it already has the
+            //     partial state (assistant + tool messages) from
+            //     persist_llm_error_partial_state.
+
+            // 2c. Do NOT invalidate the checkpoint -- the turn boundary hasn't
+            //     changed; we are continuing the same turn.
+
+            // 3. Read context transcript (includes partial state).
+            let history = container
+                .session_manager
+                .read_transcript(&request.session_id)
+                .await
+                .map_err(|e| ResendTurnError::TranscriptReadFailed(e.to_string()))?;
+
+            if history.is_empty() {
+                return Err(ResendTurnError::TranscriptEmpty);
+            }
+
+            // 4. Find the user message at the checkpoint's message_count_before
+            //    index (the same index used for turn-level truncation).
+            let user_msg_index = checkpoint.message_count_before as usize;
+            let Some(user_msg) = history.get(user_msg_index) else {
+                return Err(ResendTurnError::TranscriptEmpty);
+            };
+            if user_msg.role != Role::User {
+                return Err(ResendTurnError::TruncateFailed(format!(
+                    "expected user message at index {} in intra-turn retry, found {:?}",
+                    user_msg_index, user_msg.role
+                )));
+            }
+
+            let requested_skills = user_msg
+                .metadata
+                .get("skills")
+                .and_then(|value| value.as_array())
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(|value| value.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                });
+            let user_turns = history
+                .iter()
+                .filter(|message| message.role == Role::User)
+                .count();
+            let skills =
+                Self::resolve_turn_skills(requested_skills, agent_config.as_ref(), user_turns == 1);
+            let knowledge_collections =
+                Self::resolve_turn_knowledge(request.knowledge_collections, agent_config.as_ref());
+            let provider_id = request.provider_id.or_else(|| {
+                agent_config
+                    .as_ref()
+                    .and_then(|config| config.provider_id.clone())
+            });
+            let thinking = request.thinking.or_else(|| {
+                agent_config
+                    .as_ref()
+                    .and_then(|config| config.thinking.clone())
+            });
+            let plan_mode = request.plan_mode.or_else(|| {
+                agent_config
+                    .as_ref()
+                    .and_then(|config| config.plan_mode.clone())
+            });
+            let operation_mode = request.operation_mode.unwrap_or_default();
+            {
+                let mut modes = container.session_operation_modes.write().await;
+                modes.insert(request.session_id.clone(), operation_mode);
+            }
+            let request_mode = request
+                .request_mode
+                .or_else(|| Self::request_mode_from_metadata(&user_msg.metadata))
+                .unwrap_or_default();
+            let mcp_mode = agent_config
+                .as_ref()
+                .and_then(|config| config.mcp_mode.clone());
+            let mcp_servers = agent_config
+                .as_ref()
+                .map_or_else(Vec::new, |config| config.mcp_servers.clone());
+            let user_input = user_msg.content.clone();
+
+            // Derive turn number from display transcript (after removing the
+            // error-marked message) for checkpoint consistency.
+            let display_len_after = display_len.saturating_sub(1);
+            let turn_number = u32::try_from(display_len_after).unwrap_or(0);
+            let session_uuid =
+                Uuid::parse_str(request.session_id.as_str()).unwrap_or_else(|_| Uuid::new_v4());
+
+            return Ok(PreparedTurn {
+                session_id: request.session_id,
+                session_uuid,
+                history,
+                turn_number,
+                user_input,
+                provider_id,
+                request_mode,
+                session_created: false,
+                working_directory: agent_config
+                    .as_ref()
+                    .and_then(|config| config.working_directory.clone()),
+                knowledge_collections,
+                thinking,
+                plan_mode,
+                operation_mode,
+                mcp_mode,
+                mcp_servers,
+                skills,
+                agent_config,
+                image_generation_options: None,
+                pre_turn_message_count: Some(checkpoint.message_count_before),
+            });
+        }
+
+        // -- Turn-level retry: restart from the user message (existing behavior). --
 
         // 2. Partial truncation: keep user message (message_count_before + 1),
         //    remove assistant reply and any tool messages after it.
@@ -817,6 +963,7 @@ impl ChatService {
             skills,
             agent_config,
             image_generation_options: None,
+            pre_turn_message_count: None,
         })
     }
 
@@ -1072,7 +1219,12 @@ impl ChatService {
         new_messages.push(assistant_msg);
 
         // Checkpoint.
-        let msg_count_before = u32::try_from(input.history.len().saturating_sub(1)).unwrap_or(0);
+        // When pre_turn_message_count is set (intra-turn retry), the history
+        // includes partial tool-call state from the failed attempt, so
+        // history.len() - 1 would overcount. Use the original pre-turn count.
+        let msg_count_before = input
+            .pre_turn_message_count
+            .unwrap_or_else(|| u32::try_from(input.history.len().saturating_sub(1)).unwrap_or(0));
         let turn = input.turn_number + 1;
         let scope_id = format!("turn-{}-{}", input.session_id.0, turn);
         if let Err(e) = container
@@ -1838,6 +1990,7 @@ mod tests {
             mcp_mode: None,
             mcp_servers: vec![],
             image_generation_options: None,
+            pre_turn_message_count: None,
         };
 
         let config =
@@ -1875,6 +2028,7 @@ mod tests {
             mcp_mode: None,
             mcp_servers: vec![],
             image_generation_options: None,
+            pre_turn_message_count: None,
         };
 
         let config =

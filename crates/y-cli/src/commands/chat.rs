@@ -175,6 +175,7 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
                 mcp_mode: None,
                 mcp_servers: vec![],
                 image_generation_options: None,
+                pre_turn_message_count: None,
             };
 
             match orchestrator::execute_turn(services, &turn_input).await {

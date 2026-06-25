@@ -435,6 +435,11 @@ pub struct TurnInput<'a> {
     pub mcp_mode: Option<String>,
     pub mcp_servers: Vec<String>,
     pub image_generation_options: Option<ImageGenerationOptions>,
+    /// When set, overrides the `message_count_before` value used for checkpoint
+    /// creation. This is needed for intra-turn retry where `history` includes
+    /// partial tool-call state from the failed attempt, so `history.len() - 1`
+    /// would be larger than the actual pre-turn message count.
+    pub pre_turn_message_count: Option<u32>,
 }
 
 pub type TurnCancellationToken = tokio_util::sync::CancellationToken;
@@ -519,6 +524,7 @@ pub struct PreparedTurn {
     pub skills: Vec<String>,
     pub agent_config: Option<SessionAgentConfig>,
     pub image_generation_options: Option<ImageGenerationOptions>,
+    pub pre_turn_message_count: Option<u32>,
 }
 
 impl PreparedTurn {
@@ -581,6 +587,7 @@ impl PreparedTurn {
             mcp_mode: self.mcp_mode.clone(),
             mcp_servers: self.mcp_servers.clone(),
             image_generation_options: self.image_generation_options.clone(),
+            pre_turn_message_count: self.pre_turn_message_count,
         }
     }
 }

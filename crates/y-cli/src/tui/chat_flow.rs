@@ -223,6 +223,7 @@ pub fn submit_message(
             mcp_mode: None,
             mcp_servers: vec![],
             image_generation_options: None,
+            pre_turn_message_count: None,
         };
 
         // Set up a progress channel to receive streaming deltas.
