@@ -26,6 +26,73 @@ describe('buildHistorySegments', () => {
     ]);
     expect(extractFinalAnswer(segments, (text) => text)).toBe('Final answer');
   });
+
+  it('splices a steer chip between iteration tool blocks at its injection boundary', () => {
+    const toolResults = [
+      { name: 'Read', arguments: '', success: true, durationMs: 1, resultPreview: 'a' },
+      { name: 'Grep', arguments: '', success: true, durationMs: 1, resultPreview: 'b' },
+    ];
+    const segments = buildHistorySegments(
+      ['look\n', 'search\n'],
+      'done',
+      toolResults,
+      [null, null],
+      [null, null],
+      null,
+      null,
+      [1, 1],
+      [{ afterIteration: 1, text: 'focus on the parser', steerId: 's1' }],
+    );
+
+    expect(segments).toEqual([
+      { type: 'text', text: 'look\n' },
+      { type: 'tool_result', record: toolResults[0] },
+      { type: 'steer', text: 'focus on the parser', steerId: 's1' },
+      { type: 'text', text: 'search\n' },
+      { type: 'tool_result', record: toolResults[1] },
+      { type: 'text', text: 'done' },
+    ]);
+    // The steer chip never leaks into the copyable final answer.
+    expect(extractFinalAnswer(segments, (text) => text)).toBe('done');
+  });
+
+  it('places a leading steer (afterIteration 0) before the first iteration block', () => {
+    const toolResults = [
+      { name: 'Read', arguments: '', success: true, durationMs: 1, resultPreview: 'a' },
+    ];
+    const segments = buildHistorySegments(
+      ['look\n'],
+      'done',
+      toolResults,
+      [null],
+      [null],
+      null,
+      null,
+      [1],
+      [{ afterIteration: 0, text: 'wait', steerId: 's0' }],
+    );
+
+    expect(segments[0]).toEqual({ type: 'steer', text: 'wait', steerId: 's0' });
+  });
+
+  it('renders a steer chip in a turn with no tools or iterations', () => {
+    const segments = buildHistorySegments(
+      [],
+      'final',
+      [],
+      [],
+      [],
+      null,
+      null,
+      [],
+      [{ afterIteration: 0, text: 'reconsider', steerId: 's0' }],
+    );
+
+    expect(segments).toEqual([
+      { type: 'steer', text: 'reconsider', steerId: 's0' },
+      { type: 'text', text: 'final' },
+    ]);
+  });
 });
 
 describe('completeStreamingReasoningSegments', () => {
