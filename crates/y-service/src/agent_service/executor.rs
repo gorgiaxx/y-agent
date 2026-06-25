@@ -640,7 +640,10 @@ fn inject_steers(
             tool_call_id: None,
             tool_calls: vec![],
             timestamp: y_core::types::now(),
-            metadata: serde_json::Value::Null,
+            // Tag so the GUI can render this persisted user message as an inline
+            // steer chip instead of a normal user bubble. Display-only: providers
+            // serialize role/content/tool_calls, so this never reaches the LLM.
+            metadata: serde_json::json!({ "kind": "steer", "steer_id": steer.id }),
         };
         ctx.working_history.push(message.clone());
         ctx.injected_steers.push(InjectedSteer {
@@ -766,6 +769,12 @@ mod tests {
         assert_eq!(ctx.working_history[0].role, Role::User);
         assert_eq!(ctx.working_history[0].content, "steer one");
         assert_eq!(ctx.working_history[1].content, "steer two");
+
+        // Each injected user message is tagged so the GUI renders it as an
+        // inline steer chip rather than a normal user bubble.
+        assert_eq!(ctx.working_history[0].metadata["kind"], "steer");
+        assert_eq!(ctx.working_history[0].metadata["steer_id"], id1.as_str());
+        assert_eq!(ctx.working_history[1].metadata["steer_id"], id2.as_str());
 
         assert_eq!(ctx.injected_steers.len(), 2);
         assert_eq!(ctx.injected_steers[0].after_iteration, 2);
