@@ -10,6 +10,7 @@ import type { InterleavedSegment } from '../../hooks/useInterleavedSegments';
 import { RestoreDivider } from './chat-box/RestoreDivider';
 import { ContextResetDivider } from './chat-box/ContextResetDivider';
 import { CompactDivider } from './chat-box/CompactDivider';
+import { isSteerMessage, steerRunEnd, mergeSteeredTurn } from './steerCoalescing';
 import { ChatSearchToolbar } from './ChatSearchToolbar';
 import { useChatSearchContext } from '../../hooks/useChatSearchContext';
 import {
@@ -88,7 +89,7 @@ function buildDisplayItems(
     }
   }
 
-  messages.forEach((msg, idx) => {
+  const pushDividersAt = (idx: number) => {
     // Restore divider before this message.
     const seg = segmentMap.get(idx);
     if (seg) {
@@ -115,6 +116,26 @@ function buildDisplayItems(
         }
       }
     }
+  };
+
+  let idx = 0;
+  while (idx < messages.length) {
+    pushDividersAt(idx);
+    const msg = messages[idx];
+
+    // Coalesce a steered assistant turn ([assistant, steer-user, assistant, ...])
+    // into a single bubble, so each steer renders as an inline chip at its true
+    // injection point -- matching live streaming -- rather than a separate user
+    // bubble. Non-steered turns (lone assistant) fall through unchanged.
+    if (msg.role === 'assistant' || isSteerMessage(msg)) {
+      const { end, sawSteer } = steerRunEnd(messages, idx);
+      if (sawSteer) {
+        const merged = mergeSteeredTurn(messages.slice(idx, end + 1));
+        items.push({ kind: 'message', msg: merged, msgIdx: end });
+        idx = end + 1;
+        continue;
+      }
+    }
 
     // The message itself.
     items.push({
@@ -123,7 +144,8 @@ function buildDisplayItems(
       msgIdx: idx,
       toolResults: isLiveStreamingAssistantMessage(msg) ? toolResults : undefined,
     });
-  });
+    idx++;
+  }
 
   // Trailing restore divider (after all messages).
   const trailingSeg = segmentMap.get(messages.length);
