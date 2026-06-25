@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { ExternalLink } from 'lucide-react';
 import { platform } from '../../../../lib';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { tryParseJson, extractDomain, extractUrlMeta } from '../toolCallUtils';
+import { tryParseJson, extractDomain, extractUrlMeta, truncateForTag } from '../toolCallUtils';
 import { Favicon, DetailSections } from './shared';
 import { DefaultRenderer } from './DefaultRenderer';
 import type { ToolRendererProps } from './types';
@@ -40,7 +40,7 @@ export function UrlRenderer(props: ToolRendererProps) {
     return <DefaultRenderer {...props} />;
   }
 
-  const displayTitle = urlMeta.title || urlMeta.domain;
+  const displayTitle = truncateForTag(urlMeta.title || urlMeta.domain);
 
   const handleOpenExternal = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -55,7 +55,7 @@ export function UrlRenderer(props: ToolRendererProps) {
       <div
         className="tool-call-tag"
         onClick={() => hasExpandable && setExpanded(!expanded)}
-        title={urlMeta.url}
+        title={truncateForTag(urlMeta.url)}
       >
         <Favicon faviconUrl={urlMeta.faviconUrl} />
         <span className="tool-call-url-title">{displayTitle}</span>

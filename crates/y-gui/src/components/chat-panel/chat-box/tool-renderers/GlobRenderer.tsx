@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { FolderSearch, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractGlobMeta, parseGlobResult, formatToolResultPath } from '../toolCallUtils';
+import { extractGlobMeta, parseGlobResult, formatToolResultPath, truncateForTag } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -31,18 +31,24 @@ export function GlobRenderer({
     ? `${globResult.returnedCount} of ${globResult.count}`
     : String(globResult?.count ?? 0);
 
+  const title = truncateForTag(
+    globMeta.searchPath
+      ? `Glob: ${globMeta.pattern} in ${globMeta.searchPath}`
+      : `Glob: ${globMeta.pattern}`,
+  );
+
   return (
     <div className={`tool-call-file-wrapper ${statusClass}`}>
       <div
         className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
-        title={globMeta.searchPath ? `Glob: ${globMeta.pattern} in ${globMeta.searchPath}` : `Glob: ${globMeta.pattern}`}
+        title={title}
       >
         <span className="tool-call-action-group">
           <FolderSearch size={14} className="tool-call-icon-muted" />
           <span className="tool-call-key">Glob</span>
         </span>
-        <span className="tool-call-monospace-value">{globMeta.pattern}</span>
+        <span className="tool-call-monospace-value">{truncateForTag(globMeta.pattern)}</span>
         {globResult && (
           <span className="tool-call-glob-count">{globSummary} files</span>
         )}

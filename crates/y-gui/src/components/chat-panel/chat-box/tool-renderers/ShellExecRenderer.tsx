@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { SquareTerminal, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractShellCommand, extractShellExecSummary } from '../toolCallUtils';
+import { extractShellCommand, extractShellExecSummary, truncateForTag } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -13,7 +13,8 @@ export function ShellExecRenderer({
   const [expanded, setExpanded] = useState(false);
   const [showRaw, setShowRaw] = useState(false);
 
-  const shellCommand = extractShellCommand(toolCall.arguments);
+  const rawCommand = extractShellCommand(toolCall.arguments);
+  const shellCommand = rawCommand !== null ? truncateForTag(rawCommand) : null;
   const shellSummary = extractShellExecSummary(toolCall.arguments);
   const title = shellCommand
     ?? [shellSummary.label, shellSummary.processId].filter(Boolean).join(' ');

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractKnowledgeSearchMeta, parseKnowledgeSearchResult } from '../toolCallUtils';
+import { extractKnowledgeSearchMeta, parseKnowledgeSearchResult, truncateForTag } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -36,15 +36,17 @@ export function KnowledgeSearchRenderer({
       <div
         className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
-        title={meta.domain
-          ? `KnowledgeSearch: ${meta.query} (domain: ${meta.domain})`
-          : `KnowledgeSearch: ${meta.query}`}
+        title={truncateForTag(
+          meta.domain
+            ? `KnowledgeSearch: ${meta.query} (domain: ${meta.domain})`
+            : `KnowledgeSearch: ${meta.query}`,
+        )}
       >
         <span className="tool-call-action-group">
           <BookOpen size={14} className="tool-call-icon-muted" />
           <span className="tool-call-key">Knowledge</span>
         </span>
-        <span className="tool-call-monospace-value">{meta.query}</span>
+        <span className="tool-call-monospace-value">{truncateForTag(meta.query)}</span>
         {meta.domain && (
           <span className="tool-call-grep-filter">{meta.domain}</span>
         )}

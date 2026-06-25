@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Search, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractToolSearchMeta, formatToolSearchResult } from '../toolCallUtils';
+import { extractToolSearchMeta, formatToolSearchResult, truncateForTag } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -32,11 +32,11 @@ export function ToolSearchRenderer({
       <div
         className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
-        title={`ToolSearch: ${searchMeta.key}=${searchMeta.value}`}
+        title={truncateForTag(`ToolSearch: ${searchMeta.key}=${searchMeta.value}`)}
       >
         <Search size={14} className="tool-call-icon-muted" />
         <span className="tool-call-key">{searchMeta.key}:</span>
-        <span className="tool-call-monospace-value">{searchMeta.value}</span>
+        <span className="tool-call-monospace-value">{truncateForTag(searchMeta.value)}</span>
         <span className={`tool-call-status-icon ${statusClass}`}>{statusIcon}</span>
         {durationMs !== undefined && (
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>

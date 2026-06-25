@@ -41,6 +41,20 @@ export function formatToolResultPath(filePath: string): string {
   return filePath;
 }
 
+/**
+ * Max characters shown for a tool-call tag label or hover title before truncation.
+ * Shared by every renderer so the collapsed label and the `title` tooltip clip to
+ * the same length -- the full value is only revealed when the card is expanded.
+ */
+export const TOOL_TAG_MAX_LEN = 60;
+
+/** Truncate a single-line display string to a shared length with a trailing ellipsis. */
+export function truncateForTag(value: string, maxLength = TOOL_TAG_MAX_LEN): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
 /** Map file extension to Prism language identifier for syntax highlighting. */
 const EXT_TO_LANG: Record<string, string> = {
   rs: 'rust', py: 'python', js: 'javascript', jsx: 'jsx',
@@ -195,12 +209,11 @@ function extractLooseStringField(raw: string | undefined, key: string): string |
   return undefined;
 }
 
-function summarizeBrowserText(value: unknown, maxLength = 48): string | undefined {
+function summarizeBrowserText(value: unknown, maxLength = TOOL_TAG_MAX_LEN): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  if (trimmed.length <= maxLength) return trimmed;
-  return `${trimmed.slice(0, maxLength - 1)}…`;
+  return truncateForTag(trimmed, maxLength);
 }
 
 function titleCaseAction(action: string): string {

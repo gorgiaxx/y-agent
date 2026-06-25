@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Search, ChevronRight } from 'lucide-react';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { extractGrepMeta, parseGrepResult, formatToolResultPath } from '../toolCallUtils';
+import { extractGrepMeta, parseGrepResult, formatToolResultPath, truncateForTag } from '../toolCallUtils';
 import { DetailSections } from './shared';
 import type { ToolRendererProps } from './types';
 
@@ -41,18 +41,22 @@ export function GrepRenderer({
     }
   };
 
+  const title = truncateForTag(
+    grepMeta.path ? `Grep: ${grepMeta.pattern} in ${grepMeta.path}` : `Grep: ${grepMeta.pattern}`,
+  );
+
   return (
     <div className={`tool-call-file-wrapper ${statusClass}`}>
       <div
         className="tool-call-tag"
         onClick={() => canExpand && setExpanded(!expanded)}
-        title={grepMeta.path ? `Grep: ${grepMeta.pattern} in ${grepMeta.path}` : `Grep: ${grepMeta.pattern}`}
+        title={title}
       >
         <span className="tool-call-action-group">
           <Search size={14} className="tool-call-icon-muted" />
           <span className="tool-call-key">Grep</span>
         </span>
-        <span className="tool-call-monospace-value">{grepMeta.pattern}</span>
+        <span className="tool-call-monospace-value">{truncateForTag(grepMeta.pattern)}</span>
         {grepResult && (
           <span className="tool-call-glob-count">{getSummaryText()}</span>
         )}

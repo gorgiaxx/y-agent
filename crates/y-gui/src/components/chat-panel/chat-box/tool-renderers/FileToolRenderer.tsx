@@ -3,7 +3,7 @@ import { FilePenLine, FilePlus2, FileSearch, ChevronRight, ExternalLink } from '
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { formatDuration } from '../../../../utils/formatDuration';
-import { tryParseJson, extractFileToolMeta, basename, inferLanguage } from '../toolCallUtils';
+import { tryParseJson, extractFileToolMeta, basename, inferLanguage, truncateForTag } from '../toolCallUtils';
 import type { FileToolType } from '../toolCallUtils';
 import { useResolvedTheme } from '../../../../hooks/useTheme';
 import { platform, logger } from '../../../../lib';
@@ -39,7 +39,7 @@ export function FileToolRenderer({
   const fallbackType: FileToolType = toolCall.name === 'FileEdit' ? 'edit'
     : toolCall.name === 'FileRead' ? 'read' : 'write';
   const toolType = fileMeta?.toolType ?? fallbackType;
-  const fileName = fileMeta ? basename(fileMeta.filePath) : toolCall.name;
+  const fileName = fileMeta ? truncateForTag(basename(fileMeta.filePath)) : toolCall.name;
   const FileIcon = FILE_ICONS[toolType];
   const fileLabel = FILE_LABELS[toolType];
   const hasDiff = fileMeta?.toolType === 'edit'
@@ -97,7 +97,7 @@ export function FileToolRenderer({
         data-file-context-menu={fileMeta ? 'true' : undefined}
         onClick={() => canExpand && setExpanded(!expanded)}
         onContextMenu={handleContextMenu}
-        title={fileMeta?.filePath ?? toolCall.name}
+        title={fileMeta?.filePath ? truncateForTag(fileMeta.filePath) : toolCall.name}
       >
         <span className="tool-call-action-group">
           <FileIcon size={14} className="tool-call-icon-muted" />
