@@ -94,9 +94,18 @@ export const StaticBubble = memo(function StaticBubble({ message, onRetry }: Sta
       : [];
     const finalReasoning = (message.metadata?.reasoning_content as string) ?? null;
     const finalReasoningDuration = (message.metadata?.reasoning_duration_ms as number) ?? null;
-    // Need segments if there are tool results OR reasoning data.
+    // Steers injected mid-turn (present on a coalesced steered turn).
+    const rawSteers = message.metadata?.injected_steers;
+    const injectedSteers = Array.isArray(rawSteers)
+      ? (rawSteers as Array<Record<string, unknown>>).map((s) => ({
+          afterIteration: Number(s.after_iteration ?? 0),
+          text: String(s.text ?? ''),
+          steerId: typeof s.steer_id === 'string' ? s.steer_id : undefined,
+        }))
+      : [];
+    // Need segments if there are tool results, reasoning, or steer chips.
     const hasReasoning = iterationReasonings.some(Boolean) || !!finalReasoning;
-    if (metaToolResults.length === 0 && !hasReasoning) return null;
+    if (metaToolResults.length === 0 && !hasReasoning && injectedSteers.length === 0) return null;
     return buildHistorySegments(
       iterationTexts,
       finalResponse,
@@ -106,6 +115,7 @@ export const StaticBubble = memo(function StaticBubble({ message, onRetry }: Sta
       finalReasoning,
       finalReasoningDuration,
       iterationToolCounts,
+      injectedSteers,
     );
   }, [streamResult, metaToolResults, message.metadata]);
 

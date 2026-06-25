@@ -7,16 +7,26 @@
 
 import type { ToolResultRecord } from './chatStreamTypes';
 
-/** A display segment: text, tool result card, or reasoning card. */
+/** A display segment: text, tool result card, reasoning card, or steer chip. */
 export type InterleavedSegment =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; record: ToolResultRecord }
+  | { type: 'steer'; text: string; steerId?: string }
   | { type: 'reasoning'; content: string; durationMs?: number; isStreaming?: boolean;
       /** Stable source for concurrent streams (for example a plan phase executor). */
       sourceKey?: string;
       /** Client-side timestamp (ms) when this reasoning segment started streaming.
        *  Used to compute durationMs when the segment completes. Not rendered. */
       _startTs?: number };
+
+/** A user steering message injected mid-turn, anchored at an iteration boundary. */
+export interface InjectedSteerSegment {
+  /** Number of completed iteration blocks at injection time. The steer renders
+   *  after iteration block `afterIteration - 1` and before block `afterIteration`. */
+  afterIteration: number;
+  text: string;
+  steerId?: string;
+}
 
 export function completeStreamingReasoningSegments(
   segments: InterleavedSegment[],
@@ -111,9 +121,27 @@ export function buildHistorySegments(
   finalReasoning?: string | null,
   finalReasoningDuration?: number | null,
   iterationToolCounts?: number[],
+  injectedSteers?: InjectedSteerSegment[],
 ): InterleavedSegment[] {
+  // Steers anchored by iteration boundary, drained in order as boundaries pass.
+  const steers = (injectedSteers ?? [])
+    .slice()
+    .sort((a, b) => a.afterIteration - b.afterIteration);
+  let steerIdx = 0;
+  const flushSteersThrough = (boundary: number, out: InterleavedSegment[]) => {
+    while (steerIdx < steers.length && steers[steerIdx].afterIteration <= boundary) {
+      out.push({
+        type: 'steer',
+        text: steers[steerIdx].text,
+        steerId: steers[steerIdx].steerId,
+      });
+      steerIdx++;
+    }
+  };
+
   if (!toolResults.length && !iterationTexts.length) {
     const segments: InterleavedSegment[] = [];
+    flushSteersThrough(Number.POSITIVE_INFINITY, segments);
     if (finalReasoning) {
       segments.push({
         type: 'reasoning',
@@ -130,8 +158,9 @@ export function buildHistorySegments(
   const segments: InterleavedSegment[] = [];
   let toolIdx = 0;
 
-  // Each iteration: [reasoning] [text] [tool_results...]
+  // Each iteration: [steers anchored here] [reasoning] [text] [tool_results...]
   for (let i = 0; i < iterationTexts.length; i++) {
+    flushSteersThrough(i, segments);
     const reasoning = iterationReasonings?.[i];
     if (reasoning) {
       segments.push({
@@ -156,6 +185,9 @@ export function buildHistorySegments(
   while (toolIdx < toolResults.length) {
     segments.push({ type: 'tool_result', record: toolResults[toolIdx++] });
   }
+
+  // Steers anchored after the last iteration block, before the final response.
+  flushSteersThrough(Number.POSITIVE_INFINITY, segments);
 
   // Final response reasoning + text.
   if (finalReasoning) {

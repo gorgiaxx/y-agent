@@ -5,6 +5,7 @@ import type { InterleavedSegment } from '../../../hooks/useInterleavedSegments';
 import { ToolCallCard } from './ToolCallCard';
 import { ThinkingCard } from './ThinkingCard';
 import { ThinkContentBlock } from './ThinkContentBlock';
+import { SteerChip } from './SteerChip';
 
 type ToolStatus = 'running' | 'success' | 'error';
 
@@ -88,6 +89,9 @@ export function NativeSegmentList({ segments, markdownComponents }: NativeSegmen
               className="markdown-body"
             />
           );
+        }
+        if (seg.type === 'steer') {
+          return <SteerChip key={seg.steerId ? `steer-${seg.steerId}` : `steer-${idx}`} text={seg.text} />;
         }
         if (seg.type === 'tool_result') {
           return (
