@@ -99,9 +99,9 @@ export function useChatStreaming(
     if (!sid) return null;
     const segs = refs.streamSegsRef.current.get(sid);
     if (!segs || segs.length === 0) return null;
-    // Only return segments when there are tool results or reasoning
+    // Only return segments when there are tool results, reasoning, or steers
     // (otherwise plain text handled by the bubble directly).
-    if (segs.some((s) => s.type === 'tool_result' || s.type === 'reasoning')) return segs;
+    if (segs.some((s) => s.type === 'tool_result' || s.type === 'reasoning' || s.type === 'steer')) return segs;
     return null;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streamSegsVersion, refs.activeSessionIdRef, refs.streamSegsRef]);
@@ -683,33 +683,27 @@ export function useChatStreaming(
       } else if (event.type === 'heartbeat') {
         markSessionActivity(event.session_id);
       } else if (event.type === 'steer_injected') {
-        // A queued steer was injected at an LLM-call boundary. Insert a
-        // synthetic user message into the cached messages so it renders as a
-        // normal UserBubble inline. On reload the backend returns the
-        // persisted user message at the same position, so the rendering is
-        // consistent across streaming and native modes.
+        // A queued steer was injected at an LLM-call boundary. Push it as an
+        // inline `steer` segment at the current position in the streaming
+        // assistant bubble, so it renders as a steer chip at the true injection
+        // point (among the tool cards). On reload the backend returns the
+        // persisted steer user-message between assistant segments, which
+        // ChatPanel coalesces back into the same inline chip -- so streaming and
+        // native render identically.
         const sid = event.session_id;
         markSessionActivity(sid);
-        const steerMsg: Message = {
-          id: `steer-${event.steer_id || Date.now()}`,
-          role: 'user' as const,
-          content: event.text,
-          timestamp: new Date().toISOString(),
-          tool_calls: [],
-        };
-        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) => {
-          // Find the streaming assistant message and insert the steer
-          // user message before it, so the user bubble appears between
-          // the previous assistant content and the streaming continuation.
-          const streamingId = streamingAssistantMessageId(sid);
-          const streamingIdx = prev.findIndex((m) => m.id === streamingId);
-          if (streamingIdx >= 0) {
-            const next = [...prev];
-            next.splice(streamingIdx, 0, steerMsg);
-            return next;
-          }
-          return [...prev, steerMsg];
+        const segs = refs.streamSegsRef.current.get(sid) ?? [];
+        const preparedSegs = completeStreamingReasoningSegments(segs);
+        preparedSegs.push({
+          type: 'steer',
+          text: event.text,
+          steerId: event.steer_id,
         });
+        refs.streamSegsRef.current.set(sid, capSegments(preparedSegs));
+        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
+          ensureStreamingAssistantMessage(prev, sid),
+        );
+        setStreamSegsVersion((v) => v + 1);
         syncVisible(sid);
       }
     };
