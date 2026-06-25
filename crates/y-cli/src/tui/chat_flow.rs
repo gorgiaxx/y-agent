@@ -122,11 +122,11 @@ pub fn submit_message(
     let trimmed_owned = trimmed.to_string();
     let selected_provider_id = state.selected_provider_id.clone();
 
-    // Determine if title summarization should be triggered.
+    // Determine if title generation should be triggered. The title only
+    // consumes user messages, so it regenerates on every send (interval acts
+    // as an on/off switch: 0 disables it).
     let title_interval = services.session_manager.config().title_summarize_interval;
-    let should_generate_title = title_interval > 0
-        && user_msg_count > 0
-        && (user_msg_count == 1 || user_msg_count.is_multiple_of(title_interval));
+    let should_generate_title = title_interval > 0 && user_msg_count > 0;
 
     // Mark state as streaming — add placeholder assistant message.
     state.is_streaming = true;
@@ -187,6 +187,57 @@ pub fn submit_message(
             .session_manager
             .append_message(&session_id, &user_msg)
             .await;
+
+        // Fire title generation concurrently with the turn. The title only
+        // consumes user messages (the just-appended one is already persisted),
+        // so it does not need to wait for the assistant reply.
+        if should_generate_title {
+            let title_services = Arc::clone(&services);
+            let title_tx = tx.clone();
+            let title_session_id = session_id.clone();
+            let title_session_id_str = session_id_str.clone();
+            tokio::spawn(async move {
+                let has_manual_title = title_services
+                    .session_manager
+                    .get_session(&title_session_id)
+                    .await
+                    .map(|s| s.manual_title.is_some())
+                    .unwrap_or(false);
+                if has_manual_title {
+                    return;
+                }
+                match title_services
+                    .session_manager
+                    .read_transcript(&title_session_id)
+                    .await
+                {
+                    Ok(transcript) => {
+                        match title_services
+                            .session_manager
+                            .generate_title(
+                                &*title_services.agent_delegator,
+                                &title_session_id,
+                                &transcript,
+                            )
+                            .await
+                        {
+                            Ok(title) => {
+                                let _ = title_tx
+                                    .send(ChatEvent::TitleUpdated {
+                                        session_id: title_session_id_str,
+                                        title,
+                                    })
+                                    .await;
+                            }
+                            Err(e) => warn!(error = %e, "title generation failed"),
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "failed to read transcript for title generation");
+                    }
+                }
+            });
+        }
 
         // Parse session UUID for diagnostics.
         let session_uuid =
@@ -283,43 +334,6 @@ pub fn submit_message(
             }
             Err(e) => {
                 let _ = tx.send(ChatEvent::Error(format!("{e}"))).await;
-            }
-        }
-
-        // Trigger title summarization if interval reached.
-        if should_generate_title {
-            let session_id = SessionId::from_string(session_id_str.clone());
-            let has_manual_title = services
-                .session_manager
-                .get_session(&session_id)
-                .await
-                .map(|s| s.manual_title.is_some())
-                .unwrap_or(false);
-            if !has_manual_title {
-                match services.session_manager.read_transcript(&session_id).await {
-                    Ok(transcript) => {
-                        match services
-                            .session_manager
-                            .generate_title(&*services.agent_delegator, &session_id, &transcript)
-                            .await
-                        {
-                            Ok(title) => {
-                                let _ = tx
-                                    .send(ChatEvent::TitleUpdated {
-                                        session_id: session_id_str,
-                                        title,
-                                    })
-                                    .await;
-                            }
-                            Err(e) => {
-                                warn!(error = %e, "title generation failed");
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "failed to read transcript for title generation");
-                    }
-                }
             }
         }
     });

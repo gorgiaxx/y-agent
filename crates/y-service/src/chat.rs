@@ -1715,18 +1715,25 @@ impl ChatService {
         defs
     }
 
-    /// Determine whether title generation should be triggered for this turn.
+    /// Pure decision for title generation: enabled when `title_interval` is
+    /// non-zero and the history contains at least one user message to
+    /// summarize.
     ///
-    /// Business rule: generate a title when the session has at least one user
-    /// message and (`user_msg_count == 1` OR `user_msg_count` is a multiple of
-    /// `title_summarize_interval`). Disabled when `title_summarize_interval` is 0.
+    /// `title_summarize_interval` is now an on/off switch rather than a cadence:
+    /// any non-zero value means "regenerate on every user message". The title
+    /// only consumes user messages, so it no longer needs to wait for the
+    /// assistant turn or throttle to every-N turns.
+    fn title_generation_enabled(title_interval: u32, history: &[Message]) -> bool {
+        title_interval != 0 && history.iter().any(|m| m.role == Role::User)
+    }
+
+    /// Determine whether title generation should be triggered for this send.
+    ///
+    /// Generates a title on every user message; disabled entirely when
+    /// `title_summarize_interval` is 0.
     pub fn should_generate_title(container: &ServiceContainer, history: &[Message]) -> bool {
         let title_interval = container.session_manager.config().title_summarize_interval;
-        if title_interval == 0 {
-            return false;
-        }
-        let user_msg_count = history.iter().filter(|m| m.role == Role::User).count();
-        user_msg_count > 0 && (user_msg_count == 1 || user_msg_count % title_interval as usize == 0)
+        Self::title_generation_enabled(title_interval, history)
     }
 
     /// Mirror a `Message` to the `ChatMessageStore` (`SQLite`) so that the
@@ -1815,6 +1822,66 @@ mod tests {
                 metadata: serde_json::Value::Null,
             },
         ]
+    }
+
+    /// Build a history containing `user_count` user messages, each followed by
+    /// an assistant reply, mirroring a real multi-turn conversation.
+    fn history_with_user_messages(user_count: usize) -> Vec<Message> {
+        let mut history = Vec::new();
+        for i in 0..user_count {
+            history.push(Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::User,
+                content: format!("user message {i}"),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            });
+            history.push(Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::Assistant,
+                content: format!("assistant reply {i}"),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            });
+        }
+        history
+    }
+
+    #[test]
+    fn test_title_generation_disabled_when_interval_zero() {
+        let history = history_with_user_messages(3);
+        assert!(!ChatService::title_generation_enabled(0, &history));
+    }
+
+    #[test]
+    fn test_title_generation_skipped_without_user_messages() {
+        let history: Vec<Message> = Vec::new();
+        assert!(!ChatService::title_generation_enabled(3, &history));
+    }
+
+    #[test]
+    fn test_title_generation_fires_on_first_user_message() {
+        let history = history_with_user_messages(1);
+        assert!(ChatService::title_generation_enabled(3, &history));
+    }
+
+    #[test]
+    fn test_title_generation_fires_on_every_user_message() {
+        // Two user messages with the default interval of 3 previously returned
+        // false (2 != 1 and 2 % 3 != 0). It must now fire on every message.
+        let history = history_with_user_messages(2);
+        assert!(ChatService::title_generation_enabled(3, &history));
+    }
+
+    #[test]
+    fn test_title_generation_ignores_interval_magnitude() {
+        let history = history_with_user_messages(4);
+        assert!(ChatService::title_generation_enabled(1, &history));
+        assert!(ChatService::title_generation_enabled(7, &history));
     }
 
     #[test]

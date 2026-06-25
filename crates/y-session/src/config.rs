@@ -26,7 +26,8 @@ pub struct SessionConfig {
     #[serde(default = "default_auto_archive_merged")]
     pub auto_archive_merged: bool,
 
-    /// Number of user messages between title re-summarization (0 = disabled).
+    /// On/off switch for automatic title generation. `0` disables it; any
+    /// non-zero value enables title generation on every user message.
     #[serde(default = "default_title_summarize_interval")]
     pub title_summarize_interval: u32,
 }

@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
+use y_core::types::{Message, Role};
 
 use crate::chat::TurnEvent;
 use crate::chat_types::TurnMeta;
@@ -23,10 +24,11 @@ use crate::{ChatService, PreparedTurn, ServiceContainer};
 /// provided `EventSink`.
 ///
 /// The lifecycle:
-/// 1. Determine whether to generate a title for this session.
+/// 1. Determine whether to generate a title, and if so fire it concurrently
+///    (it depends only on user messages, so it does not wait for the turn).
 /// 2. Set up an mpsc progress channel and spawn a forwarding task.
 /// 3. Execute the turn via `ChatService::execute_turn_with_progress`.
-/// 4. On success: cache `TurnMeta`, emit complete, optionally generate title.
+/// 4. On success: cache `TurnMeta`, emit complete.
 /// 5. On error: emit error.
 /// 6. On panic: emit error.
 /// 7. Cleanup: remove from `pending_runs`.
@@ -77,6 +79,38 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
             } else {
                 false
             };
+
+            // Fire title generation concurrently with the turn. The title only
+            // consumes the user messages already present in `prepared.history`,
+            // so it does not need the assistant reply and must not block the
+            // turn. Steering messages never reach this path (they are injected
+            // mid-turn without spawning a worker), so they never trigger a
+            // title regeneration.
+            if do_title {
+                let user_messages: Vec<Message> = prepared
+                    .history
+                    .iter()
+                    .filter(|m| m.role == Role::User)
+                    .cloned()
+                    .collect();
+                let title_container = Arc::clone(&container);
+                let title_sink = Arc::clone(&sink_inner);
+                let title_sid = sid_clone.clone();
+                tokio::spawn(async move {
+                    match title_container
+                        .session_manager
+                        .generate_title(
+                            &*title_container.agent_delegator,
+                            &title_sid,
+                            &user_messages,
+                        )
+                        .await
+                    {
+                        Ok(title) => title_sink.emit_title_updated(&title_sid.0, &title),
+                        Err(e) => tracing::warn!(error = %e, "title generation failed"),
+                    }
+                });
+            }
 
             // Set up progress channel -- forward TurnEvents via the EventSink.
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -203,39 +237,6 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                         "context_tokens_used": result.last_input_tokens,
                     });
                     sink_inner.emit_complete(&payload);
-
-                    // Title generation.
-                    if do_title {
-                        match container.session_manager.read_transcript(&sid_clone).await {
-                            Ok(transcript) => {
-                                match container
-                                    .session_manager
-                                    .generate_title(
-                                        &*container.agent_delegator,
-                                        &sid_clone,
-                                        &transcript,
-                                    )
-                                    .await
-                                {
-                                    Ok(title) => {
-                                        sink_inner.emit_title_updated(&sid_clone.0, &title);
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            error = %e,
-                                            "title generation failed"
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    "failed to read transcript for title generation"
-                                );
-                            }
-                        }
-                    }
                 }
                 Err(e) => {
                     sink_inner.emit_error(&run_id_clone, &sid_clone.0, &e.to_string());

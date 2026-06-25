@@ -473,7 +473,7 @@ export function SetupWizard({
         <div className="wizard-info-card warning">
           <AlertTriangle size={14} className="wizard-info-card-icon" />
           <span>
-            Title generation consumes tokens on every new conversation.
+            Title generation consumes tokens on every message you send.
             A smaller, cheaper model is recommended (e.g. gpt-4o-mini).
           </span>
         </div>
