@@ -320,6 +320,7 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   session_restore_pending_reviews: { method: 'POST', path: '/api/v1/chat/restore-pending-reviews',
                          body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id') }) },
   session_last_turn_meta: { method: 'GET', path: pathWith('/api/v1/chat/last-turn-meta/{sessionId}', 'sessionId') },
+  session_list_plan_runs: { method: 'GET', path: pathWith('/api/v1/chat/plan-runs/{sessionId}', 'sessionId') },
   chat_add_steer:      { method: 'POST', path: '/api/v1/chat/steer',
                          body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id'), text: arg(a, 'text') }) },
   chat_delete_steer:   { method: 'DELETE', path: '/api/v1/chat/steer',

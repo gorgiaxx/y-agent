@@ -85,7 +85,7 @@ export function ChatView() {
   const {
     askUserData,
     permissionData,
-    planReviewData,
+    pendingReviewIds,
     handleAskUserSubmit,
     handleAskUserDismiss,
     handlePermissionApprove,
@@ -239,11 +239,11 @@ export function ChatView() {
   }, [sessionHooks, workspaceHooks]);
 
   const planReviewContextValue = useMemo(() => ({
-    reviewId: planReviewData?.reviewId ?? null,
+    pendingReviewIds,
     onApprove: handlePlanReviewApprove,
     onRevise: handlePlanReviewRevise,
     onReject: handlePlanReviewReject,
-  }), [planReviewData, handlePlanReviewApprove, handlePlanReviewRevise, handlePlanReviewReject]);
+  }), [pendingReviewIds, handlePlanReviewApprove, handlePlanReviewRevise, handlePlanReviewReject]);
 
   return (
     <PlanReviewProvider value={planReviewContextValue}>

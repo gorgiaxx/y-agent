@@ -276,7 +276,7 @@ export function MainLayout() {
       {panelCtx.infoOpen && (
         <InfoPanel
           modifiedFiles={infoData.modifiedFiles}
-          planStatus={infoData.planStatus}
+          plans={infoData.plans}
           loopStatus={infoData.loopStatus}
           expanded={panelCtx.infoExpanded}
           onToggleExpand={() => panelCtx.setInfoExpanded(!panelCtx.infoExpanded)}

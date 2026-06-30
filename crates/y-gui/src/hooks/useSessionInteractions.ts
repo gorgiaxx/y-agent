@@ -10,6 +10,12 @@ import {
   getSessionInteraction,
   setSessionInteraction,
 } from '../utils/sessionInteractionState';
+import {
+  addPlanReview,
+  clearPlanReview,
+  getPendingReviewIdsForSession,
+  type PlanReviewStore,
+} from '../utils/planReviewStore';
 
 export interface AskUserDialogState {
   interactionId: string;
@@ -28,41 +34,14 @@ export interface PermissionDialogState {
   contentPreview: string | null;
 }
 
-export interface PlanReviewDialogState {
-  reviewId: string;
-  runId: string;
-  sessionId: string;
-  plan: Record<string, unknown>;
-}
-
-function clearPlanReviewAndResumeRun(
-  reviewBySession: Record<string, PlanReviewDialogState>,
-  reviewId: string,
-): Record<string, PlanReviewDialogState> {
-  const sessionId = Object.keys(reviewBySession).find(
-    (key) => reviewBySession[key].reviewId === reviewId,
-  );
-  if (!sessionId) {
-    return reviewBySession;
-  }
-
-  const review = reviewBySession[sessionId];
-  const next = { ...reviewBySession };
-  delete next[sessionId];
-
-  resolveChatRunInteraction(review.runId, review.sessionId);
-
-  return next;
-}
-
 export function useSessionInteractions(activeSessionId: string | null) {
   const [askUserBySession, setAskUserBySession] = useState<Record<string, AskUserDialogState>>({});
   const [permissionBySession, setPermissionBySession] = useState<Record<string, PermissionDialogState>>({});
-  const [planReviewBySession, setPlanReviewBySession] = useState<Record<string, PlanReviewDialogState>>({});
+  const [planReviewStore, setPlanReviewStore] = useState<PlanReviewStore>({});
 
   const askUserData = getSessionInteraction(askUserBySession, activeSessionId);
   const permissionData = getSessionInteraction(permissionBySession, activeSessionId);
-  const planReviewData = getSessionInteraction(planReviewBySession, activeSessionId);
+  const pendingReviewIds = getPendingReviewIdsForSession(planReviewStore, activeSessionId);
 
   useEffect(() => {
     const unlisten = transport.listen<{
@@ -111,7 +90,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
     }>('chat:PlanReview', (event) => {
       const { run_id, session_id, review_id, plan } = event.payload;
       markChatRunAwaitingInteraction(run_id, session_id);
-      setPlanReviewBySession((prev) => setSessionInteraction(prev, session_id, {
+      setPlanReviewStore((prev) => addPlanReview(prev, {
         reviewId: review_id,
         runId: run_id,
         sessionId: session_id,
@@ -183,36 +162,41 @@ export function useSessionInteractions(activeSessionId: string | null) {
     }).catch(console.error);
   }, []);
 
-  const handlePlanReviewApprove = useCallback((reviewId: string) => {
-    setPlanReviewBySession((prev) => clearPlanReviewAndResumeRun(prev, reviewId));
+  const answerPlanReview = useCallback((
+    reviewId: string,
+    decision: 'approve' | 'revise' | 'reject',
+    feedback?: string,
+  ) => {
+    setPlanReviewStore((prev) => {
+      const { store, resolvedRun } = clearPlanReview(prev, reviewId);
+      if (resolvedRun) {
+        resolveChatRunInteraction(resolvedRun.runId, resolvedRun.sessionId);
+      }
+      return store;
+    });
     transport.invoke('chat_answer_plan_review', {
       reviewId,
-      decision: 'approve',
+      decision,
+      ...(feedback !== undefined ? { feedback } : {}),
     }).catch(console.error);
   }, []);
+
+  const handlePlanReviewApprove = useCallback((reviewId: string) => {
+    answerPlanReview(reviewId, 'approve');
+  }, [answerPlanReview]);
 
   const handlePlanReviewRevise = useCallback((reviewId: string, feedback: string) => {
-    setPlanReviewBySession((prev) => clearPlanReviewAndResumeRun(prev, reviewId));
-    transport.invoke('chat_answer_plan_review', {
-      reviewId,
-      decision: 'revise',
-      feedback,
-    }).catch(console.error);
-  }, []);
+    answerPlanReview(reviewId, 'revise', feedback);
+  }, [answerPlanReview]);
 
   const handlePlanReviewReject = useCallback((reviewId: string, feedback: string) => {
-    setPlanReviewBySession((prev) => clearPlanReviewAndResumeRun(prev, reviewId));
-    transport.invoke('chat_answer_plan_review', {
-      reviewId,
-      decision: 'reject',
-      feedback,
-    }).catch(console.error);
-  }, []);
+    answerPlanReview(reviewId, 'reject', feedback);
+  }, [answerPlanReview]);
 
   return {
     askUserData,
     permissionData,
-    planReviewData,
+    pendingReviewIds,
     handleAskUserSubmit,
     handleAskUserDismiss,
     handlePermissionApprove,

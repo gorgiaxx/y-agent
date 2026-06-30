@@ -306,7 +306,9 @@ function PlanReviewPanel({
     || !!meta.reviewFeedback;
 
   const isAwaitingReview =
-    meta.reviewStatus === 'awaiting_user' && planReview?.reviewId;
+    meta.reviewStatus === 'awaiting_user'
+    && !!meta.reviewId
+    && (planReview?.pendingReviewIds.has(meta.reviewId) ?? false);
 
   return (
     <div className="tool-call-plan-review">
@@ -344,9 +346,9 @@ function PlanReviewPanel({
         </div>
       )}
       <PlanTaskList tasks={meta.tasks} />
-      {isAwaitingReview && (
+      {isAwaitingReview && planReview && (
         <PlanReviewInline
-          reviewId={planReview.reviewId!}
+          reviewId={meta.reviewId}
           onApprove={planReview.onApprove}
           onRevise={planReview.onRevise}
           onReject={planReview.onReject}

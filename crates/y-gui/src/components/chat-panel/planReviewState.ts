@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react';
 
 export interface PlanReviewState {
-  reviewId: string | null;
+  pendingReviewIds: Set<string>;
   onApprove: (reviewId: string) => void;
   onRevise: (reviewId: string, feedback: string) => void;
   onReject: (reviewId: string, feedback: string) => void;

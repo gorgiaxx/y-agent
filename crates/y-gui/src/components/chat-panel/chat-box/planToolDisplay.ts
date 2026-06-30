@@ -30,6 +30,7 @@ export interface PlanWriterStageDisplay {
   guardrails: string[];
   reviewStatus: string;
   reviewFeedback: string;
+  reviewId: string;
   tasks: PlanTaskDisplay[];
 }
 
@@ -43,6 +44,10 @@ export interface PlanExecutionDisplay {
   failed: number;
   tasks: PlanTaskDisplay[];
   phases: Array<Record<string, unknown>>;
+  /// Authoritative persisted run status (set only for history-sourced plans):
+  /// running | completed | partial_failure | rejected | cancelled |
+  /// awaiting_approval. Empty for live tool-stream plans.
+  planRunStatus: string;
 }
 
 export type PlanDisplayMeta =
@@ -193,6 +198,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
         guardrails: parseStringArray(obj.guardrails),
         reviewStatus: typeof obj.review_status === 'string' ? obj.review_status : '',
         reviewFeedback: typeof obj.review_feedback === 'string' ? obj.review_feedback : '',
+        reviewId: typeof obj.review_id === 'string' ? obj.review_id : '',
         tasks,
       };
     }
@@ -224,6 +230,7 @@ function parsePlanDisplayObject(obj: Record<string, unknown>): PlanDisplayMeta |
       failed: typeof obj.failed === 'number' ? obj.failed : 0,
       tasks: mergedTasks,
       phases,
+      planRunStatus: typeof obj.plan_run_status === 'string' ? obj.plan_run_status : '',
     };
   }
 

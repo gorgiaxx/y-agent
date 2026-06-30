@@ -194,11 +194,11 @@ export function AgentsView() {
   const interactions = useSessionInteractions(sessionHooks.activeSessionId);
 
   const planReviewContextValue = useMemo(() => ({
-    reviewId: interactions.planReviewData?.reviewId ?? null,
+    pendingReviewIds: interactions.pendingReviewIds,
     onApprove: interactions.handlePlanReviewApprove,
     onRevise: interactions.handlePlanReviewRevise,
     onReject: interactions.handlePlanReviewReject,
-  }), [interactions.planReviewData, interactions.handlePlanReviewApprove, interactions.handlePlanReviewRevise, interactions.handlePlanReviewReject]);
+  }), [interactions.pendingReviewIds, interactions.handlePlanReviewApprove, interactions.handlePlanReviewRevise, interactions.handlePlanReviewReject]);
 
   const handleReloadAgents = useCallback(async () => {
     setReloadingAgents(true);
