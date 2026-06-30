@@ -265,6 +265,15 @@ export function useChatOperations(
 
       return withSessionLock(sessionId, async () => {
         try {
+          // Capture skills from the message being edited before any truncation
+          // removes it. An edit changes the text but keeps the same attached
+          // skills, so they must carry forward to the resent turn.
+          const editedSkills = getCachedMessages(
+            refs.sessionMessagesRef.current,
+            sessionId,
+          ).find((m) => m.id === edit.messageId)?.skills;
+          const hasEditedSkills = !!editedSkills && editedSkills.length > 0;
+
           // 1. Find checkpoint for the edited message.
           const checkpoint = await findCheckpointForMessage(
             sessionId,
@@ -313,6 +322,7 @@ export function useChatOperations(
                 content: newContent,
                 timestamp: new Date().toISOString(),
                 tool_calls: [],
+                skills: hasEditedSkills ? editedSkills : undefined,
               };
               setCachedMessages(
                 refs.sessionMessagesRef.current,
@@ -326,6 +336,7 @@ export function useChatOperations(
                 sessionId,
                 providerId: providerId ?? null,
                 requestMode: requestMode ?? 'text_chat',
+                skills: hasEditedSkills ? editedSkills : null,
                 thinkingEffort: thinkingEffort ?? null,
                 planMode: planMode ?? null,
                 operationMode: operationMode ?? null,
@@ -362,6 +373,7 @@ export function useChatOperations(
             content: newContent,
             timestamp: new Date().toISOString(),
             tool_calls: [],
+            skills: hasEditedSkills ? editedSkills : undefined,
           };
           setCachedMessages(
             refs.sessionMessagesRef.current,
@@ -375,6 +387,7 @@ export function useChatOperations(
             sessionId,
             providerId: providerId ?? null,
             requestMode: requestMode ?? 'text_chat',
+            skills: hasEditedSkills ? editedSkills : null,
             thinkingEffort: thinkingEffort ?? null,
             planMode: planMode ?? null,
             operationMode: operationMode ?? null,
@@ -593,12 +606,20 @@ export function useChatOperations(
               invalidateStaleContextResets(sessionId, keptMsgs.length);
               syncVisible(sessionId);
 
+              // Recover the skills attached to the message being resent. The
+              // backend persists them on the user message and surfaces them as
+              // a top-level `skills` field, so re-sending must carry them
+              // forward -- otherwise the turn loses its skill context.
+              const resendSkills = freshMsgs[userIdx]?.skills;
+              const hasResendSkills = !!resendSkills && resendSkills.length > 0;
+
               const userMsg: Message = {
                 id: `user-${Date.now()}`,
                 role: 'user' as const,
                 content,
                 timestamp: new Date().toISOString(),
                 tool_calls: [],
+                skills: hasResendSkills ? resendSkills : undefined,
               };
               setCachedMessages(
                 refs.sessionMessagesRef.current,
@@ -612,6 +633,7 @@ export function useChatOperations(
                 sessionId,
                 providerId: providerId ?? null,
                 requestMode: getRequestModeFromMessage(freshMsgs[userIdx]),
+                skills: hasResendSkills ? resendSkills : null,
                 thinkingEffort: thinkingEffort ?? null,
                 planMode: planMode ?? null,
               });

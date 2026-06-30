@@ -1,0 +1,41 @@
+[skill]
+name = "drozer-usage-en"
+version = "9b0b84a87eab7ac552899ba5d1d63c3a3586fe193c56d6c51be2ed1231ada5f9"
+description = "Guide AI on using drozer, the Android security testing framework: architecture, commands, modules, and assessment workflows."
+author = "skill-creator-agent"
+source_format = "generated"
+
+[skill.classification]
+type = "llm_reasoning"
+domain = [
+    "android-security",
+    "penetration-testing",
+    "mobile-security",
+]
+atomic = true
+
+[skill.constraints]
+max_input_tokens = 8000
+max_output_tokens = 8000
+requires_language = "en"
+
+[skill.root]
+path = "root.md"
+token_count = 998
+
+[[skill.tree.sub_documents]]
+path = "details/module-reference.md"
+title = "drozer Module Reference"
+token_count = 850
+load_condition = "when the user needs to find a specific drozer module, confirm a module's fully-qualified name, or browse available modules by namespace"
+
+[[skill.tree.sub_documents]]
+path = "details/assessment-workflow.md"
+title = "drozer Assessment Workflow & Advanced"
+token_count = 650
+load_condition = "when the user needs to perform an actual security assessment, follow the typical testing workflow, use infrastructure mode for NAT/firewall traversal, or understand drozer conventions and limitations"
+
+[skill.references]
+tools = []
+skills = []
+knowledge_bases = []
