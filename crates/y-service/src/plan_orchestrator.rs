@@ -47,6 +47,30 @@ const PHASE_EXECUTOR_FALLBACK_ALLOWED_TOOLS: &[&str] = &[
     "Grep",
 ];
 
+/// Ambient marker that the current async task is executing the phases of an
+/// already-approved plan. Scoped around phase execution so that any nested
+/// `Plan` tool call auto-approves instead of requesting a second human review:
+/// the top-level plan is the sole human approval gate.
+///
+/// Phases run inline within the same async task (no `tokio::spawn`), so the
+/// task-local propagates to nested `Plan` dispatch and through `Task`
+/// delegation. Mirrors `DELEGATION_INTERACTION_CTX` in `agent_service`.
+mod plan_execution_ctx {
+    tokio::task_local! {
+        static IN_PLAN_EXECUTION: ();
+    }
+
+    /// Returns true when running inside an approved plan's phase execution.
+    pub(super) fn is_active() -> bool {
+        IN_PLAN_EXECUTION.try_with(|()| ()).is_ok()
+    }
+
+    /// Run `fut` with the plan-execution marker set.
+    pub(super) async fn scoped<F: std::future::Future>(fut: F) -> F::Output {
+        IN_PLAN_EXECUTION.scope((), fut).await
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Plan data structures
 // ---------------------------------------------------------------------------
@@ -251,7 +275,11 @@ impl PlanOrchestrator {
             });
         }
 
-        let review_mode = resolve_effective_plan_review_mode(container, parent_session_id).await;
+        // A plan spawned while executing an already-approved plan's phases
+        // auto-approves: the top-level plan is the sole human approval gate.
+        // This prevents concurrent sub-plan reviews that the user cannot see
+        // and that do not pause the main agent.
+        let review_mode = resolve_review_mode_for_handle(container, parent_session_id).await;
 
         let max_parallel = resolve_max_parallel_phases(arguments);
 
@@ -346,7 +374,7 @@ impl PlanOrchestrator {
             id
         };
 
-        let phase_results = Self::execute_phases(
+        let phase_results = Box::pin(plan_execution_ctx::scoped(Self::execute_phases(
             container,
             parent_session_id,
             &structured_plan,
@@ -355,7 +383,7 @@ impl PlanOrchestrator {
             max_parallel,
             progress,
             cancel.as_ref(),
-        )
+        )))
         .await?;
 
         let run_status = if phase_results.iter().any(|r| r["status"] == "failed") {
@@ -572,7 +600,7 @@ impl PlanOrchestrator {
         match review_mode {
             PlanReviewMode::Auto => {
                 if let Some(tx) = progress {
-                    emit_plan_review_progress(tx, plan_path, plan, "auto_approved", "");
+                    emit_plan_review_progress(tx, plan_path, plan, "auto_approved", "", None);
                 }
                 PlanReviewOutcome {
                     approved: true,
@@ -626,7 +654,14 @@ impl PlanOrchestrator {
                     );
                 }
 
-                emit_plan_review_progress(tx, plan_path, plan, "awaiting_user", "");
+                emit_plan_review_progress(
+                    tx,
+                    plan_path,
+                    plan,
+                    "awaiting_user",
+                    "",
+                    Some(&review_id),
+                );
 
                 let plan_content = structured_plan_to_markdown(plan);
                 let tasks_json = serde_json::to_value(&plan.tasks).unwrap_or_else(|err| {
@@ -653,7 +688,7 @@ impl PlanOrchestrator {
 
                 let outcome = match decision_rx.await {
                     Ok(PlanReviewDecision::Approve) => {
-                        emit_plan_review_progress(tx, plan_path, plan, "approved", "");
+                        emit_plan_review_progress(tx, plan_path, plan, "approved", "", None);
                         PlanReviewOutcome {
                             approved: true,
                             status: "approved".to_string(),
@@ -668,6 +703,7 @@ impl PlanOrchestrator {
                             plan,
                             "feedback_received",
                             &feedback,
+                            None,
                         );
                         PlanReviewOutcome {
                             approved: false,
@@ -677,7 +713,7 @@ impl PlanOrchestrator {
                         }
                     }
                     Ok(PlanReviewDecision::Reject { feedback }) => {
-                        emit_plan_review_progress(tx, plan_path, plan, "rejected", &feedback);
+                        emit_plan_review_progress(tx, plan_path, plan, "rejected", &feedback, None);
                         PlanReviewOutcome {
                             approved: false,
                             status: "rejected".to_string(),
@@ -687,7 +723,14 @@ impl PlanOrchestrator {
                     }
                     Err(_) => {
                         Self::remove_pending_review(&review_id, pending_plan_reviews).await;
-                        emit_plan_review_progress(tx, plan_path, plan, "review_cancelled", "");
+                        emit_plan_review_progress(
+                            tx,
+                            plan_path,
+                            plan,
+                            "review_cancelled",
+                            "",
+                            None,
+                        );
                         PlanReviewOutcome {
                             approved: false,
                             status: "review_cancelled".to_string(),
@@ -737,6 +780,85 @@ impl PlanOrchestrator {
             );
             false
         }
+    }
+
+    /// Reconstruct a display summary for every persisted plan run in a session,
+    /// oldest first, so the UI can present the full plan history independent of
+    /// the loaded message window (surviving session switches and restarts).
+    ///
+    /// Each entry matches the `{ "display": { ... } }` shape the frontend
+    /// already parses for live plan tool results, plus an explicit
+    /// `plan_run_status` carrying the authoritative DB status so terminal states
+    /// (`completed` / `partial_failure` / `rejected` / `cancelled` / `awaiting`)
+    /// render correctly.
+    pub async fn list_session_plans(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Vec<serde_json::Value> {
+        let runs = match container
+            .plan_run_store
+            .list_runs_for_session(session_id.as_str())
+            .await
+        {
+            Ok(runs) => runs,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to list plan runs for session");
+                return Vec::new();
+            }
+        };
+
+        let mut out = Vec::with_capacity(runs.len());
+        for run in runs {
+            let plan: StructuredPlan = match serde_json::from_str(&run.plan_json) {
+                Ok(plan) => plan,
+                Err(e) => {
+                    tracing::warn!(
+                        plan_run_id = %run.id,
+                        error = %e,
+                        "skipping plan run with undeserializable plan_json"
+                    );
+                    continue;
+                }
+            };
+
+            let steps = container
+                .plan_run_store
+                .load_step_results(&run.id)
+                .await
+                .unwrap_or_default();
+
+            let phase_results: Vec<serde_json::Value> = steps
+                .iter()
+                .map(|step| {
+                    serde_json::json!({
+                        "task_id": step.task_id,
+                        "phase": step.phase,
+                        "title": step.title,
+                        "status": step.status,
+                    })
+                })
+                .collect();
+
+            let completed = steps.iter().filter(|s| s.status == "completed").count();
+            let failed = steps.iter().filter(|s| s.status == "failed").count();
+
+            let mut meta = build_plan_execution_metadata(
+                Path::new(&run.plan_path),
+                &plan,
+                &run.id,
+                completed,
+                failed,
+                &phase_results,
+            );
+            if let Some(display) = meta.get_mut("display").and_then(|d| d.as_object_mut()) {
+                display.insert(
+                    "plan_run_status".to_string(),
+                    serde_json::Value::String(run.status.clone()),
+                );
+            }
+            out.push(meta);
+        }
+        out
     }
 
     async fn remove_pending_review(review_id: &str, pending: &PendingPlanReviews) {
@@ -2611,6 +2733,22 @@ fn review_status_for_mode(mode: PlanReviewMode) -> &'static str {
     }
 }
 
+/// Resolve the review mode for a `Plan` tool call inside `handle`.
+///
+/// A plan spawned while executing an already-approved plan's phases
+/// auto-approves: the top-level plan is the sole human approval gate. This
+/// prevents concurrent sub-plan reviews that the user cannot see and that do
+/// not pause the main agent. Otherwise the configured mode applies.
+async fn resolve_review_mode_for_handle(
+    container: &ServiceContainer,
+    parent_session_id: &SessionId,
+) -> PlanReviewMode {
+    if plan_execution_ctx::is_active() {
+        return PlanReviewMode::Auto;
+    }
+    resolve_effective_plan_review_mode(container, parent_session_id).await
+}
+
 async fn resolve_effective_plan_review_mode(
     container: &ServiceContainer,
     parent_session_id: &SessionId,
@@ -2634,6 +2772,7 @@ fn build_plan_review_metadata(
     plan: &StructuredPlan,
     review_status: &str,
     review_feedback: &str,
+    review_id: Option<&str>,
 ) -> serde_json::Value {
     serde_json::json!({
         "display": {
@@ -2649,6 +2788,7 @@ fn build_plan_review_metadata(
             "guardrails": plan.guardrails,
             "review_status": review_status,
             "review_feedback": review_feedback,
+            "review_id": review_id.unwrap_or(""),
             "plan_content": structured_plan_to_markdown(plan),
             "tasks": plan.tasks,
         }
@@ -2661,6 +2801,7 @@ fn emit_plan_review_progress(
     plan: &StructuredPlan,
     review_status: &str,
     review_feedback: &str,
+    review_id: Option<&str>,
 ) {
     let result_preview = match review_status {
         "awaiting_user" => "Plan ready for human review",
@@ -2690,6 +2831,7 @@ fn emit_plan_review_progress(
             plan,
             review_status,
             review_feedback,
+            review_id,
         )),
     });
 }
@@ -2713,7 +2855,13 @@ fn build_plan_rejected_tool_output(
             },
         }),
         warnings: vec![],
-        metadata: build_plan_review_metadata(plan_path, plan, &review.status, &review.feedback),
+        metadata: build_plan_review_metadata(
+            plan_path,
+            plan,
+            &review.status,
+            &review.feedback,
+            None,
+        ),
     }
 }
 
@@ -3913,11 +4061,110 @@ mod tests {
         .await;
 
         assert!(config.system_prompt.contains("plan phase executor"));
-        assert_eq!(config.max_iterations, 120);
-        assert_eq!(config.max_tool_calls, 160);
+        assert_eq!(config.max_iterations, 600);
+        assert_eq!(config.max_tool_calls, 400);
         assert!(config.allowed_tools.iter().any(|tool| tool == "FileWrite"));
         assert!(config.allowed_tools.iter().any(|tool| tool == "ToolSearch"));
         assert!(!config.prune_tool_history);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_review_mode_is_manual_at_top_level() {
+        // Default guardrail config is Manual; with no plan-execution context
+        // active (top-level plan), the human review gate applies.
+        let (container, _tmpdir) = make_test_container().await;
+        let session = SessionId("sess-top".into());
+
+        let mode = resolve_review_mode_for_handle(&container, &session).await;
+
+        assert_eq!(mode, PlanReviewMode::Manual);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_review_mode_forces_auto_when_nested_in_plan_execution() {
+        // A plan spawned while executing an approved plan's phases must
+        // auto-approve, even though the guardrail config is Manual, so that
+        // sub-plans never raise a concurrent review the user cannot see.
+        let (container, _tmpdir) = make_test_container().await;
+        let session = SessionId("sess-nested".into());
+
+        let mode =
+            plan_execution_ctx::scoped(resolve_review_mode_for_handle(&container, &session)).await;
+
+        assert_eq!(mode, PlanReviewMode::Auto);
+    }
+
+    #[tokio::test]
+    async fn test_plan_execution_ctx_marker_scopes_correctly() {
+        assert!(!plan_execution_ctx::is_active());
+        plan_execution_ctx::scoped(async {
+            assert!(plan_execution_ctx::is_active());
+        })
+        .await;
+        assert!(!plan_execution_ctx::is_active());
+    }
+
+    #[tokio::test]
+    async fn test_list_session_plans_reconstructs_persisted_history() {
+        let (container, _tmpdir) = make_test_container().await;
+        let session = SessionId("hist-session".into());
+
+        let plan = StructuredPlan {
+            plan_title: "Persisted Plan".into(),
+            plan_file: "/tmp/persisted.md".into(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![PlanTask {
+                id: "t1".into(),
+                phase: 1,
+                title: "Do step one".into(),
+                description: String::new(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 1,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            }],
+        };
+        let plan_json = serde_json::to_string(&plan).unwrap();
+        container
+            .plan_run_store
+            .create_run_with_status(
+                "run-1",
+                session.as_str(),
+                &plan_json,
+                "/tmp/persisted.md",
+                "completed",
+            )
+            .await
+            .unwrap();
+        container
+            .plan_run_store
+            .record_step_result("run-1", "t1", 1, "Do step one", "completed", Some("done"))
+            .await
+            .unwrap();
+
+        let plans = PlanOrchestrator::list_session_plans(&container, &session).await;
+
+        assert_eq!(plans.len(), 1);
+        let display = &plans[0]["display"];
+        assert_eq!(display["kind"], "plan_execution");
+        assert_eq!(display["plan_run_status"], "completed");
+        assert_eq!(display["plan_title"], "Persisted Plan");
+        // The persisted step status is reflected on the reconstructed task.
+        assert_eq!(display["tasks"][0]["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn test_list_session_plans_empty_for_unknown_session() {
+        let (container, _tmpdir) = make_test_container().await;
+        let plans =
+            PlanOrchestrator::list_session_plans(&container, &SessionId("nobody".into())).await;
+        assert!(plans.is_empty());
     }
 
     #[test]
@@ -4314,6 +4561,41 @@ mod tests {
         let approved =
             build_plan_writer_stage_metadata(std::path::Path::new("/tmp/p.md"), &plan, "approved");
         assert_eq!(approved["display"]["stage_status"], "completed");
+    }
+
+    #[test]
+    fn test_build_plan_review_metadata_includes_review_id_when_awaiting() {
+        let plan = StructuredPlan {
+            plan_title: "Plan".into(),
+            plan_file: String::new(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![],
+        };
+
+        let awaiting = build_plan_review_metadata(
+            std::path::Path::new("/tmp/p.md"),
+            &plan,
+            "awaiting_user",
+            "",
+            Some("review-123"),
+        );
+        assert_eq!(awaiting["display"]["review_id"], "review-123");
+
+        // Non-awaiting emissions carry an empty review id so the frontend
+        // bubble only renders approval controls for the awaiting review.
+        let approved = build_plan_review_metadata(
+            std::path::Path::new("/tmp/p.md"),
+            &plan,
+            "approved",
+            "",
+            None,
+        );
+        assert_eq!(approved["display"]["review_id"], "");
     }
 
     #[test]
