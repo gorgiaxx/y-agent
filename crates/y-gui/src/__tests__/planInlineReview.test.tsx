@@ -8,7 +8,7 @@ import { ToolCallCard } from '../components/chat-panel/chat-box/ToolCallCard';
 
 function makePlanReviewCtx(overrides: Partial<PlanReviewState> = {}): PlanReviewState {
   return {
-    reviewId: 'review-1',
+    pendingReviewIds: new Set(['review-1']),
     onApprove: vi.fn(),
     onRevise: vi.fn(),
     onReject: vi.fn(),
@@ -68,6 +68,7 @@ describe('PlanRenderer inline review integration', () => {
               plan_file: '/tmp/plan.md',
               plan_content: '',
               review_status: 'awaiting_user',
+              review_id: 'review-1',
               tasks: [
                 {
                   id: 'task-1',
@@ -177,7 +178,7 @@ describe('PlanRenderer inline review integration', () => {
   });
 
   it('shows feedback_received badge for revision status', () => {
-    const ctx = makePlanReviewCtx({ reviewId: null });
+    const ctx = makePlanReviewCtx({ pendingReviewIds: new Set() });
     const html = renderToStaticMarkup(
       <PlanReviewProvider value={ctx}>
         <ToolCallCard
@@ -218,5 +219,75 @@ describe('PlanRenderer inline review integration', () => {
 
     expect(html).toContain('Feedback received');
     expect(html).toContain('Reduce scope to auth module only');
+  });
+
+  it('renders inline controls for a bubble whose review_id is in pendingReviewIds', () => {
+    const ctx = makePlanReviewCtx({ pendingReviewIds: new Set(['review-A', 'review-B']) });
+    const html = renderToStaticMarkup(
+      <PlanReviewProvider value={ctx}>
+        <ToolCallCard
+          toolCall={{ id: 'plan-A', name: 'Plan', arguments: JSON.stringify({ request: 'A' }) }}
+          status="success"
+          result="1 tasks extracted"
+          metadata={{
+            display: {
+              kind: 'plan_stage',
+              stage: 'plan_writer',
+              plan_title: 'Plan A',
+              plan_file: '/tmp/a.md',
+              plan_content: '',
+              review_status: 'awaiting_user',
+              review_id: 'review-A',
+              tasks: [
+                {
+                  id: 'task-1', phase: 1, title: 'A1', description: '',
+                  depends_on: [], status: 'pending', estimated_iterations: 1,
+                  key_files: [], acceptance_criteria: [],
+                },
+              ],
+            },
+          }}
+        />
+      </PlanReviewProvider>,
+    );
+
+    expect(html).toContain('plan-review-inline');
+  });
+
+  it('suppresses inline controls for an awaiting bubble whose review_id is not pending', () => {
+    // Simulates the second concurrent plan after the first was answered: its
+    // review is no longer pending, so its controls must not render even though
+    // its status is still awaiting_user in the historical tool result.
+    const ctx = makePlanReviewCtx({ pendingReviewIds: new Set(['review-A']) });
+    const html = renderToStaticMarkup(
+      <PlanReviewProvider value={ctx}>
+        <ToolCallCard
+          toolCall={{ id: 'plan-B', name: 'Plan', arguments: JSON.stringify({ request: 'B' }) }}
+          status="success"
+          result="1 tasks extracted"
+          metadata={{
+            display: {
+              kind: 'plan_stage',
+              stage: 'plan_writer',
+              plan_title: 'Plan B',
+              plan_file: '/tmp/b.md',
+              plan_content: '',
+              review_status: 'awaiting_user',
+              review_id: 'review-B',
+              tasks: [
+                {
+                  id: 'task-1', phase: 1, title: 'B1', description: '',
+                  depends_on: [], status: 'pending', estimated_iterations: 1,
+                  key_files: [], acceptance_criteria: [],
+                },
+              ],
+            },
+          }}
+        />
+      </PlanReviewProvider>,
+    );
+
+    expect(html).toContain('Awaiting review');
+    expect(html).not.toContain('plan-review-inline');
   });
 });
