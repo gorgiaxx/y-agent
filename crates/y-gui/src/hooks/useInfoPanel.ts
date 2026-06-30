@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { useChatContext } from '../providers/AppContexts';
+import { useChatContext, useSessionsContext } from '../providers/AppContexts';
+import { transport } from '../lib';
 import type { Message } from '../types';
 import type { ToolResultRecord } from './chatStreamTypes';
 import {
@@ -23,7 +24,7 @@ export interface ModifiedFileEntry {
 
 export interface UseInfoPanelReturn {
   modifiedFiles: ModifiedFileEntry[];
-  planStatus: PlanDisplayMeta | null;
+  plans: PlanDisplayMeta[];
   loopStatus: LoopDisplayMeta | null;
   hasActivity: boolean;
 }
@@ -82,14 +83,52 @@ export function collectModifiedFilesForInfoPanel(records: ToolResultRecord[]): M
   return Array.from(map.values());
 }
 
-function findLatestPlan(records: ToolResultRecord[]): PlanDisplayMeta | null {
-  for (let i = records.length - 1; i >= 0; i--) {
-    const rec = records[i];
+function planIdentityKey(plan: PlanDisplayMeta): string {
+  if (plan.planFile) return plan.planFile;
+  if (plan.kind === 'plan_execution' && plan.planRunId) return plan.planRunId;
+  return plan.planTitle || 'plan';
+}
+
+/// Collect every distinct plan from the tool-result stream, collapsing each
+/// plan's lifecycle (plan_stage -> plan_execution, and any revisions) into a
+/// single entry at its most recent state. Order follows first appearance so
+/// the list stays stable as plans progress.
+export function collectPlansForInfoPanel(records: ToolResultRecord[]): PlanDisplayMeta[] {
+  const order: string[] = [];
+  const byKey = new Map<string, PlanDisplayMeta>();
+  for (const rec of records) {
     if (canonicalToolName(rec.name) !== 'Plan') continue;
     const display = extractPlanDisplayMeta(rec.metadata, rec.resultPreview);
-    if (display) return display;
+    if (!display) continue;
+    const key = planIdentityKey(display);
+    if (!byKey.has(key)) order.push(key);
+    byKey.set(key, display);
   }
-  return null;
+  return order.map((key) => byKey.get(key)!);
+}
+
+/// Merge the persisted plan history (from the store) with the live, tool-stream
+/// derived plans. Keyed by plan identity: the live entry wins when a plan exists
+/// in both (it carries real-time, in-progress granularity), while persisted-only
+/// plans (outside the loaded message window) fill in the rest. Persisted order
+/// (chronological) is preserved; live-only plans are appended.
+export function mergePlans(
+  persisted: PlanDisplayMeta[],
+  live: PlanDisplayMeta[],
+): PlanDisplayMeta[] {
+  const order: string[] = [];
+  const byKey = new Map<string, PlanDisplayMeta>();
+  for (const plan of persisted) {
+    const key = planIdentityKey(plan);
+    if (!byKey.has(key)) order.push(key);
+    byKey.set(key, plan);
+  }
+  for (const plan of live) {
+    const key = planIdentityKey(plan);
+    if (!byKey.has(key)) order.push(key);
+    byKey.set(key, plan);
+  }
+  return order.map((key) => byKey.get(key)!);
 }
 
 function findLatestLoop(records: ToolResultRecord[]): LoopDisplayMeta | null {
@@ -103,21 +142,55 @@ function findLatestLoop(records: ToolResultRecord[]): LoopDisplayMeta | null {
 }
 
 export function useInfoPanel(): UseInfoPanelReturn {
-  const { messages, toolResults } = useChatContext();
+  const { messages, toolResults, streamingSessionIds } = useChatContext();
+  const { activeSessionId } = useSessionsContext();
+  const [persistedPlans, setPersistedPlans] = useState<PlanDisplayMeta[]>([]);
+
+  // Refetch persisted history when the active session's turn starts/ends so a
+  // plan that completes within the same session refreshes its authoritative
+  // status without requiring a session switch.
+  const activeStreaming = !!activeSessionId && streamingSessionIds.has(activeSessionId);
+
+  // Load the full persisted plan history for the active session so plans
+  // outside the loaded message window (and after restart) remain visible.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async (): Promise<PlanDisplayMeta[]> => {
+      if (!activeSessionId) return [];
+      try {
+        const rows = await transport.invoke<unknown[]>(
+          'session_list_plan_runs',
+          { sessionId: activeSessionId },
+        );
+        return (Array.isArray(rows) ? rows : [])
+          .map((row) => extractPlanDisplayMeta(row))
+          .filter((plan): plan is PlanDisplayMeta => plan != null);
+      } catch {
+        return [];
+      }
+    };
+    load().then((plans) => {
+      if (!cancelled) setPersistedPlans(plans);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, activeStreaming]);
 
   return useMemo(() => {
     const historical = parseMetaToolResults(messages);
     const allRecords = [...historical, ...toolResults];
 
     const modifiedFiles = collectModifiedFilesForInfoPanel(allRecords);
-    const planStatus = findLatestPlan(allRecords);
+    const livePlans = collectPlansForInfoPanel(allRecords);
+    const plans = mergePlans(persistedPlans, livePlans);
     const loopStatus = findLatestLoop(allRecords);
 
     return {
       modifiedFiles,
-      planStatus,
+      plans,
       loopStatus,
-      hasActivity: modifiedFiles.length > 0 || planStatus !== null || loopStatus !== null,
+      hasActivity: modifiedFiles.length > 0 || plans.length > 0 || loopStatus !== null,
     };
-  }, [messages, toolResults]);
+  }, [messages, toolResults, persistedPlans]);
 }

@@ -51,7 +51,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={[]}
-        planStatus={null}
+        plans={[]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}
@@ -70,7 +70,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={files}
-        planStatus={null}
+        plans={[]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}
@@ -101,7 +101,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={files}
-        planStatus={null}
+        plans={[]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}
@@ -123,7 +123,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={files}
-        planStatus={null}
+        plans={[]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}
@@ -149,6 +149,7 @@ describe('InfoPanel', () => {
       guardrails: [],
       reviewStatus: '',
       reviewFeedback: '',
+      reviewId: '',
       tasks: [
         {
           id: 't1', phase: 1, title: 'Add tests', description: '',
@@ -165,7 +166,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={[]}
-        planStatus={plan}
+        plans={[plan]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}
@@ -188,6 +189,7 @@ describe('InfoPanel', () => {
       totalPhases: 3,
       completed: 2,
       failed: 0,
+      planRunStatus: '',
       tasks: [
         {
           id: 't1', phase: 1, title: 'Done A', description: '',
@@ -210,7 +212,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={[]}
-        planStatus={plan}
+        plans={[plan]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}
@@ -235,6 +237,7 @@ describe('InfoPanel', () => {
       guardrails: [],
       reviewStatus: 'awaiting_user',
       reviewFeedback: '',
+      reviewId: '',
       tasks: [
         {
           id: 't1', phase: 1, title: 'Pending task', description: '',
@@ -246,7 +249,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={[]}
-        planStatus={plan}
+        plans={[plan]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}
@@ -271,7 +274,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={[]}
-        planStatus={null}
+        plans={[]}
         loopStatus={loop}
         expanded={false}
         onToggleExpand={noopFn}
@@ -288,7 +291,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={[]}
-        planStatus={null}
+        plans={[]}
         loopStatus={null}
         expanded={true}
         onToggleExpand={noopFn}
@@ -303,7 +306,7 @@ describe('InfoPanel', () => {
     const html = renderToStaticMarkup(
       <InfoPanel
         modifiedFiles={[]}
-        planStatus={null}
+        plans={[]}
         loopStatus={null}
         expanded={false}
         onToggleExpand={noopFn}

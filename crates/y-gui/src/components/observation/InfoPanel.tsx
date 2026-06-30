@@ -73,6 +73,18 @@ function FileCard({ file }: { file: ModifiedFileEntry }) {
   );
 }
 
+function mapPlanRunStatus(runStatus: string): string | null {
+  switch (runStatus) {
+    case 'completed': return 'completed';
+    case 'partial_failure': return 'partial';
+    case 'rejected': return 'rejected';
+    case 'cancelled': return 'cancelled';
+    case 'awaiting_approval': return 'awaiting';
+    case 'running': return 'running';
+    default: return null;
+  }
+}
+
 function derivePlanStatus(plan: PlanDisplayMeta): string {
   if (plan.kind === 'plan_stage') {
     if (
@@ -82,6 +94,13 @@ function derivePlanStatus(plan: PlanDisplayMeta): string {
       return 'running';
     }
     return plan.stageStatus;
+  }
+  // History-sourced plans carry the authoritative persisted status, which is
+  // the only reliable signal for terminal states (rejected/cancelled) whose
+  // tasks may all read as pending.
+  if (plan.planRunStatus) {
+    const mapped = mapPlanRunStatus(plan.planRunStatus);
+    if (mapped) return mapped;
   }
   if (plan.failed > 0) return 'failed';
   const tasks = plan.tasks;
@@ -205,7 +224,7 @@ function LoopCard({ loop }: { loop: LoopDisplayMeta }) {
 
 interface InfoPanelProps {
   modifiedFiles: ModifiedFileEntry[];
-  planStatus: PlanDisplayMeta | null;
+  plans: PlanDisplayMeta[];
   loopStatus: LoopDisplayMeta | null;
   expanded: boolean;
   onToggleExpand: () => void;
@@ -214,7 +233,7 @@ interface InfoPanelProps {
 
 export function InfoPanel({
   modifiedFiles,
-  planStatus,
+  plans,
   loopStatus,
   expanded,
   onToggleExpand,
@@ -224,7 +243,7 @@ export function InfoPanel({
   const [planOpen, setPlanOpen] = useState(true);
   const [loopOpen, setLoopOpen] = useState(true);
 
-  const hasAny = modifiedFiles.length > 0 || planStatus !== null || loopStatus !== null;
+  const hasAny = modifiedFiles.length > 0 || plans.length > 0 || loopStatus !== null;
 
   const panelContent = (
     <div className={`info-panel ${expanded ? 'info-expanded' : ''}`}>
@@ -275,7 +294,7 @@ export function InfoPanel({
               </div>
             )}
 
-            {planStatus && (
+            {plans.length > 0 && (
               <div className="info-section">
                 <div
                   className="info-section-header"
@@ -287,9 +306,13 @@ export function InfoPanel({
                   <span className="info-section-chevron">
                     {planOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </span>
-                  <span className="info-section-title">Plan</span>
+                  <span className="info-section-title">
+                    {plans.length > 1 ? `Plans (${plans.length})` : 'Plan'}
+                  </span>
                 </div>
-                {planOpen && <PlanCard plan={planStatus} />}
+                {planOpen && plans.map((plan, idx) => (
+                  <PlanCard key={plan.planFile || plan.planTitle || `plan-${idx}`} plan={plan} />
+                ))}
               </div>
             )}
 

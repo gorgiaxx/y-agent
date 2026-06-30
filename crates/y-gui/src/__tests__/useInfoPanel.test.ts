@@ -7,7 +7,8 @@ import {
   extractPlanDisplayMeta,
   extractLoopDisplayMeta,
 } from '../components/chat-panel/chat-box/toolCallUtils';
-import { collectModifiedFilesForInfoPanel } from '../hooks/useInfoPanel';
+import { collectModifiedFilesForInfoPanel, collectPlansForInfoPanel, mergePlans } from '../hooks/useInfoPanel';
+import type { PlanDisplayMeta } from '../components/chat-panel/chat-box/toolCallUtils';
 import type { ToolResultRecord } from '../hooks/chatStreamTypes';
 import type { Message } from '../types';
 
@@ -267,6 +268,105 @@ describe('useInfoPanel utilities', () => {
       }
 
       expect(files).toEqual(['/src/edit.rs', '/src/write.rs']);
+    });
+  });
+
+  describe('collectPlansForInfoPanel', () => {
+    it('returns every distinct plan, not just the latest', () => {
+      const plans = collectPlansForInfoPanel([
+        makePlanRecord({
+          kind: 'plan_execution', plan_title: 'Plan A', plan_file: 'a.md',
+          total_phases: 2, completed: 2, failed: 0, tasks: [], phases: [],
+        }),
+        makePlanRecord({
+          kind: 'plan_stage', stage: 'plan_writer', stage_status: 'running',
+          plan_title: 'Plan B', plan_file: 'b.md', review_status: 'awaiting_user',
+          review_id: 'rev-b', tasks: [{ id: 't1', title: 'B1', status: 'pending', phase: 1 }],
+        }),
+      ]);
+
+      expect(plans).toHaveLength(2);
+      expect(plans.map((p) => p.planTitle)).toEqual(['Plan A', 'Plan B']);
+    });
+
+    it('collapses a single plan lifecycle into one entry at its latest state', () => {
+      const plans = collectPlansForInfoPanel([
+        makePlanRecord({
+          kind: 'plan_stage', stage: 'plan_writer', stage_status: 'running',
+          plan_title: 'Refactor', plan_file: 'r.md', review_status: 'awaiting_user',
+          review_id: 'rev-1', tasks: [{ id: 't1', title: 'Step', status: 'pending', phase: 1 }],
+        }),
+        makePlanRecord({
+          kind: 'plan_execution', plan_title: 'Refactor', plan_file: 'r.md',
+          total_phases: 1, completed: 1, failed: 0,
+          tasks: [{ id: 't1', title: 'Step', status: 'completed', phase: 1 }], phases: [],
+        }),
+      ]);
+
+      expect(plans).toHaveLength(1);
+      expect(plans[0].kind).toBe('plan_execution');
+    });
+
+    it('preserves first-seen order across plans', () => {
+      const plans = collectPlansForInfoPanel([
+        makePlanRecord({
+          kind: 'plan_execution', plan_title: 'First', plan_file: 'first.md',
+          total_phases: 1, completed: 1, failed: 0, tasks: [], phases: [],
+        }),
+        makePlanRecord({
+          kind: 'plan_execution', plan_title: 'Second', plan_file: 'second.md',
+          total_phases: 1, completed: 0, failed: 0, tasks: [], phases: [],
+        }),
+        makePlanRecord({
+          kind: 'plan_execution', plan_title: 'First updated', plan_file: 'first.md',
+          total_phases: 2, completed: 2, failed: 0, tasks: [], phases: [],
+        }),
+      ]);
+
+      expect(plans.map((p) => p.planTitle)).toEqual(['First updated', 'Second']);
+    });
+
+    it('ignores non-Plan records', () => {
+      const plans = collectPlansForInfoPanel([
+        makeFileEditRecord('/src/main.rs'),
+        makeLoopRecord({
+          kind: 'loop_round', round: 1, max_rounds: 3, round_status: 'done',
+          tasks_completed: [], tasks_remaining: [], converged: false, rounds: [],
+        }),
+      ]);
+      expect(plans).toEqual([]);
+    });
+  });
+
+  describe('mergePlans', () => {
+    function execPlan(title: string, file: string, runStatus = ''): PlanDisplayMeta {
+      return {
+        kind: 'plan_execution', planTitle: title, planFile: file, planRunId: '',
+        totalPhases: 1, completed: 0, failed: 0, tasks: [], phases: [],
+        planRunStatus: runStatus,
+      };
+    }
+
+    it('keeps persisted-only plans (outside the loaded window)', () => {
+      const merged = mergePlans([execPlan('History', 'h.md', 'completed')], []);
+      expect(merged).toHaveLength(1);
+      expect(merged[0].planTitle).toBe('History');
+    });
+
+    it('lets the live plan override the persisted one for the same identity', () => {
+      const persisted = execPlan('Plan', 'same.md', 'running');
+      const live = execPlan('Plan (live)', 'same.md', '');
+      const merged = mergePlans([persisted], [live]);
+      expect(merged).toHaveLength(1);
+      expect(merged[0].planTitle).toBe('Plan (live)');
+    });
+
+    it('appends live-only plans after persisted ones, preserving order', () => {
+      const merged = mergePlans(
+        [execPlan('A', 'a.md', 'completed'), execPlan('B', 'b.md', 'completed')],
+        [execPlan('C', 'c.md')],
+      );
+      expect(merged.map((p) => p.planTitle)).toEqual(['A', 'B', 'C']);
     });
   });
 
