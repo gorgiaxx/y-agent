@@ -298,6 +298,29 @@ impl SqlitePlanRunStore {
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
+    /// List every plan run for a session, oldest first, so the UI can present
+    /// the full history (completed, failed, awaiting, running) and not just the
+    /// most recent run.
+    #[instrument(skip(self))]
+    pub async fn list_runs_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<PlanRunRow>, StorageError> {
+        let rows: Vec<DbPlanRunRow> = sqlx::query_as(
+            r"SELECT id, session_id, plan_json, plan_path, status, created_at, updated_at
+              FROM plan_runs
+              WHERE session_id = ?1
+              ORDER BY created_at ASC, rowid ASC",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Database {
+            message: format!("list runs for session '{session_id}': {e}"),
+        })?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
     #[instrument(skip(self))]
     pub async fn cancel_awaiting_runs_for_session(
         &self,
@@ -315,5 +338,53 @@ impl SqlitePlanRunStore {
             message: format!("cancel awaiting runs for session '{session_id}': {e}"),
         })?;
         Ok(result.rows_affected())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::StorageConfig;
+    use crate::migration::run_embedded_migrations;
+    use crate::pool::create_pool;
+
+    async fn setup() -> SqlitePlanRunStore {
+        let config = StorageConfig::in_memory();
+        let pool = create_pool(&config).await.unwrap();
+        run_embedded_migrations(&pool).await.unwrap();
+        SqlitePlanRunStore::new(pool)
+    }
+
+    #[tokio::test]
+    async fn test_list_runs_for_session_returns_all_runs_oldest_first() {
+        let store = setup().await;
+        store
+            .create_run("run-1", "sess-a", "{}", "/p1.md")
+            .await
+            .unwrap();
+        store
+            .create_run_with_status("run-2", "sess-a", "{}", "/p2.md", "awaiting_approval")
+            .await
+            .unwrap();
+        store.update_run_status("run-1", "completed").await.unwrap();
+        // A run for a different session must not leak in.
+        store
+            .create_run("run-other", "sess-b", "{}", "/p3.md")
+            .await
+            .unwrap();
+
+        let runs = store.list_runs_for_session("sess-a").await.unwrap();
+
+        let ids: Vec<&str> = runs.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, vec!["run-1", "run-2"]);
+        assert_eq!(runs[0].status, "completed");
+        assert_eq!(runs[1].status, "awaiting_approval");
+    }
+
+    #[tokio::test]
+    async fn test_list_runs_for_session_is_empty_when_none() {
+        let store = setup().await;
+        let runs = store.list_runs_for_session("nobody").await.unwrap();
+        assert!(runs.is_empty());
     }
 }
