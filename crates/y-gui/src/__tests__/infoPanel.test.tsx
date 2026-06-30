@@ -41,7 +41,7 @@ vi.mock('../components/ui', async () => {
 
 import { InfoPanel } from '../components/observation/InfoPanel';
 import type { ModifiedFileEntry } from '../hooks/useInfoPanel';
-import type { PlanWriterStageDisplay } from '../components/chat-panel/chat-box/planToolDisplay';
+import type { PlanWriterStageDisplay, PlanExecutionDisplay } from '../components/chat-panel/chat-box/planToolDisplay';
 import type { LoopRoundStageDisplay } from '../components/chat-panel/chat-box/toolCallUtils';
 
 describe('InfoPanel', () => {
@@ -177,6 +177,84 @@ describe('InfoPanel', () => {
     expect(html).toContain('Add tests');
     expect(html).toContain('Implement feature');
     expect(html).toContain('info-progress-fill');
+  });
+
+  it('does not show plan_execution as running when remaining phases are skipped', () => {
+    const plan: PlanExecutionDisplay = {
+      kind: 'plan_execution',
+      planTitle: 'Mixed outcome plan',
+      planFile: 'plan.md',
+      planRunId: 'run-skipped-1',
+      totalPhases: 3,
+      completed: 2,
+      failed: 0,
+      tasks: [
+        {
+          id: 't1', phase: 1, title: 'Done A', description: '',
+          dependsOn: [], status: 'completed', estimatedIterations: 1,
+          keyFiles: [], acceptanceCriteria: [],
+        },
+        {
+          id: 't2', phase: 2, title: 'Done B', description: '',
+          dependsOn: [], status: 'completed', estimatedIterations: 1,
+          keyFiles: [], acceptanceCriteria: [],
+        },
+        {
+          id: 't3', phase: 3, title: 'Skipped', description: '',
+          dependsOn: ['t2'], status: 'skipped', estimatedIterations: 1,
+          keyFiles: [], acceptanceCriteria: [],
+        },
+      ],
+      phases: [],
+    };
+    const html = renderToStaticMarkup(
+      <InfoPanel
+        modifiedFiles={[]}
+        planStatus={plan}
+        loopStatus={null}
+        expanded={false}
+        onToggleExpand={noopFn}
+        onClose={noopFn}
+      />,
+    );
+    expect(html).not.toContain('status-running');
+  });
+
+  it('does not show plan_stage as completed while it is awaiting user review', () => {
+    const plan: PlanWriterStageDisplay = {
+      kind: 'plan_stage',
+      stage: 'plan_writer',
+      stageStatus: 'completed',
+      planTitle: 'Awaiting plan',
+      planFile: 'plan.md',
+      planContent: '',
+      estimatedEffort: '',
+      overview: '',
+      scopeIn: [],
+      scopeOut: [],
+      guardrails: [],
+      reviewStatus: 'awaiting_user',
+      reviewFeedback: '',
+      tasks: [
+        {
+          id: 't1', phase: 1, title: 'Pending task', description: '',
+          dependsOn: [], status: 'pending', estimatedIterations: 1,
+          keyFiles: [], acceptanceCriteria: [],
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <InfoPanel
+        modifiedFiles={[]}
+        planStatus={plan}
+        loopStatus={null}
+        expanded={false}
+        onToggleExpand={noopFn}
+        onClose={noopFn}
+      />,
+    );
+    expect(html).toContain('status-running');
+    expect(html).not.toContain('status-completed');
   });
 
   it('renders loop section with round info', () => {

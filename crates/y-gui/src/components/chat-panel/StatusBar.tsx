@@ -24,7 +24,7 @@ interface StatusBarProps {
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
+  return `${(n / 1_000).toFixed(2)}k`;
 }
 
 function taskCountLabel(count: number): string {
@@ -73,7 +73,10 @@ export function StatusBar({
         )}
         {contextWindow && contextWindow > 0 && occupancy > 0 ? (
           <span className="status-item status-tokens">
-            <span className="status-token-ratio">
+            <span
+              className="status-token-ratio"
+              title={`${occupancy.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${pct!.toFixed(1)}%)`}
+            >
               {formatTokens(occupancy)}/{formatTokens(contextWindow)}
             </span>
             <span className="status-token-pct">({pct!.toFixed(1)}%)</span>

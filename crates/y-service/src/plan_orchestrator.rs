@@ -515,11 +515,7 @@ impl PlanOrchestrator {
             }
         })?;
 
-        for (i, task) in plan.tasks.iter_mut().enumerate() {
-            if task.phase == 0 {
-                task.phase = i + 1;
-            }
-        }
+        normalize_plan_task_phases(&mut plan.tasks);
 
         if plan.plan_file.is_empty() {
             plan.plan_file = plan_path.display().to_string();
@@ -2027,6 +2023,19 @@ fn extract_json_from_response(text: &str) -> String {
     trimmed.to_string()
 }
 
+/// Renumber phases as a contiguous 1..N sequence in task order.
+///
+/// The plan-writer LLM occasionally emits arbitrary phase numbers (e.g.
+/// continuing a prior session's numbering, or skipping ahead). Phase numbers
+/// are purely a display ordinal; parallelism is driven by `depends_on`. We
+/// therefore renumber unconditionally to keep the GUI label ("Phase N")
+/// consistent with task count.
+fn normalize_plan_task_phases(tasks: &mut [PlanTask]) {
+    for (i, task) in tasks.iter_mut().enumerate() {
+        task.phase = i + 1;
+    }
+}
+
 /// Leniently parse `StructuredPlan` from JSON text.
 ///
 /// Tries strict deserialization first. On failure, falls back to
@@ -2550,6 +2559,26 @@ pub(crate) fn structured_plan_to_markdown(plan: &StructuredPlan) -> String {
     md
 }
 
+fn resolve_plan_file_for_display(plan_path: &Path, plan: &StructuredPlan) -> String {
+    if plan.plan_file.is_empty() {
+        plan_path.display().to_string()
+    } else {
+        plan.plan_file.clone()
+    }
+}
+
+/// Map a `review_status` into the `stage_status` shown by the GUI for a
+/// `plan_stage` card. The "stage" here is plan-writing; once a plan exists,
+/// the stage itself is done, *except* when we are still waiting on the user
+/// (or on revision feedback) — those states must surface as running so the
+/// renderer does not flip the card to "Done" prematurely.
+fn stage_status_for_review_status(review_status: &str) -> &'static str {
+    match review_status {
+        "awaiting_user" | "feedback_received" => "running",
+        _ => "completed",
+    }
+}
+
 fn build_plan_writer_stage_metadata(
     plan_path: &std::path::Path,
     plan: &StructuredPlan,
@@ -2559,13 +2588,9 @@ fn build_plan_writer_stage_metadata(
         "display": {
             "kind": "plan_stage",
             "stage": "plan_writer",
-            "stage_status": "completed",
+            "stage_status": stage_status_for_review_status(review_status),
             "plan_title": plan.plan_title,
-            "plan_file": if plan.plan_file.is_empty() {
-                plan_path.display().to_string()
-            } else {
-                plan.plan_file.clone()
-            },
+            "plan_file": resolve_plan_file_for_display(plan_path, plan),
             "estimated_effort": plan.estimated_effort,
             "overview": plan.overview,
             "scope_in": plan.scope_in,
@@ -2614,13 +2639,9 @@ fn build_plan_review_metadata(
         "display": {
             "kind": "plan_stage",
             "stage": "plan_writer",
-            "stage_status": "completed",
+            "stage_status": stage_status_for_review_status(review_status),
             "plan_title": plan.plan_title,
-            "plan_file": if plan.plan_file.is_empty() {
-                plan_path.display().to_string()
-            } else {
-                plan.plan_file.clone()
-            },
+            "plan_file": resolve_plan_file_for_display(plan_path, plan),
             "estimated_effort": plan.estimated_effort,
             "overview": plan.overview,
             "scope_in": plan.scope_in,
@@ -2725,7 +2746,7 @@ fn build_plan_execution_metadata(
         "display": {
             "kind": "plan_execution",
             "plan_title": plan.plan_title,
-            "plan_file": plan_path.display().to_string(),
+            "plan_file": resolve_plan_file_for_display(plan_path, plan),
             "plan_run_id": plan_run_id,
             "total_phases": plan.tasks.len(),
             "completed": completed,
@@ -4222,5 +4243,129 @@ mod tests {
         let plan = parse_structured_plan(&repaired).unwrap();
         assert_eq!(plan.tasks.len(), 1);
         assert_eq!(plan.tasks[0].id, "phase_1");
+    }
+
+    #[test]
+    fn test_normalize_plan_task_phases_renumbers_arbitrary_values() {
+        let mut tasks = vec![
+            PlanTask {
+                id: "a".into(),
+                phase: 5,
+                title: "first".into(),
+                description: String::new(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 0,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+            PlanTask {
+                id: "b".into(),
+                phase: 6,
+                title: "second".into(),
+                description: String::new(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 0,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+        ];
+
+        normalize_plan_task_phases(&mut tasks);
+
+        assert_eq!(tasks[0].phase, 1);
+        assert_eq!(tasks[1].phase, 2);
+    }
+
+    #[test]
+    fn test_stage_status_for_review_status_keeps_stage_running_during_review() {
+        assert_eq!(stage_status_for_review_status("awaiting_user"), "running");
+        assert_eq!(
+            stage_status_for_review_status("feedback_received"),
+            "running"
+        );
+        assert_eq!(stage_status_for_review_status("approved"), "completed");
+        assert_eq!(stage_status_for_review_status("auto_approved"), "completed");
+        assert_eq!(stage_status_for_review_status("rejected"), "completed");
+    }
+
+    #[test]
+    fn test_build_plan_writer_stage_metadata_marks_stage_running_when_awaiting_user() {
+        let plan = StructuredPlan {
+            plan_title: "Plan".into(),
+            plan_file: String::new(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![],
+        };
+
+        let awaiting = build_plan_writer_stage_metadata(
+            std::path::Path::new("/tmp/p.md"),
+            &plan,
+            "awaiting_user",
+        );
+        assert_eq!(awaiting["display"]["stage_status"], "running");
+
+        let approved =
+            build_plan_writer_stage_metadata(std::path::Path::new("/tmp/p.md"), &plan, "approved");
+        assert_eq!(approved["display"]["stage_status"], "completed");
+    }
+
+    #[test]
+    fn test_resolve_plan_file_for_display_prefers_plan_file_when_set() {
+        let mut plan = StructuredPlan {
+            plan_title: String::new(),
+            plan_file: String::new(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![],
+        };
+        let path = std::path::Path::new("/tmp/fallback.md");
+
+        assert_eq!(
+            resolve_plan_file_for_display(path, &plan),
+            "/tmp/fallback.md"
+        );
+
+        plan.plan_file = "/explicit/plan.md".into();
+        assert_eq!(
+            resolve_plan_file_for_display(path, &plan),
+            "/explicit/plan.md"
+        );
+    }
+
+    #[test]
+    fn test_build_plan_execution_metadata_uses_unified_plan_file_resolution() {
+        let plan = StructuredPlan {
+            plan_title: "Plan".into(),
+            plan_file: "/explicit/plan.md".into(),
+            estimated_effort: String::new(),
+            overview: String::new(),
+            scope_in: vec![],
+            scope_out: vec![],
+            guardrails: vec![],
+            execution_contract: PlanExecutionContract::default(),
+            tasks: vec![],
+        };
+
+        let meta = build_plan_execution_metadata(
+            std::path::Path::new("/tmp/fallback.md"),
+            &plan,
+            "run-1",
+            0,
+            0,
+            &[],
+        );
+
+        assert_eq!(meta["display"]["plan_file"], "/explicit/plan.md");
     }
 }

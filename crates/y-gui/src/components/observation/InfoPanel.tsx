@@ -75,9 +75,22 @@ function FileCard({ file }: { file: ModifiedFileEntry }) {
 
 function derivePlanStatus(plan: PlanDisplayMeta): string {
   if (plan.kind === 'plan_stage') {
+    if (
+      plan.reviewStatus === 'awaiting_user'
+      || plan.reviewStatus === 'feedback_received'
+    ) {
+      return 'running';
+    }
     return plan.stageStatus;
   }
   if (plan.failed > 0) return 'failed';
+  const tasks = plan.tasks;
+  if (tasks.length > 0) {
+    if (tasks.some((t) => t.status === 'in_progress' || t.status === 'pending')) {
+      return 'running';
+    }
+    return 'completed';
+  }
   if (plan.completed >= plan.totalPhases && plan.totalPhases > 0) return 'completed';
   return 'running';
 }

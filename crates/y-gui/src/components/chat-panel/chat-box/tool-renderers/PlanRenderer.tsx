@@ -408,12 +408,19 @@ export function PlanRenderer({
   };
 
   const isExecution = meta?.kind === 'plan_execution';
-  const executionRunning = isExecution && meta.tasks.length > 0
+  // Live execution progress arrives as success-state tool_result events, so we
+  // cannot require status==='running'; we only drop the running indicator once
+  // the tool call terminates with an error (e.g. cancellation), which would
+  // otherwise leave phases frozen as in_progress and stuck on "Running".
+  const executionRunning = status !== 'error' && isExecution && meta.tasks.length > 0
     && meta.tasks.some((task) => task.status === 'in_progress' || task.status === 'pending');
   const isPartialFailure = isExecution && !executionRunning
     && meta.failed > 0 && meta.completed > 0;
 
-  const effectiveStatus = meta?.kind === 'plan_stage' && meta.stageStatus === 'running'
+  const isPlanStageAwaitingReview = meta?.kind === 'plan_stage'
+    && (meta.reviewStatus === 'awaiting_user' || meta.reviewStatus === 'feedback_received');
+  const effectiveStatus = meta?.kind === 'plan_stage'
+    && (meta.stageStatus === 'running' || isPlanStageAwaitingReview)
     ? 'running'
     : executionRunning
       ? 'running'

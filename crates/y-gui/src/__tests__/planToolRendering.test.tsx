@@ -191,6 +191,129 @@ describe('Plan tool rendering', () => {
     expect(html).toContain('Fix GUI Plan stream rendering');
   });
 
+  it('renders the writer-stage card as Running while awaiting user review', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-awaiting-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Fix GUI Plan review status' }),
+        }}
+        status="success"
+        result="2 tasks extracted"
+        metadata={{
+          display: {
+            kind: 'plan_stage',
+            stage: 'plan_writer',
+            stage_status: 'completed',
+            review_status: 'awaiting_user',
+            plan_title: 'GUI Plan Review Status',
+            plan_file: '/tmp/gui-plan.md',
+            tasks: [
+              {
+                id: 'task-1',
+                phase: 1,
+                title: 'First',
+                description: '',
+                depends_on: [],
+                status: 'pending',
+                estimated_iterations: 4,
+                key_files: [],
+                acceptance_criteria: [],
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('Running...');
+    expect(html).toContain('Awaiting review');
+    expect(html).not.toContain('>Done<');
+  });
+
+  it('does not show plan_execution as Running once the tool call has terminated', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-exec-cancelled-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Cancellation stuck-on-running' }),
+        }}
+        status="error"
+        result="Cancelled"
+        metadata={{
+          display: {
+            kind: 'plan_execution',
+            plan_title: 'Cancelled Plan',
+            plan_file: '/tmp/cancelled.md',
+            plan_run_id: 'run-cancelled-1',
+            total_phases: 3,
+            completed: 1,
+            failed: 0,
+            tasks: [
+              {
+                id: 'task-1', phase: 1, title: 'First', description: '', depends_on: [],
+                status: 'completed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+              {
+                id: 'task-2', phase: 2, title: 'Second', description: '', depends_on: [],
+                status: 'in_progress', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+              {
+                id: 'task-3', phase: 3, title: 'Third', description: '', depends_on: [],
+                status: 'pending', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+            ],
+            phases: [],
+          },
+        }}
+      />,
+    );
+
+    expect(html).not.toContain('Running...');
+    expect(html).toContain('tool-status-error');
+  });
+
+  it('keeps the execution card Running while phases are in progress on success-state progress events', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-exec-live-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Live execution running indicator' }),
+        }}
+        status="success"
+        result="Execution in progress"
+        metadata={{
+          display: {
+            kind: 'plan_execution',
+            plan_title: 'Live Exec',
+            plan_file: '/tmp/live.md',
+            plan_run_id: 'run-live-1',
+            total_phases: 2,
+            completed: 0,
+            failed: 0,
+            tasks: [
+              {
+                id: 'task-1', phase: 1, title: 'First', description: '', depends_on: [],
+                status: 'in_progress', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+              {
+                id: 'task-2', phase: 2, title: 'Second', description: '', depends_on: ['task-1'],
+                status: 'pending', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+            ],
+            phases: [],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('Running...');
+    expect(html).not.toContain('>Done<');
+  });
+
   it('renders a structured plan provider error without falling back to raw JSON', () => {
     const html = renderToStaticMarkup(
       <ToolCallCard
