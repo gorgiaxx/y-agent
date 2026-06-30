@@ -135,13 +135,20 @@ pub(crate) async fn record_generation_diagnostics(
         serde_json::from_str(prompt_preview_fallback).unwrap_or(serde_json::Value::Null)
     });
     let diag_output = response.raw_response.clone().unwrap_or_else(|| {
+        let mut usage = serde_json::json!({
+            "input_tokens": data.resp_input_tokens,
+            "output_tokens": data.resp_output_tokens,
+        });
+        if data.resp_cache_read_tokens > 0 {
+            usage["cache_read_tokens"] = serde_json::json!(data.resp_cache_read_tokens);
+        }
+        if data.resp_cache_write_tokens > 0 {
+            usage["cache_write_tokens"] = serde_json::json!(data.resp_cache_write_tokens);
+        }
         let mut output = serde_json::json!({
             "content": response.content.clone().unwrap_or_default(),
             "model": response.model,
-            "usage": {
-                "input_tokens": data.resp_input_tokens,
-                "output_tokens": data.resp_output_tokens,
-            }
+            "usage": usage,
         });
         if let Some(reasoning) = response.reasoning_content.as_ref() {
             output["reasoning_content"] = serde_json::Value::String(reasoning.clone());
@@ -158,6 +165,8 @@ pub(crate) async fn record_generation_diagnostics(
             model: response.model.clone(),
             input_tokens: data.resp_input_tokens,
             output_tokens: data.resp_output_tokens,
+            cache_read_tokens: data.resp_cache_read_tokens,
+            cache_write_tokens: data.resp_cache_write_tokens,
             cost_usd: data.cost,
             input: diag_input,
             output: diag_output,
@@ -194,6 +203,9 @@ pub(crate) fn emit_llm_response(
             model: response.model.clone(),
             input_tokens: data.resp_input_tokens,
             output_tokens: data.resp_output_tokens,
+            cache_read_tokens: data.resp_cache_read_tokens,
+            cache_write_tokens: data.resp_cache_write_tokens,
+            context_tokens_used: data.context_input_tokens,
             duration_ms: data.llm_elapsed_ms,
             cost_usd: data.cost,
             tool_calls_requested: tool_call_names,
@@ -297,6 +309,8 @@ pub(crate) async fn build_final_result(
         input_tokens: ctx.cumulative_input_tokens,
         output_tokens: ctx.cumulative_output_tokens,
         last_input_tokens: ctx.last_input_tokens,
+        last_cache_read_tokens: ctx.last_cache_read_tokens,
+        last_cache_write_tokens: ctx.last_cache_write_tokens,
         context_window: ctx_window,
         cost_usd: ctx.cumulative_cost,
         tool_calls_executed: ctx.tool_calls_executed,

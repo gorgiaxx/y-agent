@@ -1007,6 +1007,8 @@ async fn last_turn_meta(
                 cost_usd: s.cost_usd,
                 context_window: s.context_window,
                 context_tokens_used: s.context_tokens_used,
+                cache_read_tokens: s.cache_read_tokens,
+                cache_write_tokens: s.cache_write_tokens,
             };
             if let Ok(mut cache) = state.turn_meta_cache.lock() {
                 cache.insert(session_id, meta.clone());

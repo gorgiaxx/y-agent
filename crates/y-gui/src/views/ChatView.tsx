@@ -367,6 +367,7 @@ export function ChatView() {
         lastCost={statusBarMeta.cost}
         contextWindow={statusBarMeta.contextWindow}
         contextTokensUsed={statusBarMeta.contextTokensUsed}
+        cacheReadTokens={statusBarMeta.cacheReadTokens}
         backgroundTasks={{
           total: backgroundTaskTotal,
           running: backgroundTaskRunning,

@@ -1067,6 +1067,8 @@ mod tests {
             cumulative_output_tokens: 0,
             cumulative_cost: 0.0,
             last_input_tokens: 0,
+            last_cache_read_tokens: 0,
+            last_cache_write_tokens: 0,
             trace_id: None,
             session_id: session_id.clone(),
             working_directory: None,

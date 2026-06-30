@@ -23,6 +23,10 @@ export interface StatusBarMeta {
   cost?: number;
   contextWindow?: number;
   contextTokensUsed?: number;
+  /** Cache-read tokens from the last turn (subset of contextTokensUsed). */
+  cacheReadTokens?: number;
+  /** Cache-write tokens from the last turn (subset of contextTokensUsed). */
+  cacheWriteTokens?: number;
 }
 
 interface UseStatusBarMetaParams {
@@ -63,6 +67,8 @@ export function useStatusBarMeta({
           cost: turnMeta.cost_usd,
           contextWindow: turnMeta.context_window,
           contextTokensUsed: turnMeta.context_tokens_used,
+          cacheReadTokens: turnMeta.cache_read_tokens,
+          cacheWriteTokens: turnMeta.cache_write_tokens,
         });
       } else {
         setMeta({});
@@ -105,6 +111,8 @@ export function useStatusBarMeta({
           cost: payload.cost_usd,
           contextWindow: payload.context_window,
           contextTokensUsed: payload.context_tokens_used,
+          cacheReadTokens: payload.cache_read_tokens,
+          cacheWriteTokens: payload.cache_write_tokens,
         });
       });
     }).then((fn) => { unlisten = fn; });
@@ -120,14 +128,19 @@ export function useStatusBarMeta({
     for (let i = diagnosticEntries.length - 1; i >= 0; i--) {
       const ev = diagnosticEntries[i].event;
       if (ev.type === 'llm_response' && (!ev.agent_name || rootAgentNames.includes(ev.agent_name))) {
+        // Context occupancy is the total prompt size (fresh + cache); fall back
+        // to fresh input_tokens for older events without the field.
+        const occupancy = ev.context_tokens_used ?? ev.input_tokens;
         startTransition(() => {
           setMeta((prev) => ({
             ...prev,
             provider: ev.model || prev.provider,
-            tokens: { input: ev.input_tokens, output: ev.output_tokens },
+            tokens: { input: occupancy, output: ev.output_tokens },
             cost: (prev.cost ?? 0) > ev.cost_usd ? prev.cost : ev.cost_usd,
-            contextTokensUsed: ev.input_tokens,
+            contextTokensUsed: occupancy,
             contextWindow: ev.context_window || prev.contextWindow,
+            cacheReadTokens: ev.cache_read_tokens ?? prev.cacheReadTokens,
+            cacheWriteTokens: ev.cache_write_tokens ?? prev.cacheWriteTokens,
           }));
         });
         break;
@@ -163,6 +176,10 @@ export function useStatusBarMeta({
     const cost = lastAssistant.cost ?? (msgMeta?.cost_usd as number | undefined);
     const contextWindow = lastAssistant.context_window ?? (msgMeta?.context_window as number | undefined);
     const contextTokensUsed = (msgMeta?.context_tokens_used as number | undefined);
+    const cacheReadTokens = (msgMeta?.cache_read_tokens as number | undefined)
+      ?? (usage?.cache_read_tokens as number | undefined);
+    const cacheWriteTokens = (msgMeta?.cache_write_tokens as number | undefined)
+      ?? (usage?.cache_write_tokens as number | undefined);
 
     if (model || tokens || cost != null || contextWindow != null) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -175,6 +192,8 @@ export function useStatusBarMeta({
         cost,
         contextWindow: contextWindow ?? undefined,
         contextTokensUsed: contextTokensUsed ?? undefined,
+        cacheReadTokens,
+        cacheWriteTokens,
       }));
     }
   }, [messages, isStreaming, isLoadingMessages]);

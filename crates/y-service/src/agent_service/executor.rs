@@ -273,6 +273,8 @@ pub(crate) async fn execute_inner(
         cumulative_output_tokens: 0,
         cumulative_cost: 0.0,
         last_input_tokens: 0,
+        last_cache_read_tokens: 0,
+        last_cache_write_tokens: 0,
         trace_id,
         session_id,
         working_directory,
@@ -431,7 +433,9 @@ pub(crate) async fn execute_inner(
                 ctx.cumulative_input_tokens += iter_data.resp_input_tokens;
                 ctx.cumulative_output_tokens += iter_data.resp_output_tokens;
                 ctx.cumulative_cost += iter_data.cost;
-                ctx.last_input_tokens = iter_data.resp_input_tokens;
+                ctx.last_input_tokens = iter_data.context_input_tokens;
+                ctx.last_cache_read_tokens = iter_data.resp_cache_read_tokens;
+                ctx.last_cache_write_tokens = iter_data.resp_cache_write_tokens;
                 final_model = Some(response.model.clone());
                 final_provider_id = response
                     .provider_id
@@ -732,6 +736,8 @@ mod tests {
             cumulative_output_tokens: 0,
             cumulative_cost: 0.0,
             last_input_tokens: 0,
+            last_cache_read_tokens: 0,
+            last_cache_write_tokens: 0,
             trace_id: None,
             session_id,
             working_directory: None,

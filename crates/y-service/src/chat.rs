@@ -999,7 +999,24 @@ impl ChatService {
             .find(|o| o.obs_type == y_diagnostics::ObservationType::Generation);
 
         let model = last_gen.and_then(|o| o.model.clone()).unwrap_or_default();
-        let last_gen_input_tokens = last_gen.map_or(0, |o| o.input_tokens);
+        let (last_cache_read, last_cache_write) = last_gen.map_or((0, 0), |o| {
+            let read = o
+                .metadata
+                .get("cache_read_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            let write = o
+                .metadata
+                .get("cache_write_tokens")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
+            (read, write)
+        });
+        // Context occupancy is the total prompt size: fresh input plus cache.
+        let last_gen_input_tokens = last_gen
+            .map_or(0, |o| o.input_tokens)
+            .saturating_add(last_cache_read)
+            .saturating_add(last_cache_write);
 
         let pool = container.provider_pool().await;
         let metadata_list = pool.list_metadata();
@@ -1015,6 +1032,8 @@ impl ChatService {
             cost_usd: trace.total_cost_usd,
             context_window,
             context_tokens_used: last_gen_input_tokens,
+            cache_read_tokens: last_cache_read,
+            cache_write_tokens: last_cache_write,
         }))
     }
 
@@ -1243,6 +1262,8 @@ impl ChatService {
             input_tokens: result.input_tokens,
             output_tokens: result.output_tokens,
             last_input_tokens: result.last_input_tokens,
+            last_cache_read_tokens: result.last_cache_read_tokens,
+            last_cache_write_tokens: result.last_cache_write_tokens,
             context_window: result.context_window,
             cost_usd: result.cost_usd,
             tool_calls_executed: result.tool_calls_executed,
@@ -1357,6 +1378,8 @@ impl ChatService {
             meta["output_tokens"] = serde_json::json!(result.output_tokens);
             meta["cost_usd"] = serde_json::json!(result.cost_usd);
             meta["context_tokens_used"] = serde_json::json!(result.last_input_tokens);
+            meta["cache_read_tokens"] = serde_json::json!(result.last_cache_read_tokens);
+            meta["cache_write_tokens"] = serde_json::json!(result.last_cache_write_tokens);
             meta["final_response"] = serde_json::json!(result.final_response);
 
             if !result.generated_images.is_empty() {
@@ -1435,33 +1458,53 @@ impl ChatService {
         let tool_calls = Self::extract_tool_call_records(partial_messages);
         let accumulated_content = Self::accumulate_assistant_content(partial_messages);
 
+        // No partial work was produced before the failure (e.g. the first LLM
+        // call of the turn timed out with zero tokens). Nothing to preserve, so
+        // leave the display transcript untouched -- a retry then does a correct
+        // full rollback to the user message.
         if accumulated_content.trim().is_empty() && tool_calls.is_empty() {
             return;
         }
 
-        let metadata = serde_json::json!({
-            "stream_error": error_message,
+        let display_store = container.session_manager.display_transcript_store();
+
+        // Persist completed work (text + executed tool calls) as a standalone
+        // consolidated message WITHOUT `stream_error`, so it survives an
+        // intra-turn retry instead of being discarded with the failure.
+        let success_metadata = serde_json::json!({
             "tool_results": Self::build_tool_results_metadata(&tool_calls),
             "iteration_texts": Self::assistant_iteration_texts(partial_messages),
             "iteration_reasonings": Self::assistant_iteration_reasonings(partial_messages),
             "iteration_reasoning_durations_ms": Vec::<Option<u64>>::new(),
             "iteration_tool_counts": Self::assistant_iteration_tool_counts(partial_messages),
         });
-
-        let assistant_msg = Message {
+        let success_msg = Message {
             message_id: y_core::types::generate_message_id(),
             role: Role::Assistant,
             content: accumulated_content,
             tool_call_id: None,
             tool_calls: vec![],
             timestamp: y_core::types::now(),
-            metadata,
+            metadata: success_metadata,
         };
+        let _ = display_store.append(&input.session_id, &success_msg).await;
 
-        let _ = container
-            .session_manager
-            .display_transcript_store()
-            .append(&input.session_id, &assistant_msg)
+        // Append the failure marker as the LAST display message. Both the
+        // frontend and `prepare_resend_turn` detect an intra-turn retry by a
+        // trailing assistant message carrying a non-empty `stream_error`, and
+        // the intra-turn truncate removes ONLY this trailing marker -- which is
+        // what keeps the successful-iteration message above intact.
+        let failure_marker = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({ "stream_error": error_message }),
+        };
+        let _ = display_store
+            .append(&input.session_id, &failure_marker)
             .await;
     }
 
@@ -2248,6 +2291,8 @@ mod tests {
             input_tokens: 10,
             output_tokens: 20,
             last_input_tokens: 5,
+            last_cache_read_tokens: 0,
+            last_cache_write_tokens: 0,
             context_window: 1000,
             cost_usd: 0.1,
             tool_calls_executed: (0..total_tools)
@@ -2695,6 +2740,115 @@ mod tests {
             resent.history.len()
         );
         assert_eq!(resent.history[0].role, Role::User);
+    }
+
+    #[tokio::test]
+    async fn intra_turn_resend_preserves_successful_tool_call_display() {
+        let (container, _tmp) = make_test_container().await;
+
+        // 1. Start a turn -- persists the user message at display index 0.
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: None,
+                user_input: "run the task".into(),
+                provider_id: None,
+                request_mode: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+                operation_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
+                image_generation_options: None,
+            },
+        )
+        .await
+        .expect("prepare_turn should succeed");
+        let input = prepared.as_turn_input();
+
+        // 2. Iteration 1 executed a tool successfully; a later LLM call then
+        //    timed out. The partial state carries the completed assistant +
+        //    tool messages (this is what `ctx.new_messages` accumulates).
+        let assistant = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: "calling the tool".into(),
+            tool_call_id: None,
+            tool_calls: vec![y_core::types::ToolCallRequest {
+                id: "call-1".into(),
+                name: "do_work".into(),
+                arguments: serde_json::json!({ "x": 1 }),
+            }],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        };
+        let tool = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Tool,
+            content: "tool result OK".into(),
+            tool_call_id: Some("call-1".into()),
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        };
+        ChatService::persist_llm_error_partial_state(
+            &container,
+            &input,
+            "LLM error: HTTP 504 Gateway Timeout",
+            &[assistant, tool],
+        )
+        .await;
+        ChatService::persist_turn_checkpoint(&container, &input).await;
+
+        // 3. Resend -- must take the intra-turn branch.
+        let checkpoint = container
+            .chat_checkpoint_manager
+            .list_checkpoints(&prepared.session_id)
+            .await
+            .expect("list checkpoints")
+            .into_iter()
+            .find(|cp| cp.message_count_before == 0)
+            .expect("failed turn should record a boundary checkpoint");
+        let _resent = ChatService::prepare_resend_turn(
+            &container,
+            ResendTurnRequest {
+                session_id: prepared.session_id.clone(),
+                checkpoint_id: checkpoint.checkpoint_id,
+                provider_id: None,
+                request_mode: None,
+                knowledge_collections: None,
+                thinking: None,
+                plan_mode: None,
+                operation_mode: None,
+            },
+        )
+        .await
+        .expect("prepare_resend_turn should succeed");
+
+        // 4. The display transcript must STILL show the already-executed tool
+        //    call after resend prep. Only the failure marker should be removed,
+        //    not the successful iteration's work.
+        let display = container
+            .session_manager
+            .read_display_transcript(&prepared.session_id)
+            .await
+            .expect("read display transcript");
+
+        let work_visible = display
+            .iter()
+            .any(|m| m.role == Role::Assistant && m.content.contains("calling the tool"));
+        assert!(
+            work_visible,
+            "intra-turn retry must preserve the display of the already-executed \
+             tool call; display after resend = {:?}",
+            display
+                .iter()
+                .map(|m| (format!("{:?}", m.role), m.content.clone()))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]

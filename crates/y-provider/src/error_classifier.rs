@@ -359,6 +359,7 @@ mod tests {
     fn test_classify_provider_error_network() {
         use y_core::provider::ProviderError;
         let err = ProviderError::NetworkError {
+            status: None,
             message: "connection reset".into(),
         };
         assert_eq!(classify_provider_error(&err), StandardError::NetworkError);

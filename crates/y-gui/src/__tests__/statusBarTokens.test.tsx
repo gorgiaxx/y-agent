@@ -56,4 +56,31 @@ describe('StatusBar token ratio display', () => {
 
     expect(html).toContain('title="300 / 1,000,000 tokens');
   });
+
+  it('shows a cache-hit hint when prompt tokens were served from cache', () => {
+    const html = renderToStaticMarkup(
+      <StatusBar
+        version="debug"
+        contextWindow={200_000}
+        contextTokensUsed={80_875}
+        cacheReadTokens={80_384}
+      />,
+    );
+
+    // The cached portion is surfaced with its own label and tooltip.
+    expect(html).toContain('80.4k cached');
+    expect(html).toContain('80,384 tokens served from cache');
+  });
+
+  it('omits the cache hint when there were no cache reads', () => {
+    const html = renderToStaticMarkup(
+      <StatusBar
+        version="debug"
+        contextWindow={200_000}
+        contextTokensUsed={500}
+      />,
+    );
+
+    expect(html).not.toContain('cached');
+  });
 });

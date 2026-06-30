@@ -393,14 +393,11 @@ impl LlmProvider for AnthropicProvider {
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
 
@@ -562,14 +559,11 @@ impl LlmProvider for AnthropicProvider {
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -609,7 +603,10 @@ impl LlmProvider for AnthropicProvider {
         let inter_stream = futures::stream::unfold(
             (
                 AnthropicSseState {
-                    sse: crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                    sse: crate::sse::SseStreamState::with_status(
+                        Box::pin(byte_stream),
+                        Some(status.as_u16()),
+                    ),
                     current_tool_id: None,
                     current_tool_name: None,
                     current_tool_args: String::new(),

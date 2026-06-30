@@ -157,12 +157,30 @@ pub enum TokenUsageSource {
 }
 
 /// Token usage reported by an LLM provider.
+///
+/// Field semantics are normalized across providers so downstream consumers can
+/// treat every provider uniformly:
+///
+/// - `input_tokens` is the *fresh*, non-cached prompt tokens only. Providers
+///   differ on what their native field means (Anthropic's `input_tokens`
+///   excludes cache hits, whereas `OpenAI`'s `prompt_tokens` includes them), so
+///   each provider backend maps its native counts into this fresh-only field
+///   and reports cache hits separately in `cache_read_tokens` /
+///   `cache_write_tokens`.
+/// - To obtain the real context size processed for this request (the value that
+///   should drive context-window occupancy), use [`TokenUsage::total_input_tokens`],
+///   which sums the fresh, cache-read, and cache-write counts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
+    /// Fresh (non-cached) prompt tokens. Excludes cache reads and writes.
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Prompt tokens served from the provider's cache (cheaper than fresh
+    /// input). Not included in `input_tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_read_tokens: Option<u32>,
+    /// Prompt tokens written to the provider's cache (cache creation). Not
+    /// included in `input_tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_write_tokens: Option<u32>,
     /// How the token counts were obtained.
@@ -171,8 +189,39 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
+    /// Fresh input plus output. Does not account for cached prompt tokens.
     pub fn total(&self) -> u32 {
         self.input_tokens.saturating_add(self.output_tokens)
+    }
+
+    /// The total prompt tokens processed for this request: fresh input plus
+    /// cache reads plus cache writes. This is the authoritative context-window
+    /// occupancy figure and is consistent across providers.
+    pub fn total_input_tokens(&self) -> u32 {
+        self.input_tokens
+            .saturating_add(self.cache_read_tokens.unwrap_or(0))
+            .saturating_add(self.cache_write_tokens.unwrap_or(0))
+    }
+
+    /// Provider-neutral `usage` JSON object for diagnostics payloads.
+    ///
+    /// Uses the unified field names (`input_tokens` / `output_tokens` /
+    /// `cache_read_tokens` / `cache_write_tokens`) rather than any single
+    /// provider's wire format, so synthesized diagnostics payloads are
+    /// consistent regardless of which backend served the request. Cache fields
+    /// are only included when present.
+    pub fn to_diagnostics_json(&self) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+        });
+        if let Some(read) = self.cache_read_tokens {
+            value["cache_read_tokens"] = serde_json::json!(read);
+        }
+        if let Some(write) = self.cache_write_tokens {
+            value["cache_write_tokens"] = serde_json::json!(write);
+        }
+        value
     }
 }
 
@@ -189,5 +238,43 @@ mod tests {
         };
 
         assert_eq!(usage.total(), u32::MAX);
+    }
+
+    #[test]
+    fn test_total_input_tokens_sums_fresh_and_cache() {
+        let usage = TokenUsage {
+            input_tokens: 491,
+            output_tokens: 145,
+            cache_read_tokens: Some(80_384),
+            cache_write_tokens: Some(0),
+            ..TokenUsage::default()
+        };
+
+        // Fresh-only stays small; the real context size includes cache reads.
+        assert_eq!(usage.input_tokens, 491);
+        assert_eq!(usage.total_input_tokens(), 80_875);
+    }
+
+    #[test]
+    fn test_total_input_tokens_without_cache_equals_fresh() {
+        let usage = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            ..TokenUsage::default()
+        };
+
+        assert_eq!(usage.total_input_tokens(), 100);
+    }
+
+    #[test]
+    fn test_total_input_tokens_saturates_on_overflow() {
+        let usage = TokenUsage {
+            input_tokens: u32::MAX,
+            cache_read_tokens: Some(10),
+            cache_write_tokens: Some(10),
+            ..TokenUsage::default()
+        };
+
+        assert_eq!(usage.total_input_tokens(), u32::MAX);
     }
 }

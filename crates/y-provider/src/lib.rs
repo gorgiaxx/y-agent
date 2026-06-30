@@ -30,6 +30,7 @@ mod inter_stream_adapter;
 pub mod lease;
 pub mod metrics;
 pub mod metrics_export;
+pub mod net_error;
 pub mod pool;
 pub mod providers;
 pub mod router;

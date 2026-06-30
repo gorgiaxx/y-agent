@@ -372,8 +372,17 @@ pub enum ProviderError {
     #[error("server error from {provider}: {message}")]
     ServerError { provider: String, message: String },
 
-    #[error("network error: {message}")]
-    NetworkError { message: String },
+    #[error("network error{}: {message}", .status.as_ref().map(|s| format!(" (http {s})")).unwrap_or_default())]
+    NetworkError {
+        /// HTTP status of the response when one was received before the failure.
+        ///
+        /// `None` when the request never got a response (connect/timeout). For a
+        /// mid-stream interruption this carries the original (successful) status
+        /// — e.g. `Some(200)` — making explicit that the server accepted and
+        /// began the response before the transport was severed.
+        status: Option<u16>,
+        message: String,
+    },
 
     #[error("no provider available matching tags {tags:?}")]
     NoProviderAvailable { tags: Vec<String> },
@@ -495,4 +504,33 @@ pub trait ProviderPool: Send + Sync {
 
     /// Manually thaw a frozen provider (triggers health check first).
     async fn thaw(&self, provider_id: &ProviderId) -> Result<(), ProviderError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_error_display_includes_http_status_when_present() {
+        let err = ProviderError::NetworkError {
+            status: Some(200),
+            message: "stream read error after HTTP 200: connection reset by peer".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "network error (http 200): stream read error after HTTP 200: connection reset by peer"
+        );
+    }
+
+    #[test]
+    fn network_error_display_omits_status_when_absent() {
+        let err = ProviderError::NetworkError {
+            status: None,
+            message: "send failed: connection timed out".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "network error: send failed: connection timed out"
+        );
+    }
 }

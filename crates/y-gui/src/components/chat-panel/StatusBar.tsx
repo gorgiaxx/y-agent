@@ -13,6 +13,8 @@ interface StatusBarProps {
   contextWindow?: number;
   /** Actual context occupancy from last LLM call's prompt tokens. */
   contextTokensUsed?: number;
+  /** Cache-read tokens from the last call (subset of contextTokensUsed). */
+  cacheReadTokens?: number;
   backgroundTasks?: {
     total: number;
     running: number;
@@ -45,6 +47,7 @@ export function StatusBar({
   lastTokens,
   contextWindow,
   contextTokensUsed,
+  cacheReadTokens,
   backgroundTasks,
 }: StatusBarProps) {
   const connStatus = useConnectionStatus();
@@ -54,6 +57,11 @@ export function StatusBar({
   const occupancy = contextTokensUsed ?? (lastTokens ? lastTokens.input : 0);
   const pct =
     contextWindow && contextWindow > 0 ? Math.min((occupancy / contextWindow) * 100, 100) : null;
+  // Share of the prompt served from cache this turn, for a cache-hit hint.
+  const cachePct =
+    cacheReadTokens && occupancy > 0
+      ? Math.min((cacheReadTokens / occupancy) * 100, 100)
+      : null;
   const taskLabel = backgroundTasks
     ? taskStatusLabel(backgroundTasks.total, backgroundTasks.running, backgroundTasks.failed)
     : null;
@@ -80,6 +88,14 @@ export function StatusBar({
               {formatTokens(occupancy)}/{formatTokens(contextWindow)}
             </span>
             <span className="status-token-pct">({pct!.toFixed(1)}%)</span>
+            {cachePct !== null && (
+              <span
+                className="status-token-cache"
+                title={`${cacheReadTokens!.toLocaleString()} tokens served from cache (${cachePct.toFixed(0)}% of prompt)`}
+              >
+                {formatTokens(cacheReadTokens!)} cached
+              </span>
+            )}
             <span className="status-token-bar" title={`${pct!.toFixed(1)}% context used`}>
               <span
                 className={`status-token-fill${pct! > 80 ? ' warn' : ''}`}

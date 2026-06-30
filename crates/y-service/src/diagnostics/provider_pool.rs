@@ -60,10 +60,7 @@ impl DiagnosticsProviderPool {
             let mut output = serde_json::json!({
                 "content": response.content.clone().unwrap_or_default(),
                 "model": response.model,
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                }
+                "usage": response.usage.to_diagnostics_json(),
             });
             if let Some(reasoning) = response.reasoning_content.as_ref() {
                 output["reasoning_content"] = serde_json::Value::String(reasoning.clone());
@@ -71,10 +68,7 @@ impl DiagnosticsProviderPool {
             output
         });
 
-        let cost = crate::cost::CostService::compute_cost(
-            u64::from(response.usage.input_tokens),
-            u64::from(response.usage.output_tokens),
-        );
+        let cost = crate::cost::CostService::compute_cost_from_usage(&response.usage);
 
         let gen_id = self
             .diagnostics
@@ -85,6 +79,8 @@ impl DiagnosticsProviderPool {
                 model: response.model.clone(),
                 input_tokens: u64::from(response.usage.input_tokens),
                 output_tokens: u64::from(response.usage.output_tokens),
+                cache_read_tokens: u64::from(response.usage.cache_read_tokens.unwrap_or(0)),
+                cache_write_tokens: u64::from(response.usage.cache_write_tokens.unwrap_or(0)),
                 cost_usd: cost,
                 input: diag_input,
                 output: diag_output,
@@ -111,10 +107,7 @@ impl DiagnosticsProviderPool {
                 let mut output = serde_json::json!({
                     "content": response.content.clone().unwrap_or_default(),
                     "model": response.model,
-                    "usage": {
-                        "input_tokens": response.usage.input_tokens,
-                        "output_tokens": response.usage.output_tokens,
-                    }
+                    "usage": response.usage.to_diagnostics_json(),
                 });
                 if let Some(reasoning) = response.reasoning_content.as_ref() {
                     output["reasoning_content"] = serde_json::Value::String(reasoning.clone());

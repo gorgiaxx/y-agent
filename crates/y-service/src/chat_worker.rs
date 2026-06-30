@@ -211,6 +211,8 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                         cost_usd: result.cost_usd,
                         context_window: result.context_window,
                         context_tokens_used: result.last_input_tokens,
+                        cache_read_tokens: result.last_cache_read_tokens,
+                        cache_write_tokens: result.last_cache_write_tokens,
                     };
                     if let Ok(mut cache) = turn_meta_cache.lock() {
                         cache.insert(sid_clone.0.clone(), meta);
@@ -235,6 +237,8 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                         "iterations": result.iterations,
                         "context_window": result.context_window,
                         "context_tokens_used": result.last_input_tokens,
+                        "cache_read_tokens": result.last_cache_read_tokens,
+                        "cache_write_tokens": result.last_cache_write_tokens,
                     });
                     sink_inner.emit_complete(&payload);
                 }

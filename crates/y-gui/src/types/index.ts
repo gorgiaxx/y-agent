@@ -99,6 +99,10 @@ export interface ChatCompletePayload {
   iterations: number;
   context_window: number;
   context_tokens_used: number;
+  /** Cache-read tokens from the last iteration (subset of context_tokens_used). */
+  cache_read_tokens?: number;
+  /** Cache-write tokens from the last iteration (subset of context_tokens_used). */
+  cache_write_tokens?: number;
 }
 
 export interface ToolCallInfo {
@@ -123,6 +127,12 @@ export interface LlmResponseEvent {
   model: string;
   input_tokens: number;
   output_tokens: number;
+  /** Prompt tokens served from cache (subset of context_tokens_used). */
+  cache_read_tokens?: number;
+  /** Prompt tokens written to cache (subset of context_tokens_used). */
+  cache_write_tokens?: number;
+  /** Total prompt tokens processed (fresh + cache) -- context occupancy. */
+  context_tokens_used?: number;
   duration_ms: number;
   cost_usd: number;
   tool_calls_requested: string[];
@@ -443,6 +453,10 @@ export interface TurnMeta {
   cost_usd: number;
   context_window: number;
   context_tokens_used: number;
+  /** Cache-read tokens from the last iteration (subset of context_tokens_used). */
+  cache_read_tokens?: number;
+  /** Cache-write tokens from the last iteration (subset of context_tokens_used). */
+  cache_write_tokens?: number;
 }
 
 /** Result of a chat undo operation (from `chat_undo`). */

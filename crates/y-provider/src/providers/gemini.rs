@@ -343,14 +343,11 @@ impl LlmProvider for GeminiProvider {
             request_builder = request_builder.header("x-goog-api-key", &self.api_key);
         }
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
 
@@ -423,14 +420,11 @@ impl LlmProvider for GeminiProvider {
             request_builder = request_builder.header("x-goog-api-key", &self.api_key);
         }
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -458,7 +452,10 @@ impl LlmProvider for GeminiProvider {
         let byte_stream = response.bytes_stream();
         let inter_stream = futures::stream::unfold(
             (
-                crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                crate::sse::SseStreamState::with_status(
+                    Box::pin(byte_stream),
+                    Some(status.as_u16()),
+                ),
                 0_usize, // next_image_index
                 VecDeque::<InterStreamEvent>::new(),
             ),

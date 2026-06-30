@@ -26,6 +26,12 @@ pub struct TurnMeta {
     pub cost_usd: f64,
     pub context_window: usize,
     pub context_tokens_used: u64,
+    /// Cache-read tokens from the last iteration (subset of
+    /// `context_tokens_used`).
+    pub cache_read_tokens: u64,
+    /// Cache-write tokens from the last iteration (subset of
+    /// `context_tokens_used`).
+    pub cache_write_tokens: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +110,13 @@ pub enum TurnEvent {
         model: String,
         input_tokens: u64,
         output_tokens: u64,
+        /// Prompt tokens served from cache (subset of total input).
+        cache_read_tokens: u64,
+        /// Prompt tokens written to cache (subset of total input).
+        cache_write_tokens: u64,
+        /// Total prompt tokens processed (fresh + cache). Authoritative
+        /// context-window occupancy figure.
+        context_tokens_used: u64,
         duration_ms: u64,
         cost_usd: f64,
         tool_calls_requested: Vec<String>,
@@ -365,7 +378,15 @@ pub struct TurnResult {
     pub provider_id: Option<String>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Total input tokens (fresh + cache) from the last iteration -- context
+    /// occupancy.
     pub last_input_tokens: u64,
+    /// Cache-read tokens from the last iteration (subset of
+    /// `last_input_tokens`).
+    pub last_cache_read_tokens: u64,
+    /// Cache-write tokens from the last iteration (subset of
+    /// `last_input_tokens`).
+    pub last_cache_write_tokens: u64,
     pub context_window: usize,
     pub cost_usd: f64,
     pub tool_calls_executed: Vec<ToolCallRecord>,
@@ -651,6 +672,12 @@ pub struct TurnMetaSummary {
     pub cost_usd: f64,
     pub context_window: usize,
     pub context_tokens_used: u64,
+    /// Cache-read tokens from the last iteration (subset of
+    /// `context_tokens_used`).
+    pub cache_read_tokens: u64,
+    /// Cache-write tokens from the last iteration (subset of
+    /// `context_tokens_used`).
+    pub cache_write_tokens: u64,
 }
 
 // ---------------------------------------------------------------------------

@@ -99,7 +99,10 @@ pub(crate) fn build_iteration_data(
 ) -> LlmIterationData {
     let resp_input_tokens = u64::from(response.usage.input_tokens);
     let resp_output_tokens = u64::from(response.usage.output_tokens);
-    let cost = CostService::compute_cost(resp_input_tokens, resp_output_tokens);
+    let resp_cache_read_tokens = u64::from(response.usage.cache_read_tokens.unwrap_or(0));
+    let resp_cache_write_tokens = u64::from(response.usage.cache_write_tokens.unwrap_or(0));
+    let context_input_tokens = u64::from(response.usage.total_input_tokens());
+    let cost = CostService::compute_cost_from_usage(&response.usage);
     let llm_elapsed_ms = u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(0);
 
     let prompt_preview = response.raw_request.as_ref().map_or_else(
@@ -112,10 +115,7 @@ pub(crate) fn build_iteration_data(
             let mut response_json = serde_json::json!({
                 "content": response.content.clone().unwrap_or_default(),
                 "model": response.model,
-                "usage": {
-                    "input_tokens": resp_input_tokens,
-                    "output_tokens": resp_output_tokens,
-                }
+                "usage": response.usage.to_diagnostics_json(),
             });
             if let Some(reasoning) = response.reasoning_content.as_ref() {
                 response_json["reasoning_content"] = serde_json::Value::String(reasoning.clone());
@@ -128,6 +128,9 @@ pub(crate) fn build_iteration_data(
     LlmIterationData {
         resp_input_tokens,
         resp_output_tokens,
+        resp_cache_read_tokens,
+        resp_cache_write_tokens,
+        context_input_tokens,
         cost,
         llm_elapsed_ms,
         prompt_preview,
@@ -135,6 +138,13 @@ pub(crate) fn build_iteration_data(
     }
 }
 
+/// Build a provider-neutral `raw_response` for the streaming path.
+///
+/// The streaming path has no single raw JSON blob from the provider, so we
+/// synthesize one for diagnostics. It uses the unified token field names and a
+/// neutral envelope (no `object: chat.completion` / `choices` wrapper), so an
+/// Anthropic stream is not mislabeled as an `OpenAI` completion. Nothing parses
+/// this shape downstream; it is stored and displayed as the observation output.
 fn build_streaming_raw_response(
     model_name: &str,
     content: &str,
@@ -142,12 +152,11 @@ fn build_streaming_raw_response(
     tool_calls: &[y_core::types::ToolCallRequest],
     generated_images: &[GeneratedImage],
     finish_reason: y_core::provider::FinishReason,
-    input_tokens: u64,
-    output_tokens: u64,
+    usage: &y_core::types::TokenUsage,
 ) -> serde_json::Value {
     let finish_reason_str = match finish_reason {
         y_core::provider::FinishReason::Length => "length",
-        y_core::provider::FinishReason::ToolUse => "tool_calls",
+        y_core::provider::FinishReason::ToolUse => "tool_use",
         y_core::provider::FinishReason::ContentFilter => "content_filter",
         y_core::provider::FinishReason::Unknown | y_core::provider::FinishReason::Stop => "stop",
     };
@@ -157,44 +166,29 @@ fn build_streaming_raw_response(
         .map(|tool_call| {
             serde_json::json!({
                 "id": tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_call.name,
-                    "arguments": tool_call.arguments,
-                }
+                "name": tool_call.name,
+                "arguments": tool_call.arguments,
             })
         })
         .collect();
 
-    let mut message = serde_json::json!({
-        "role": "assistant",
+    let mut response = serde_json::json!({
+        "model": model_name,
         "content": content,
+        "finish_reason": finish_reason_str,
+        "usage": usage.to_diagnostics_json(),
     });
     if let Some(reasoning) = reasoning_content.filter(|value| !value.is_empty()) {
-        message["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
+        response["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
     }
     if !tool_calls_json.is_empty() {
-        message["tool_calls"] = serde_json::Value::Array(tool_calls_json);
+        response["tool_calls"] = serde_json::Value::Array(tool_calls_json);
     }
     if !generated_images.is_empty() {
-        message["generated_images"] =
+        response["generated_images"] =
             serde_json::to_value(generated_images).unwrap_or(serde_json::Value::Array(vec![]));
     }
-
-    serde_json::json!({
-        "id": "",
-        "object": "chat.completion",
-        "model": model_name,
-        "choices": [{
-            "index": 0,
-            "message": message,
-            "finish_reason": finish_reason_str,
-        }],
-        "usage": {
-            "prompt_tokens": input_tokens,
-            "completion_tokens": output_tokens,
-        }
-    })
+    response
 }
 
 #[derive(Default)]
@@ -480,8 +474,7 @@ async fn call_llm_streaming(
         &tool_calls,
         &generated_images,
         finish_reason,
-        u64::from(usage.input_tokens),
-        u64::from(usage.output_tokens),
+        &usage,
     );
 
     // If reasoning ended without any content delta (e.g. model produced
@@ -789,19 +782,49 @@ mod tests {
             }],
             &[],
             FinishReason::ToolUse,
-            123,
-            45,
+            &TokenUsage {
+                input_tokens: 123,
+                output_tokens: 45,
+                ..TokenUsage::default()
+            },
         );
 
-        assert_eq!(raw["choices"][0]["finish_reason"], "tool_calls");
+        // Provider-neutral envelope: no OpenAI `object`/`choices` wrapper.
+        assert!(raw.get("object").is_none());
+        assert!(raw.get("choices").is_none());
+        assert_eq!(raw["finish_reason"], "tool_use");
+        assert_eq!(raw["tool_calls"][0]["name"], "Plan");
         assert_eq!(
-            raw["choices"][0]["message"]["tool_calls"][0]["function"]["name"],
-            "Plan"
-        );
-        assert_eq!(
-            raw["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]["request"],
+            raw["tool_calls"][0]["arguments"]["request"],
             "Create a plan"
         );
+        // Unified token field names (not prompt_tokens/completion_tokens).
+        assert_eq!(raw["usage"]["input_tokens"], 123);
+        assert_eq!(raw["usage"]["output_tokens"], 45);
+    }
+
+    #[test]
+    fn test_build_streaming_raw_response_includes_cache_tokens() {
+        let raw = build_streaming_raw_response(
+            "claude-test",
+            "answer",
+            None,
+            &[],
+            &[],
+            FinishReason::Stop,
+            &TokenUsage {
+                input_tokens: 491,
+                output_tokens: 145,
+                cache_read_tokens: Some(80_384),
+                cache_write_tokens: Some(0),
+                ..TokenUsage::default()
+            },
+        );
+
+        assert_eq!(raw["usage"]["input_tokens"], 491);
+        assert_eq!(raw["usage"]["output_tokens"], 145);
+        assert_eq!(raw["usage"]["cache_read_tokens"], 80_384);
+        assert_eq!(raw["usage"]["cache_write_tokens"], 0);
     }
 
     #[tokio::test]
@@ -834,13 +857,10 @@ mod tests {
             .raw_response
             .expect("streaming call should synthesize raw response");
         assert_eq!(
-            raw_response["choices"][0]["message"]["reasoning_content"].as_str(),
+            raw_response["reasoning_content"].as_str(),
             Some("step by step")
         );
-        assert_eq!(
-            raw_response["choices"][0]["message"]["content"].as_str(),
-            Some("Final answer")
-        );
+        assert_eq!(raw_response["content"].as_str(), Some("Final answer"));
     }
 
     struct MockStreamingImagePool {

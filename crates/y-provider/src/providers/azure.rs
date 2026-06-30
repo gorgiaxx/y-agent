@@ -318,14 +318,11 @@ impl AzureOpenAiProvider {
                 .header("Content-Type", "application/json");
         request_builder = self.apply_auth(request_builder);
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -546,14 +543,11 @@ impl LlmProvider for AzureOpenAiProvider {
                 .header("Content-Type", "application/json");
         request_builder = self.apply_auth(request_builder);
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
 
@@ -676,14 +670,11 @@ impl LlmProvider for AzureOpenAiProvider {
                 .header("Accept", "text/event-stream");
         request_builder = self.apply_auth(request_builder);
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -721,7 +712,10 @@ impl LlmProvider for AzureOpenAiProvider {
 
         let inter_stream = futures::stream::unfold(
             (
-                crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                crate::sse::SseStreamState::with_status(
+                    Box::pin(byte_stream),
+                    Some(status.as_u16()),
+                ),
                 ToolCallAccumulatorSet::default(),
                 VecDeque::<InterStreamEvent>::new(),
             ),

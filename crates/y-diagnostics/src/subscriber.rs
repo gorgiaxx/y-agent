@@ -26,6 +26,10 @@ pub struct GenerationParams {
     pub input_tokens: u64,
     /// Output tokens produced.
     pub output_tokens: u64,
+    /// Prompt tokens served from cache (subset of total input).
+    pub cache_read_tokens: u64,
+    /// Prompt tokens written to cache (subset of total input).
+    pub cache_write_tokens: u64,
     /// Cost in USD.
     pub cost_usd: f64,
     /// Full request payload.
@@ -63,6 +67,10 @@ pub struct GenerationStartParams {
 pub struct GenerationCompleteParams {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Prompt tokens served from cache (subset of total input).
+    pub cache_read_tokens: u64,
+    /// Prompt tokens written to cache (subset of total input).
+    pub cache_write_tokens: u64,
     pub cost_usd: f64,
     pub output: serde_json::Value,
     pub duration_ms: u64,
@@ -144,7 +152,11 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
         obs.output = params.output;
         obs.status = ObservationStatus::Completed;
         obs.completed_at = Some(Utc::now());
-        obs.metadata = serde_json::json!({ "duration_ms": params.duration_ms });
+        obs.metadata = serde_json::json!({
+            "duration_ms": params.duration_ms,
+            "cache_read_tokens": params.cache_read_tokens,
+            "cache_write_tokens": params.cache_write_tokens,
+        });
         let obs_id = obs.id;
         self.store.insert_observation(obs).await?;
         Ok(obs_id)
@@ -196,7 +208,11 @@ impl<S: TraceStore + ?Sized> DiagnosticsSubscriber<S> {
         obs.output = params.output;
         obs.status = ObservationStatus::Completed;
         obs.completed_at = Some(Utc::now());
-        obs.metadata = serde_json::json!({ "duration_ms": params.duration_ms });
+        obs.metadata = serde_json::json!({
+            "duration_ms": params.duration_ms,
+            "cache_read_tokens": params.cache_read_tokens,
+            "cache_write_tokens": params.cache_write_tokens,
+        });
         self.store.update_observation(obs).await
     }
 
@@ -407,6 +423,8 @@ mod tests {
                 model: "gpt-4".to_string(),
                 input_tokens: 100,
                 output_tokens: 50,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 cost_usd: 0.005,
                 input: serde_json::json!({"messages": [{"role": "user", "content": "What is Rust?"}]}),
                 output: serde_json::json!({"content": "Rust is a systems programming language."}),

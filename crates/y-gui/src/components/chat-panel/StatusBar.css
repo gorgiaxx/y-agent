@@ -101,6 +101,12 @@
   color: var(--text-muted);
 }
 
+.status-token-cache {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent, var(--text-secondary));
+}
+
 .status-token-bar {
   display: inline-block;
   width: 40px;

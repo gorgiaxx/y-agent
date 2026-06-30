@@ -235,7 +235,11 @@ impl LlmProvider for OllamaProvider {
                 .send()
                 .await
                 .map_err(|e| ProviderError::NetworkError {
-                    message: format!("Ollama connection error (is Ollama running?): {e}"),
+                    status: e.status().map(|s| s.as_u16()),
+                    message: format!(
+                        "Ollama connection error (is Ollama running?): {}",
+                        crate::net_error::describe_reqwest_error(&e)
+                    ),
                 })?;
 
         let status = response.status();
@@ -340,7 +344,11 @@ impl LlmProvider for OllamaProvider {
                 .send()
                 .await
                 .map_err(|e| ProviderError::NetworkError {
-                    message: format!("Ollama connection error (is Ollama running?): {e}"),
+                    status: e.status().map(|s| s.as_u16()),
+                    message: format!(
+                        "Ollama connection error (is Ollama running?): {}",
+                        crate::net_error::describe_reqwest_error(&e)
+                    ),
                 })?;
 
         let status = response.status();
@@ -355,7 +363,10 @@ impl LlmProvider for OllamaProvider {
         let byte_stream = response.bytes_stream();
         let inter_stream = futures::stream::unfold(
             (
-                crate::sse::SseStreamState::new(Box::pin(byte_stream)),
+                crate::sse::SseStreamState::with_status(
+                    Box::pin(byte_stream),
+                    Some(status.as_u16()),
+                ),
                 VecDeque::<InterStreamEvent>::new(),
             ),
             move |mut composite| async move {

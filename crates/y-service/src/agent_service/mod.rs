@@ -150,9 +150,16 @@ pub struct AgentExecutionResult {
     pub input_tokens: u64,
     /// Cumulative output tokens across all LLM iterations.
     pub output_tokens: u64,
-    /// Input tokens from the **last** LLM iteration -- represents the actual
-    /// prompt size sent to the model and thus the current context occupancy.
+    /// Input tokens from the **last** LLM iteration -- the total prompt size
+    /// (fresh + cache) sent to the model, and thus the current context
+    /// occupancy.
     pub last_input_tokens: u64,
+    /// Cache-read tokens from the last LLM iteration (subset of
+    /// `last_input_tokens`).
+    pub last_cache_read_tokens: u64,
+    /// Cache-write tokens from the last LLM iteration (subset of
+    /// `last_input_tokens`).
+    pub last_cache_write_tokens: u64,
     /// Context window size of the serving provider.
     pub context_window: usize,
     /// Total cost in USD.
@@ -304,7 +311,13 @@ pub(crate) struct ToolExecContext {
     pub(crate) cumulative_input_tokens: u64,
     pub(crate) cumulative_output_tokens: u64,
     pub(crate) cumulative_cost: f64,
+    /// Total input tokens (fresh + cache) from the last LLM iteration -- the
+    /// current context-window occupancy.
     pub(crate) last_input_tokens: u64,
+    /// Cache-read tokens from the last LLM iteration (for cache-hit display).
+    pub(crate) last_cache_read_tokens: u64,
+    /// Cache-write tokens from the last LLM iteration.
+    pub(crate) last_cache_write_tokens: u64,
     pub(crate) trace_id: Option<Uuid>,
     pub(crate) session_id: SessionId,
     pub(crate) working_directory: Option<String>,
@@ -336,8 +349,16 @@ pub(crate) struct ToolExecContext {
 ///
 /// Avoids passing 7+ scalar arguments to helpers.
 pub(crate) struct LlmIterationData {
+    /// Fresh (non-cached) prompt tokens for this iteration.
     pub(crate) resp_input_tokens: u64,
     pub(crate) resp_output_tokens: u64,
+    /// Prompt tokens served from cache (cheaper than fresh input).
+    pub(crate) resp_cache_read_tokens: u64,
+    /// Prompt tokens written to cache (cache creation).
+    pub(crate) resp_cache_write_tokens: u64,
+    /// Total prompt tokens processed (fresh + cache read + cache write). This is
+    /// the authoritative context-window occupancy figure.
+    pub(crate) context_input_tokens: u64,
     pub(crate) cost: f64,
     pub(crate) llm_elapsed_ms: u64,
     pub(crate) prompt_preview: String,

@@ -240,14 +240,11 @@ impl OpenAiProvider {
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
 
@@ -579,14 +576,11 @@ impl LlmProvider for OpenAiProvider {
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
 
@@ -720,14 +714,11 @@ impl LlmProvider for OpenAiProvider {
                 request_builder.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let response =
-            request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    message: e.to_string(),
-                })?;
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
 
         let status = response.status();
         if !status.is_success() {
@@ -760,7 +751,7 @@ impl LlmProvider for OpenAiProvider {
 
         Ok(ChatStreamResponse {
             stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(
-                build_openai_inter_stream(Box::pin(byte_stream)),
+                build_openai_inter_stream(Box::pin(byte_stream), Some(status.as_u16())),
             )),
             raw_request,
             provider_id: None,
@@ -785,11 +776,12 @@ impl LlmProvider for OpenAiProvider {
 /// semantics.
 fn build_openai_inter_stream(
     byte_stream: crate::sse::ByteStream,
+    status: Option<u16>,
 ) -> impl futures::Stream<Item = Result<crate::inter_stream::InterStreamEvent, ProviderError>> + Send
 {
     futures::stream::unfold(
         (
-            crate::sse::SseStreamState::new(byte_stream),
+            crate::sse::SseStreamState::with_status(byte_stream, status),
             ToolCallAccumulatorSet::default(),
             VecDeque::<InterStreamEvent>::new(),
         ),
@@ -2158,7 +2150,7 @@ mod tests {
                 .into_iter()
                 .map(|s| Ok::<_, reqwest::Error>(Bytes::from_static(s.as_bytes()))),
         );
-        super::build_openai_inter_stream(Box::pin(stream))
+        super::build_openai_inter_stream(Box::pin(stream), Some(200))
     }
 
     /// A garbage event in the middle of an otherwise-valid stream must be

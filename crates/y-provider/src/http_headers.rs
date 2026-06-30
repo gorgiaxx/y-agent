@@ -2,11 +2,28 @@
 
 use std::collections::HashMap;
 use std::hash::BuildHasher;
+use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, ClientBuilder, RequestBuilder};
 
 use crate::config::HttpProtocol;
+
+/// TCP-level keepalive idle interval. After a connection sits idle this long,
+/// the OS starts sending keepalive probes. Reasoning models can stream nothing
+/// for minutes while "thinking"; without keepalive, an idle NAT/firewall/L4
+/// load balancer in the path can silently evict the connection, which then
+/// surfaces as a mid-stream `error decoding response body`. Kept well under
+/// the 60s idle windows common on such devices.
+const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
+
+/// HTTP/2 PING keepalive interval. Unlike TCP keepalive (an L4 ACK that an L7
+/// reverse proxy ignores), an HTTP/2 PING is protocol-level traffic that keeps
+/// HTTP/2-aware gateways from timing out a silent-but-alive stream.
+const HTTP2_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How long to wait for a PING ack before declaring the HTTP/2 connection dead.
+const HTTP2_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Build a provider HTTP client with protocol-specific header behavior.
 pub fn provider_http_client_builder(
@@ -15,8 +32,16 @@ pub fn provider_http_client_builder(
 ) -> ClientBuilder {
     let mut builder = match protocol {
         HttpProtocol::Http1 => Client::builder().http1_only().http1_title_case_headers(),
-        HttpProtocol::Http2 => Client::builder().http2_prior_knowledge(),
+        HttpProtocol::Http2 => Client::builder()
+            .http2_prior_knowledge()
+            .http2_keep_alive_interval(HTTP2_KEEPALIVE_INTERVAL)
+            .http2_keep_alive_timeout(HTTP2_KEEPALIVE_TIMEOUT)
+            .http2_keep_alive_while_idle(true),
     };
+
+    // Applies at the TCP layer regardless of protocol; guards against idle
+    // eviction by NAT/firewall/L4 devices during long silent streaming reads.
+    builder = builder.tcp_keepalive(TCP_KEEPALIVE);
 
     if let Some(proxy_url) = proxy_url {
         match reqwest::Proxy::all(&proxy_url) {
@@ -93,5 +118,13 @@ mod tests {
         let err = custom_header_map(&headers).expect_err("invalid header should fail");
 
         assert!(err.contains("Bad Header"));
+    }
+
+    #[test]
+    fn test_client_builds_with_keepalive_for_both_protocols() {
+        // The keepalive settings must not break client construction on either
+        // protocol path (HTTP/2 keepalive is only valid on the HTTP/2 builder).
+        provider_http_client(HttpProtocol::Http1, None).expect("http1 client builds");
+        provider_http_client(HttpProtocol::Http2, None).expect("http2 client builds");
     }
 }

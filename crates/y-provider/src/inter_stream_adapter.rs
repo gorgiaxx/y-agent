@@ -147,6 +147,7 @@ mod tests {
     async fn error_propagated() {
         let events: Vec<Result<InterStreamEvent, ProviderError>> =
             vec![Err(ProviderError::NetworkError {
+                status: None,
                 message: "timeout".into(),
             })];
         let mut stream = into_chat_stream(Box::pin(stream::iter(events)));

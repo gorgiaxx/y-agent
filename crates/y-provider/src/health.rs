@@ -78,6 +78,7 @@ impl HealthChecker {
                     "health check timed out"
                 );
                 Err(ProviderError::NetworkError {
+                    status: None,
                     message: "health check timed out".into(),
                 })
             }

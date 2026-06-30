@@ -37,16 +37,30 @@ pub struct SseStreamState {
     pub bytes_remainder: Vec<u8>,
     /// Whether the stream has been fully consumed.
     pub done: bool,
+    /// HTTP status of the response this stream was opened from (e.g. `200`).
+    ///
+    /// Carried so a mid-stream transport failure can report that the server had
+    /// already accepted and begun the response before the connection broke,
+    /// rather than appearing as a status-less network error.
+    pub status: Option<u16>,
 }
 
 impl SseStreamState {
-    /// Create a new SSE stream state from an HTTP byte stream.
+    /// Create a new SSE stream state from an HTTP byte stream, without a known
+    /// response status.
     pub fn new(byte_stream: ByteStream) -> Self {
+        Self::with_status(byte_stream, None)
+    }
+
+    /// Create a new SSE stream state, recording the originating HTTP response
+    /// status so mid-stream failures can surface it.
+    pub fn with_status(byte_stream: ByteStream, status: Option<u16>) -> Self {
         Self {
             byte_stream,
             buffer: String::new(),
             bytes_remainder: Vec::new(),
             done: false,
+            status,
         }
     }
 
@@ -67,8 +81,14 @@ impl SseStreamState {
             }
             Some(Err(e)) => {
                 self.done = true;
+                let cause = crate::net_error::describe_reqwest_error(&e);
+                let message = match self.status {
+                    Some(code) => format!("stream read error after HTTP {code}: {cause}"),
+                    None => format!("stream read error: {cause}"),
+                };
                 Err(ProviderError::NetworkError {
-                    message: format!("stream read error: {e}"),
+                    status: self.status,
+                    message,
                 })
             }
             None => {
@@ -272,5 +292,17 @@ mod tests {
         state.decode_bytes(&[0xA9, b'!']);
         assert_eq!(state.buffer, "hi\u{00e9}!");
         assert!(state.bytes_remainder.is_empty());
+    }
+
+    #[test]
+    fn new_defaults_status_to_none() {
+        let state = SseStreamState::new(Box::pin(futures::stream::empty()));
+        assert_eq!(state.status, None);
+    }
+
+    #[test]
+    fn with_status_records_originating_response_status() {
+        let state = SseStreamState::with_status(Box::pin(futures::stream::empty()), Some(200));
+        assert_eq!(state.status, Some(200));
     }
 }

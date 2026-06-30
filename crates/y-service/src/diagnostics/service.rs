@@ -37,6 +37,13 @@ pub enum HistoricalEntry {
         model: String,
         input_tokens: u64,
         output_tokens: u64,
+        /// Prompt tokens served from cache (subset of total input).
+        cache_read_tokens: u64,
+        /// Prompt tokens written to cache (subset of total input).
+        cache_write_tokens: u64,
+        /// Total prompt tokens processed (fresh + cache). Authoritative
+        /// context-window occupancy figure.
+        context_tokens_used: u64,
         duration_ms: u64,
         cost_usd: f64,
         tool_calls_requested: Vec<String>,
@@ -308,6 +315,12 @@ impl DiagnosticsService {
                             obs.output.to_string()
                         };
 
+                        // Cache breakdown is not a DB column; recover it from
+                        // the normalized values the subscriber stores in the
+                        // observation metadata.
+                        let (cache_read_tokens, cache_write_tokens) =
+                            extract_cache_tokens(&obs.metadata);
+
                         entries.push((
                             ts,
                             HistoricalEntry::LlmResponse {
@@ -315,6 +328,12 @@ impl DiagnosticsService {
                                 model,
                                 input_tokens: obs.input_tokens,
                                 output_tokens: obs.output_tokens,
+                                cache_read_tokens,
+                                cache_write_tokens,
+                                context_tokens_used: obs
+                                    .input_tokens
+                                    .saturating_add(cache_read_tokens)
+                                    .saturating_add(cache_write_tokens),
                                 duration_ms,
                                 cost_usd: obs.cost_usd,
                                 tool_calls_requested: extract_tool_calls_requested(&obs.output),
@@ -355,6 +374,25 @@ impl DiagnosticsService {
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(entries.into_iter().map(|(_, entry)| entry).collect())
     }
+}
+
+/// Recover the cache-token breakdown stored in a generation observation's
+/// metadata.
+///
+/// Cache reads/writes are not persisted as observation columns, so the
+/// diagnostics subscriber writes the normalized values into the observation
+/// metadata. Returns `(cache_read, cache_write)`, defaulting to zero when
+/// absent (older rows or providers without caching).
+fn extract_cache_tokens(metadata: &serde_json::Value) -> (u64, u64) {
+    let read = metadata
+        .get("cache_read_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let write = metadata
+        .get("cache_write_tokens")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    (read, write)
 }
 
 fn extract_tool_calls_requested(output: &serde_json::Value) -> Vec<String> {
