@@ -353,7 +353,7 @@ impl AnthropicProvider {
             model: model.to_string(),
             messages,
             system,
-            max_tokens: request.max_tokens.unwrap_or(32000),
+            max_tokens: resolve_max_tokens(request.max_tokens, model),
             temperature,
             stream,
             tools,
@@ -365,6 +365,71 @@ impl AnthropicProvider {
             thinking,
             output_config,
         }
+    }
+}
+
+/// Maximum output tokens for a given Anthropic model, plus whether the model is
+/// recognized.
+///
+/// `max_tokens` is a required field on the Messages API and caps OUTPUT tokens
+/// (it is not a thinking budget). The Anthropic limit varies per model, so a
+/// single hardcoded default is wrong: it overshoots small models (HTTP 400) and
+/// needlessly caps large ones. This mirrors the model capability table in the
+/// Vercel AI SDK (`getModelCapabilities`). Substrings are matched
+/// most-specific-first.
+///
+/// The `known` flag governs clamping: explicit caller values are only clamped
+/// for recognized models, so an unrecognized model can still request its own
+/// (possibly higher) limit without being forced down to the default.
+fn model_max_output_tokens(model: &str) -> (u32, bool) {
+    if model.contains("opus-4-8")
+        || model.contains("opus-4-7")
+        || model.contains("fable-5")
+        || model.contains("sonnet-4-6")
+        || model.contains("opus-4-6")
+    {
+        (128_000, true)
+    } else if model.contains("sonnet-4-5")
+        || model.contains("opus-4-5")
+        || model.contains("haiku-4-5")
+    {
+        (64_000, true)
+    } else if model.contains("opus-4-1") {
+        (32_000, true)
+    } else if model.contains("sonnet-4-") {
+        (64_000, true)
+    } else if model.contains("opus-4-") {
+        (32_000, true)
+    } else if model.contains("claude-3-haiku") {
+        (4_096, true)
+    } else {
+        // Unknown model (e.g. third-party gateways / OpenAI-compat backends on
+        // the Anthropic wire): use a generous default and do not clamp, since we
+        // cannot know the real ceiling. Callers can still set an explicit limit.
+        (128_000, false)
+    }
+}
+
+/// Resolve the `max_tokens` to send for a request.
+///
+/// Falls back to the model's maximum output when the caller did not specify one,
+/// and clamps caller-provided values that exceed a recognized model's maximum
+/// (logging a warning), so switching models never produces an over-limit
+/// request that the API would reject.
+fn resolve_max_tokens(requested: Option<u32>, model: &str) -> u32 {
+    let (model_cap, known) = model_max_output_tokens(model);
+    match requested {
+        Some(value) if known && value > model_cap => {
+            tracing::warn!(
+                model = %model,
+                requested = value,
+                model_max = model_cap,
+                "Requested max_tokens exceeds model output limit; clamping"
+            );
+            model_cap
+        }
+        Some(value) => value,
+        None => model_cap,
     }
 }
 
@@ -1862,5 +1927,114 @@ mod tests {
         assert!(json_no["thinking"].is_null());
         assert!(json_no["output_config"].is_null());
         assert_eq!(json_no["temperature"], 0.7);
+    }
+
+    #[test]
+    fn test_model_max_output_tokens_table() {
+        // Known families map to their real output ceilings.
+        assert_eq!(model_max_output_tokens("claude-opus-4-7"), (128_000, true));
+        assert_eq!(
+            model_max_output_tokens("claude-sonnet-4-6-20990101"),
+            (128_000, true)
+        );
+        assert_eq!(model_max_output_tokens("claude-sonnet-4-5"), (64_000, true));
+        assert_eq!(model_max_output_tokens("claude-haiku-4-5"), (64_000, true));
+        // opus-4-1 is the exception within the opus-4 family.
+        assert_eq!(model_max_output_tokens("claude-opus-4-1"), (32_000, true));
+        // Generic opus-4 (e.g. opus-4-0) falls to 32000; sonnet-4 to 64000.
+        assert_eq!(model_max_output_tokens("claude-opus-4-0"), (32_000, true));
+        assert_eq!(model_max_output_tokens("claude-sonnet-4-0"), (64_000, true));
+        assert_eq!(model_max_output_tokens("claude-3-haiku"), (4_096, true));
+        // Unknown models get a generous default and are flagged as not-known.
+        assert_eq!(
+            model_max_output_tokens("claude-3-5-sonnet-20241022"),
+            (128_000, false)
+        );
+    }
+
+    #[test]
+    fn test_resolve_max_tokens_falls_back_to_model_cap_when_unset() {
+        assert_eq!(resolve_max_tokens(None, "claude-sonnet-4-5"), 64_000);
+        assert_eq!(resolve_max_tokens(None, "claude-opus-4-7"), 128_000);
+        // Unknown model gets the generous default.
+        assert_eq!(resolve_max_tokens(None, "some-future-model"), 128_000);
+    }
+
+    #[test]
+    fn test_resolve_max_tokens_passes_through_value_below_cap() {
+        assert_eq!(resolve_max_tokens(Some(8_000), "claude-sonnet-4-5"), 8_000);
+    }
+
+    #[test]
+    fn test_resolve_max_tokens_clamps_known_model_over_cap() {
+        // sonnet-4-5 caps at 64000.
+        assert_eq!(
+            resolve_max_tokens(Some(200_000), "claude-sonnet-4-5"),
+            64_000
+        );
+        // opus-4-1 caps at 32000.
+        assert_eq!(resolve_max_tokens(Some(50_000), "claude-opus-4-1"), 32_000);
+    }
+
+    #[test]
+    fn test_resolve_max_tokens_does_not_clamp_unknown_model() {
+        // Unknown model: respect the caller's explicit request even above the
+        // default, since we cannot know the true ceiling.
+        assert_eq!(
+            resolve_max_tokens(Some(200_000), "claude-3-5-sonnet-20241022"),
+            200_000
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_resolves_max_tokens_per_model() {
+        use y_core::types::{Message, Role};
+
+        let make_request = |model: Option<&str>, max_tokens: Option<u32>| ChatRequest {
+            messages: vec![Message {
+                message_id: String::new(),
+                role: Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: chrono::Utc::now(),
+                metadata: serde_json::Value::Null,
+            }],
+            model: model.map(String::from),
+            request_mode: RequestMode::TextChat,
+            max_tokens,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        // Provider's configured model is a known large model.
+        let provider = AnthropicProvider::new(
+            "anthropic-main",
+            "claude-sonnet-4-6",
+            "sk-ant-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            3,
+            200_000,
+            ToolCallingMode::default(),
+        );
+
+        // Unset -> falls back to the model cap (128000), not the old 32000.
+        let body = provider.build_request_body(&make_request(None, None), false);
+        assert_eq!(body.max_tokens, 128_000);
+
+        // Per-request model override is respected for resolution + clamping.
+        let body = provider
+            .build_request_body(&make_request(Some("claude-opus-4-1"), Some(99_999)), false);
+        assert_eq!(body.max_tokens, 32_000);
     }
 }
