@@ -1195,6 +1195,23 @@ pub async fn session_restore_pending_reviews(
     Ok(())
 }
 
+/// List every persisted plan run for a session (full history), reconstructed
+/// into the same display shape used for live plan tool results.
+///
+/// Lets the GUI show completed / awaiting / failed plans that are outside the
+/// loaded message window, surviving session switches and application restarts.
+#[tauri::command]
+pub async fn session_list_plan_runs(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<serde_json::Value>, String> {
+    let sid = SessionId(session_id);
+    Ok(
+        y_service::plan_orchestrator::PlanOrchestrator::list_session_plans(&state.container, &sid)
+            .await,
+    )
+}
+
 /// Resume a plan execution from a specific task step.
 ///
 /// Spawns background execution and emits progress events on the same

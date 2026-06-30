@@ -976,6 +976,19 @@ async fn restore_pending_reviews(
     Ok(Json(serde_json::json!({ "reviews": reviews })))
 }
 
+/// `GET /api/v1/chat/plan-runs/{session_id}`
+///
+/// Returns the full persisted plan history for a session, reconstructed into
+/// the same display shape used for live plan tool results.
+async fn list_plan_runs(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(session_id);
+    let plans = PlanOrchestrator::list_session_plans(&state.container, &sid).await;
+    Ok(Json(plans))
+}
+
 /// `GET /api/v1/chat/last-turn-meta/:session_id`
 async fn last_turn_meta(
     State(state): State<AppState>,
@@ -1103,6 +1116,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/chat/last-turn-meta/{session_id}",
             get(last_turn_meta),
         )
+        .route("/api/v1/chat/plan-runs/{session_id}", get(list_plan_runs))
         .route("/api/v1/chat/steer", post(steer_add).delete(steer_delete))
         .route("/api/v1/chat/steer/{session_id}", get(steer_list))
 }
