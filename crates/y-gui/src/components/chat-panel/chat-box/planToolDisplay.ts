@@ -13,6 +13,7 @@ export interface PlanTaskDisplay {
   estimatedIterations: number;
   keyFiles: string[];
   acceptanceCriteria: string[];
+  error?: string;
 }
 
 export interface PlanWriterStageDisplay {
@@ -103,6 +104,7 @@ function parsePlanTask(value: unknown): PlanTaskDisplay | null {
     acceptanceCriteria: Array.isArray(obj.acceptance_criteria)
       ? obj.acceptance_criteria.map((item) => String(item))
       : [],
+    error: typeof obj.error === 'string' && obj.error ? obj.error : undefined,
   };
 }
 
@@ -129,19 +131,25 @@ function mergeExecutionTaskStatuses(
   const statusByTaskId = new Map<string, string>();
   const statusByPhase = new Map<number, string>();
   const statusByTitle = new Map<string, string>();
+  const errorByTaskId = new Map<string, string>();
+  const errorByPhase = new Map<number, string>();
+  const errorByTitle = new Map<string, string>();
 
   for (const phase of phases) {
     const status = typeof phase.status === 'string' ? phase.status : '';
-    if (!status) continue;
+    const error = typeof phase.error === 'string' && phase.error ? phase.error : '';
 
     if (typeof phase.task_id === 'string' && phase.task_id) {
-      statusByTaskId.set(phase.task_id, status);
+      if (status) statusByTaskId.set(phase.task_id, status);
+      if (error) errorByTaskId.set(phase.task_id, error);
     }
     if (typeof phase.phase === 'number') {
-      statusByPhase.set(phase.phase, status);
+      if (status) statusByPhase.set(phase.phase, status);
+      if (error) errorByPhase.set(phase.phase, error);
     }
     if (typeof phase.title === 'string' && phase.title) {
-      statusByTitle.set(phase.title, status);
+      if (status) statusByTitle.set(phase.title, status);
+      if (error) errorByTitle.set(phase.title, error);
     }
   }
 
@@ -151,6 +159,10 @@ function mergeExecutionTaskStatuses(
       ?? statusByPhase.get(task.phase)
       ?? statusByTitle.get(task.title)
       ?? task.status,
+    error: errorByTaskId.get(task.id)
+      ?? errorByPhase.get(task.phase)
+      ?? errorByTitle.get(task.title)
+      ?? task.error,
   }));
 }
 

@@ -60,6 +60,7 @@ import { LangfuseTab } from './LangfuseTab';
 import { PromptsTab } from './PromptsTab';
 import { PromptTemplatesTab } from './PromptTemplatesTab';
 import { AboutTab } from './AboutTab';
+import { SettingsActionSlotProvider, SettingsActionSlotTarget } from './TomlEditorTab';
 import { Button, Tabs, TabsContent, WindowControls } from '../ui';
 
 import './SettingsPanel.css';
@@ -349,17 +350,19 @@ export function SettingsPanel({
 
   return (
     <div className="settings-panel">
-      <div className="settings-action-bar" data-tauri-drag-region>
-        <h2 className="settings-action-bar-title">{TAB_LABELS[activeTab] ?? activeTab}</h2>
-        <div className="settings-action-bar-actions">
-          <Button variant="primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Changes'}
-          </Button>
-          <WindowControls />
+      <SettingsActionSlotProvider>
+        <div className="settings-action-bar" data-tauri-drag-region>
+          <h2 className="settings-action-bar-title">{TAB_LABELS[activeTab] ?? activeTab}</h2>
+          <div className="settings-action-bar-actions">
+            <SettingsActionSlotTarget className="settings-action-bar-toggle-slot" />
+            <Button variant="primary" onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Changes'}
+            </Button>
+            <WindowControls />
+          </div>
         </div>
-      </div>
 
-      <Tabs value={activeTab} className="settings-content">
+        <Tabs value={activeTab} className="settings-content">
         <TabsContent value="general">
           <GeneralTab
             localConfig={localConfig}
@@ -504,7 +507,8 @@ export function SettingsPanel({
         <TabsContent value="about">
           <AboutTab />
         </TabsContent>
-      </Tabs>
+        </Tabs>
+      </SettingsActionSlotProvider>
 
       {/* Toast notification */}
       {toast && (

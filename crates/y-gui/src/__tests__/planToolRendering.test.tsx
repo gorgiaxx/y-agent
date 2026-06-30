@@ -553,6 +553,171 @@ describe('Plan tool rendering', () => {
     expect(html).toContain('2 tasks running in parallel');
     expect(html).toContain('tool-call-plan-parallel-note');
   });
+
+  it('renders a partial-failure execution as Partial, not a hard Failed', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-partial-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Partial failure test' }),
+        }}
+        status="error"
+        result={JSON.stringify({
+          plan_title: 'Partial Test',
+          total_phases: 3,
+          completed: 2,
+          failed: 1,
+          phases: [],
+        })}
+        metadata={{
+          display: {
+            kind: 'plan_execution',
+            plan_title: 'Partial Test',
+            plan_file: '/tmp/partial.md',
+            plan_run_id: 'plan-run-partial',
+            total_phases: 3,
+            completed: 2,
+            failed: 1,
+            tasks: [
+              {
+                id: 'task-1', phase: 1, title: 'Done A', description: '', depends_on: [],
+                status: 'completed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+              {
+                id: 'task-2', phase: 2, title: 'Done B', description: '', depends_on: [],
+                status: 'completed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+              {
+                id: 'task-3', phase: 3, title: 'Broken C', description: '', depends_on: [],
+                status: 'failed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+            ],
+            phases: [],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('Partial');
+    expect(html).toContain('1 failed');
+    expect(html).toContain('tool-status-partial');
+    expect(html).not.toContain('tool-status-error');
+  });
+
+  it('renders the per-phase error message for a failed phase', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-phase-error-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Phase error visibility' }),
+        }}
+        status="error"
+        result={JSON.stringify({
+          plan_title: 'Phase Error Test',
+          total_phases: 1,
+          completed: 0,
+          failed: 1,
+          phases: [],
+        })}
+        metadata={{
+          display: {
+            kind: 'plan_execution',
+            plan_title: 'Phase Error Test',
+            plan_file: '/tmp/phase-error.md',
+            plan_run_id: 'plan-run-err',
+            total_phases: 1,
+            completed: 0,
+            failed: 1,
+            tasks: [
+              {
+                id: 'task-1', phase: 1, title: 'Compile crate', description: '', depends_on: [],
+                status: 'failed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+            ],
+            phases: [
+              {
+                task_id: 'task-1', phase: 1, title: 'Compile crate', status: 'failed',
+                error: 'phase-1 execution failed: provider timed out after 3 retries',
+              },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('tool-call-plan-task-error');
+    expect(html).toContain('provider timed out after 3 retries');
+  });
+
+  it('renders a dependency-skipped phase as Skipped rather than Pending', () => {
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-skipped-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Skipped phase labeling' }),
+        }}
+        status="error"
+        result={JSON.stringify({ plan_title: 'Skip Test', total_phases: 2, completed: 0, failed: 1, phases: [] })}
+        metadata={{
+          display: {
+            kind: 'plan_execution',
+            plan_title: 'Skip Test',
+            plan_file: '/tmp/skip.md',
+            plan_run_id: 'plan-run-skip',
+            total_phases: 2,
+            completed: 0,
+            failed: 1,
+            tasks: [
+              {
+                id: 'task-1', phase: 1, title: 'Upstream', description: '', depends_on: [],
+                status: 'failed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+              {
+                id: 'task-2', phase: 2, title: 'Downstream', description: '', depends_on: ['task-1'],
+                status: 'skipped', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+              },
+            ],
+            phases: [
+              { task_id: 'task-2', phase: 2, title: 'Downstream', status: 'skipped', error: 'dependency failed' },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain('Skipped');
+    expect(html).toContain('tool-call-plan-task-status--skipped');
+  });
+
+  it('renders a visible Retry-from-here action for terminal phases', () => {
+    const html = renderToStaticMarkup(
+      <PlanTaskItem
+        task={{
+          id: 'task-1',
+          phase: 1,
+          title: 'Failing phase',
+          description: '',
+          dependsOn: [],
+          status: 'failed',
+          estimatedIterations: 4,
+          keyFiles: [],
+          acceptanceCriteria: [],
+          error: 'phase-1 execution failed: build error',
+        }}
+        defaultExpanded
+        planRunId="plan-run-1"
+        sessionId="session-1"
+        onRetryFromHere={() => {}}
+      />,
+    );
+
+    expect(html).toContain('Retry from here');
+    expect(html).toContain('tool-call-plan-task-retry');
+    expect(html).toContain('build error');
+  });
 });
 
 describe('shouldDisplayStreamingAgent', () => {

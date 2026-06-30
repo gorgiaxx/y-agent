@@ -350,25 +350,42 @@ export function mergeIntoRawToml(
     missingBySection.get(section)!.push(field);
   }
 
-  // Check which sections already exist in the output.
-  const existingSections = new Set<string>();
-  existingSections.add(''); // Root always "exists".
-  for (const line of result) {
-    const m = line.trim().match(sectionRe);
-    if (m) existingSections.add(m[1].trim());
-  }
+  // Find the index of an existing section header (returns -1 if absent).
+  const sectionHeaderIndex = (section: string): number =>
+    result.findIndex((l) => {
+      const m = l.trim().match(sectionRe);
+      return m !== null && m[1].trim() === section;
+    });
+
+  // Index of the first section header, used to place missing root-level fields.
+  const firstSectionIndex = (): number =>
+    result.findIndex((l) => sectionRe.test(l.trim()));
 
   for (const [section, fields] of missingBySection) {
-    if (!existingSections.has(section)) {
-      // Need to add the section header.
-      result.push('');
-      result.push(`[${section}]`);
-      existingSections.add(section);
+    const newFieldLines = fields.map((field) =>
+      formatValue(field.tomlKey, data[field.formKey], field.type),
+    );
+
+    if (section === '') {
+      // Root-level fields: insert before the first section header so they stay
+      // outside any [section] block. Append at end if there are no sections.
+      const insertAt = firstSectionIndex();
+      if (insertAt < 0) {
+        result.push(...newFieldLines);
+      } else {
+        result.splice(insertAt, 0, ...newFieldLines);
+      }
+      continue;
     }
 
-    for (const field of fields) {
-      const value = data[field.formKey];
-      result.push(formatValue(field.tomlKey, value, field.type));
+    const headerIdx = sectionHeaderIndex(section);
+    if (headerIdx < 0) {
+      // Section absent -> create header and fields at the end.
+      result.push('', `[${section}]`, ...newFieldLines);
+    } else {
+      // Section exists but the key was missing (e.g. commented out).
+      // Insert directly after the header so the field stays in its section.
+      result.splice(headerIdx + 1, 0, ...newFieldLines);
     }
   }
 

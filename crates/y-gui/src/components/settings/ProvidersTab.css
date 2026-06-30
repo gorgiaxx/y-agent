@@ -197,12 +197,6 @@
   color: var(--accent);
 }
 
-.settings-header-with-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm);
-}
-
 /* ---- Model field with search button ---- */
 .pf-model-group {
   position: relative;

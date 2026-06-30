@@ -11,7 +11,6 @@ const DESKTOP_ONLY_COMMANDS = new Set([
   'skill_open_folder',
   'open_path_in_ide',
   'save_remote_image',
-  'resume_plan_execution',
 ]);
 
 function readSource(path: string): string {

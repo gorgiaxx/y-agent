@@ -7,7 +7,7 @@ import { transport } from '../../lib';
 import type { AppConfigResponse } from '../../types';
 import type { KnowledgeFormData } from './settingsTypes';
 import { jsonToKnowledge } from './settingsTypes';
-import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { KNOWLEDGE_SCHEMA } from '../../utils/settingsSchemas';
 import { Eye, EyeOff } from 'lucide-react';
@@ -76,11 +76,7 @@ export function KnowledgeTab({
   if (rawMode) {
     return (
       <>
-        <div className="settings-header">
-          <h3 className="section-title section-title--flush">
-            <span className="settings-header-with-toggle">Knowledge <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-          </h3>
-        </div>
+        <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
         <RawTomlEditor
           content={rawContent}
           onChange={(val) => {
@@ -96,11 +92,7 @@ export function KnowledgeTab({
 
   return (
     <>
-      <div className="settings-header">
-        <h3 className="section-title section-title--flush">
-          <span className="settings-header-with-toggle">Knowledge <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-        </h3>
-      </div>
+      <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
       <div className="settings-form-wrap">
         <SettingsGroup title="Chunking">
           <SettingsItem title="L0 Max Tokens" description="Summary level">

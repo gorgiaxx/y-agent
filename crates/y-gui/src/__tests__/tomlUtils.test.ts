@@ -148,4 +148,67 @@ describe('mergeIntoRawToml', () => {
     // Should have a blank line between the two fields
     expect(result).toMatch(/name = "b"\n\ncount = 2/);
   });
+
+  // ---------------------------------------------------------------------------
+  // Section-aware placement of missing fields.
+  //
+  // Regression: a schema field whose section header already exists but whose
+  // key is absent from the raw text (e.g. it is commented out) must be written
+  // *inside* that section, not appended at the end of the file -- otherwise it
+  // lands under whichever section happens to be last, corrupting the config.
+  // ---------------------------------------------------------------------------
+
+  const sectionedSchema: FieldDef[] = [
+    { formKey: 'loopMax', tomlKey: 'max_iterations', section: 'loop_guard', type: 'number', defaultValue: 50, optional: true },
+    { formKey: 'hitlAuto', tomlKey: 'auto_approve', section: 'hitl', type: 'boolean', defaultValue: true, optional: true },
+  ];
+
+  it('writes a missing field into its existing section, not under the last one', () => {
+    const raw = [
+      '[loop_guard]',
+      '# max_iterations = 50',
+      '',
+      '[hitl]',
+      '# auto_approve = true',
+      '',
+    ].join('\n');
+    const data = { loopMax: 99, hitlAuto: true };
+    const result = mergeIntoRawToml(raw, data, sectionedSchema);
+
+    // max_iterations belongs under [loop_guard], before [hitl].
+    const loopIdx = result.indexOf('[loop_guard]');
+    const hitlIdx = result.indexOf('[hitl]');
+    const valIdx = result.indexOf('max_iterations = 99');
+    expect(valIdx).toBeGreaterThan(loopIdx);
+    expect(valIdx).toBeLessThan(hitlIdx);
+  });
+
+  it('does not place a loop_guard field under [hitl]', () => {
+    const raw = `[loop_guard]\n# max_iterations = 50\n\n[hitl]\n# auto_approve = true\n`;
+    const data = { loopMax: 99, hitlAuto: true };
+    const result = mergeIntoRawToml(raw, data, sectionedSchema);
+    const hitlBlock = result.slice(result.indexOf('[hitl]'));
+    expect(hitlBlock).not.toContain('max_iterations');
+  });
+
+  it('places a missing root-level field above section headers', () => {
+    const rootSchema: FieldDef[] = [
+      { formKey: 'name', tomlKey: 'name', type: 'string', defaultValue: '' },
+      { formKey: 'nested', tomlKey: 'flag', section: 'sub', type: 'boolean', defaultValue: false },
+    ];
+    const raw = `[sub]\nflag = true\n`;
+    const data = { name: 'top', nested: true };
+    const result = mergeIntoRawToml(raw, data, rootSchema);
+    expect(result.indexOf('name = "top"')).toBeLessThan(result.indexOf('[sub]'));
+  });
+
+  it('avoids duplicate keys across repeated saves', () => {
+    const raw = `[loop_guard]\n# max_iterations = 50\n\n[hitl]\n# auto_approve = true\n`;
+    const data = { loopMax: 99, hitlAuto: true };
+    const first = mergeIntoRawToml(raw, data, sectionedSchema);
+    const second = mergeIntoRawToml(first, { loopMax: 88, hitlAuto: true }, sectionedSchema);
+    const occurrences = second.split('\n').filter((l) => l.trim().startsWith('max_iterations')).length;
+    expect(occurrences).toBe(1);
+    expect(second).toContain('max_iterations = 88');
+  });
 });

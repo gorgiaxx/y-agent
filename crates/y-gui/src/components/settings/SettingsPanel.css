@@ -374,6 +374,12 @@ html.custom-decorations .settings-action-bar-actions {
   -webkit-app-region: no-drag;
 }
 
+/* Portal host for the active tab's Form/RAW toggle. `display: contents` keeps
+   the toggle aligned in the actions row and adds no gap when no tab fills it. */
+.settings-action-bar-toggle-slot {
+  display: contents;
+}
+
 /* ---- Path field (read-only input with inline copy button) ---- */
 .path-field-wrap {
   display: flex;

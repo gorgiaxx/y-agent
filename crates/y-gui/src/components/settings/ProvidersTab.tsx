@@ -18,7 +18,7 @@ import {
   buildProvidersToml,
 } from './settingsTypes';
 import { ProviderHeadersEditor } from './ProviderHeadersEditor';
-import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Input, Button, Switch, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
 import { PROVIDER_TYPE_OPTIONS } from './providerTypeOptions';
@@ -537,9 +537,7 @@ export function ProvidersTab({
   if (rawMode) {
     return (
       <>
-        <div className="settings-header">
-          <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-        </div>
+        <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
         <RawTomlEditor
           content={rawContent}
           onChange={(val) => {
@@ -555,9 +553,7 @@ export function ProvidersTab({
 
   return (
     <>
-    <div className="settings-header">
-      <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-    </div>
+    <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
     <SubListLayout
       sidebar={
         <>

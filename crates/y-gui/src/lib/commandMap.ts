@@ -315,6 +315,8 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                          body: (a) => ({ request_id: arg(a, 'requestId', 'request_id'), decision: arg(a, 'decision') }) },
   chat_answer_plan_review: { method: 'POST', path: '/api/v1/chat/answer-plan-review',
                          body: (a) => ({ review_id: arg(a, 'reviewId', 'review_id'), decision: arg(a, 'decision'), feedback: arg(a, 'feedback') }) },
+  resume_plan_execution: { method: 'POST', path: '/api/v1/chat/resume-plan',
+                         body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id'), plan_run_id: arg(a, 'planRunId', 'plan_run_id'), from_task_id: arg(a, 'fromTaskId', 'from_task_id') }) },
   session_restore_pending_reviews: { method: 'POST', path: '/api/v1/chat/restore-pending-reviews',
                          body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id') }) },
   session_last_turn_meta: { method: 'GET', path: pathWith('/api/v1/chat/last-turn-meta/{sessionId}', 'sessionId') },

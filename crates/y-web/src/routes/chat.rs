@@ -152,6 +152,14 @@ pub struct RestorePendingReviewsRequest {
     pub session_id: String,
 }
 
+/// Request body for `POST /api/v1/chat/resume-plan`.
+#[derive(Debug, Deserialize)]
+pub struct ResumePlanRequest {
+    pub session_id: String,
+    pub plan_run_id: String,
+    pub from_task_id: String,
+}
+
 /// Request body for `POST /api/v1/chat/steer`.
 #[derive(Debug, Deserialize)]
 pub struct SteerAddRequest {
@@ -411,7 +419,101 @@ async fn chat_send(
     }))
 }
 
-/// `POST /api/v1/chat/cancel`
+/// `POST /api/v1/chat/resume-plan`
+async fn resume_plan(
+    State(state): State<AppState>,
+    Json(body): Json<ResumePlanRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let result_sid = body.session_id.clone();
+    let result_run_id = run_id.clone();
+    let sid = SessionId(body.session_id.clone());
+
+    let _ = state.event_tx.send(SseEvent::ChatStarted {
+        run_id: run_id.clone(),
+        session_id: result_sid.clone(),
+    });
+
+    let cancel_token = CancellationToken::new();
+    if let Ok(mut runs) = state.pending_runs.lock() {
+        runs.insert(run_id.clone(), cancel_token.clone());
+    }
+
+    let working_directory = normalize_directory(
+        WorkspaceService::new(&state.config_dir).resolve_workspace_path(&body.session_id),
+    );
+    let event_tx = state.event_tx.clone();
+    let container = state.container.clone();
+    let pending_runs = Arc::clone(&state.pending_runs);
+    let plan_run_id = body.plan_run_id.clone();
+    let from_task_id = body.from_task_id.clone();
+    let run_id_clone = run_id.clone();
+
+    tokio::spawn(async move {
+        let sink = SseEventSink(event_tx);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        let progress_sink = sink.0.clone();
+        let progress_run_id = run_id_clone.clone();
+        let progress_task = tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                SseEventSink(progress_sink.clone()).emit_progress(&progress_run_id, &event);
+            }
+        });
+
+        let result = PlanOrchestrator::resume_plan(
+            &container,
+            &sid,
+            &plan_run_id,
+            &from_task_id,
+            working_directory,
+            Some(&tx),
+            Some(cancel_token),
+        )
+        .await;
+
+        drop(tx);
+        let _ = progress_task.await;
+
+        if let Ok(mut runs) = pending_runs.lock() {
+            runs.remove(&run_id_clone);
+        }
+
+        match result {
+            Ok(output) => sink.emit_complete(&build_plan_resume_complete_payload(
+                &run_id_clone,
+                &sid.0,
+                &output,
+            )),
+            Err(e) => sink.emit_error(&run_id_clone, &sid.0, &e.to_string()),
+        }
+    });
+
+    Ok(Json(ChatStarted {
+        session_id: result_sid,
+        run_id: result_run_id,
+    }))
+}
+
+fn build_plan_resume_complete_payload(
+    run_id: &str,
+    session_id: &str,
+    output: &y_core::tool::ToolOutput,
+) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": run_id,
+        "session_id": session_id,
+        "content": output.content.to_string(),
+        "model": "",
+        "provider_id": null,
+        "input_tokens": 0_u64,
+        "output_tokens": 0_u64,
+        "cost_usd": 0.0_f64,
+        "tool_calls": [{ "name": "Plan", "success": output.success, "duration_ms": 0_u64 }],
+        "iterations": 0_usize,
+        "context_window": 0_usize,
+        "context_tokens_used": 0_u64,
+    })
+}
 async fn chat_cancel(
     State(state): State<AppState>,
     Json(body): Json<CancelRequest>,
@@ -990,6 +1092,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/chat/answer-question", post(answer_question))
         .route("/api/v1/chat/answer-permission", post(answer_permission))
         .route("/api/v1/chat/answer-plan-review", post(answer_plan_review))
+        .route("/api/v1/chat/resume-plan", post(resume_plan))
         .route(
             "/api/v1/chat/restore-pending-reviews",
             post(restore_pending_reviews),
@@ -1005,6 +1108,40 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_resume_plan_request_deserializes() {
+        let req: ResumePlanRequest = serde_json::from_value(serde_json::json!({
+            "session_id": "sess-1",
+            "plan_run_id": "plan-run-1",
+            "from_task_id": "task-3"
+        }))
+        .expect("resume plan request should deserialize");
+        assert_eq!(req.session_id, "sess-1");
+        assert_eq!(req.plan_run_id, "plan-run-1");
+        assert_eq!(req.from_task_id, "task-3");
+    }
+
+    #[test]
+    fn test_build_plan_resume_complete_payload_shape() {
+        let output = y_core::tool::ToolOutput {
+            success: false,
+            content: serde_json::json!({ "plan_run_id": "plan-run-1", "completed": 2, "failed": 1 }),
+            warnings: vec![],
+            metadata: serde_json::Value::Null,
+        };
+
+        let payload = build_plan_resume_complete_payload("run-1", "sess-1", &output);
+
+        assert_eq!(payload["run_id"], "run-1");
+        assert_eq!(payload["session_id"], "sess-1");
+        assert_eq!(payload["tool_calls"][0]["name"], "Plan");
+        assert_eq!(payload["tool_calls"][0]["success"], false);
+        assert!(payload["content"]
+            .as_str()
+            .expect("content is a string")
+            .contains("plan-run-1"));
+    }
 
     #[test]
     fn test_chat_request_deserializes_shared_frontend_image_options() {

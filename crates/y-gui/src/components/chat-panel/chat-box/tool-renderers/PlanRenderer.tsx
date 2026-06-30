@@ -1,6 +1,8 @@
 import { Fragment, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
+  AlertTriangle,
+  Ban,
   CheckCircle2,
   ClipboardList,
   ChevronRight,
@@ -8,6 +10,7 @@ import {
   Clock3,
   ListTodo,
   Play,
+  RotateCcw,
 } from 'lucide-react';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -36,8 +39,13 @@ import type { ToolRendererProps } from './types';
 function formatPlanTaskStatus(status: string): string {
   if (status === 'completed') return 'Completed';
   if (status === 'failed') return 'Failed';
+  if (status === 'skipped') return 'Skipped';
   if (status === 'in_progress') return 'In Progress';
   return 'Pending';
+}
+
+function isTerminalPlanStatus(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'skipped';
 }
 
 function PlanTaskStatusIcon({ status }: { status: string }) {
@@ -46,6 +54,9 @@ function PlanTaskStatusIcon({ status }: { status: string }) {
   }
   if (status === 'failed') {
     return <AlertCircle size={14} className="tool-call-plan-task-status-icon" />;
+  }
+  if (status === 'skipped') {
+    return <Ban size={14} className="tool-call-plan-task-status-icon" />;
   }
   if (status === 'in_progress') {
     return <Clock3 size={14} className="tool-call-plan-task-status-icon tool-call-plan-task-status-icon--busy" />;
@@ -110,8 +121,12 @@ export function PlanTaskItem({
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const statusLabel = formatPlanTaskStatus(task.status);
+  const hasError = !!task.error;
+  const canRetry = !!planRunId && !!sessionId && !!onRetryFromHere && !!task.id
+    && isTerminalPlanStatus(task.status);
   const hasDetail = !!task.description || task.keyFiles.length > 0
-    || task.acceptanceCriteria.length > 0 || task.dependsOn.length > 0;
+    || task.acceptanceCriteria.length > 0 || task.dependsOn.length > 0
+    || hasError || canRetry;
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     if (!planRunId || !sessionId || !onRetryFromHere || !task.id) return;
@@ -123,6 +138,11 @@ export function PlanTaskItem({
       onRetryFromHere,
     });
   }, [planRunId, sessionId, task, onRetryFromHere]);
+
+  const handleRetryClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (planRunId && task.id) onRetryFromHere?.(planRunId, task.id);
+  }, [planRunId, task.id, onRetryFromHere]);
 
   const headerContent = (
     <>
@@ -163,6 +183,12 @@ export function PlanTaskItem({
       )}
       {expanded && hasDetail && (
         <div className="tool-call-plan-task-detail">
+          {hasError && (
+            <div className="tool-call-plan-task-error">
+              <AlertCircle size={12} />
+              <span>{renderMultilineText(task.error ?? '')}</span>
+            </div>
+          )}
           {task.description && (
             <div className="tool-call-plan-task-desc">
               {renderMultilineText(task.description)}
@@ -184,6 +210,16 @@ export function PlanTaskItem({
             <span className="tool-call-plan-task-meta-label">Deps</span>
             <span>{task.dependsOn.length > 0 ? task.dependsOn.join(', ') : 'Independent'}</span>
           </div>
+          {canRetry && (
+            <button
+              type="button"
+              className="tool-call-plan-task-retry"
+              onClick={handleRetryClick}
+            >
+              <RotateCcw size={12} />
+              <span>Retry from here</span>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -218,6 +254,7 @@ function PlanTaskList({
         <PlanTaskItem
           key={task.id || `${task.phase}-${task.title}`}
           task={task}
+          defaultExpanded={task.status === 'failed' || task.status === 'skipped'}
           planRunId={planRunId}
           sessionId={sessionId}
           onRetryFromHere={onRetryFromHere}
@@ -370,20 +407,25 @@ export function PlanRenderer({
     });
   };
 
-  const effectiveStatus = status === 'error'
-    ? 'error'
-    : meta?.kind === 'plan_stage' && meta.stageStatus === 'running'
+  const isExecution = meta?.kind === 'plan_execution';
+  const executionRunning = isExecution && meta.tasks.length > 0
+    && meta.tasks.some((task) => task.status === 'in_progress' || task.status === 'pending');
+  const isPartialFailure = isExecution && !executionRunning
+    && meta.failed > 0 && meta.completed > 0;
+
+  const effectiveStatus = meta?.kind === 'plan_stage' && meta.stageStatus === 'running'
+    ? 'running'
+    : executionRunning
       ? 'running'
-      : meta?.kind === 'plan_execution'
-        && (
-          meta.tasks.some((task) => task.status === 'in_progress')
-          || (meta.completed + meta.failed) < (meta.totalPhases || meta.tasks.length)
-        )
-        ? 'running'
-        : status;
+      : isPartialFailure
+        ? 'partial'
+        : status === 'error'
+          ? 'error'
+          : status;
   const effectiveStatusIcon = {
     running: <Clock3 size={13} className="tool-call-busy-icon" />,
     success: <CheckCircle2 size={13} />,
+    partial: <AlertTriangle size={13} />,
     error: <AlertCircle size={13} />,
   }[effectiveStatus];
   const effectiveStatusClass = `tool-status-${effectiveStatus}`;
@@ -477,7 +519,9 @@ export function PlanRenderer({
         )}
         <span className={`tool-call-status-icon ${effectiveStatusClass}`}>{effectiveStatusIcon}</span>
         <span className={`tool-call-status ${effectiveStatusClass}`}>
-          {{ running: 'Running...', success: 'Done', error: 'Failed' }[effectiveStatus]}
+          {effectiveStatus === 'partial'
+            ? `Partial · ${isExecution ? meta.failed : 0} failed`
+            : { running: 'Running...', success: 'Done', error: 'Failed' }[effectiveStatus]}
         </span>
         {durationMs !== undefined && (
           <span className="tool-call-duration">{formatDuration(durationMs)}</span>

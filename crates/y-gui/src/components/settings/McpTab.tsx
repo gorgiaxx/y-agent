@@ -8,7 +8,7 @@ import { transport } from '../../lib';
 import { TagChipInput } from './TagChipInput';
 import type { McpServerFormData } from './settingsTypes';
 import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTypes';
-import { RawTomlEditor, RawModeToggle } from './TomlEditorTab';
+import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Checkbox, Input, Button, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
 
@@ -304,11 +304,7 @@ export function McpTab({
   if (rawMode) {
     return (
       <>
-        <div className="settings-header">
-          <h3 className="section-title section-title--flush">
-            <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-          </h3>
-        </div>
+        <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
         <RawTomlEditor
           content={rawContent}
           onChange={(val) => {
@@ -325,11 +321,7 @@ export function McpTab({
 
   return (
     <>
-    <div className="settings-header">
-      <h3 className="section-title section-title--flush">
-        <span className="settings-header-with-toggle"><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></span>
-      </h3>
-    </div>
+    <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
     <SubListLayout
       sidebar={
         <>

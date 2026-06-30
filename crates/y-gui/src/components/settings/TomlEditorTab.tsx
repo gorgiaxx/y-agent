@@ -4,8 +4,13 @@
 // Exports:
 //   - RawTomlEditor: reusable Monaco editor for embedding in form tabs (RAW mode)
 //   - RawModeToggle: switch toggle between Form and Raw TOML editing
+//   - SettingsActionSlotProvider / SettingsActionSlotTarget / SettingsActionSlot:
+//     portal plumbing that lets the active tab render its Form/RAW toggle into
+//     the shared settings action bar (left of Save Changes) instead of inline.
 // ---------------------------------------------------------------------------
 
+import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { MonacoEditor } from '../ui/MonacoEditor';
 import { Switch } from '../ui/Switch';
 
@@ -53,4 +58,42 @@ export function RawModeToggle({ rawMode, onToggle }: RawModeToggleProps) {
       <span className={`raw-mode-switch-label ${rawMode ? 'raw-mode-switch-label--active' : ''}`}>RAW</span>
     </label>
   );
+}
+
+// ---------------------------------------------------------------------------
+// SettingsActionSlot -- portal plumbing for the shared action-bar toggle.
+//
+// Only one settings tab is mounted at a time, so the active tab can portal its
+// Form/RAW toggle into a single shared target rendered in the action bar.
+// ---------------------------------------------------------------------------
+
+interface SettingsActionSlotValue {
+  target: HTMLElement | null;
+  setTarget: (el: HTMLElement | null) => void;
+}
+
+const SettingsActionSlotContext = createContext<SettingsActionSlotValue | null>(null);
+
+export function SettingsActionSlotProvider({ children }: { children: ReactNode }) {
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+  const value = useMemo(() => ({ target, setTarget }), [target]);
+  return (
+    <SettingsActionSlotContext.Provider value={value}>
+      {children}
+    </SettingsActionSlotContext.Provider>
+  );
+}
+
+// Placed inside the action bar; hosts the portal target the active tab's
+// toggle renders into.
+export function SettingsActionSlotTarget({ className }: { className?: string }) {
+  const ctx = useContext(SettingsActionSlotContext);
+  return <div className={className} ref={ctx?.setTarget} />;
+}
+
+// Renders its children into the shared action-bar slot via portal.
+export function SettingsActionSlot({ children }: { children: ReactNode }) {
+  const ctx = useContext(SettingsActionSlotContext);
+  if (!ctx?.target) return null;
+  return createPortal(children, ctx.target);
 }
