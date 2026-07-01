@@ -28,6 +28,7 @@ pub mod error;
 pub mod hook;
 pub mod memory;
 pub mod permission_types;
+pub mod platform;
 pub mod provider;
 pub mod runtime;
 pub mod session;

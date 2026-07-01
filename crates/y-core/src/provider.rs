@@ -58,6 +58,43 @@ pub enum ToolCallingMode {
 }
 
 // ---------------------------------------------------------------------------
+// Tool dialect
+// ---------------------------------------------------------------------------
+
+/// Per-model-family tool-call dialect.
+///
+/// Refines [`ToolCallingMode`] with model-specific encoding/decoding rules.
+/// `Native` and `PromptBased` remain the top-level mode; the dialect provides
+/// the specifics within each mode — primarily how tool *results* are
+/// formatted when sent back to the model in `PromptBased` mode, and which
+/// prompt syntax instruction is injected into the system prompt.
+///
+/// The dialect does **not** affect parsing: `parse_tool_calls`
+/// already handles all known envelope formats. The dialect only affects
+/// *encoding* (result format + prompt syntax).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolDialect {
+    /// Standard `OpenAI` function-calling format (default for `Native` mode).
+    #[default]
+    OpenAi,
+    /// Anthropic tool-use format.
+    Anthropic,
+    /// Google Gemini `functionDeclarations` format.
+    Gemini,
+    /// Standard y-agent `<tool_call>` XML (default for `PromptBased` mode).
+    YAgentXml,
+    /// `DeepSeek` DSML envelope (`<|DSML|function_calls>`).
+    DeepSeekDsml,
+    /// `MiniMax` M2 envelope (`<minimax:tool_call>` with `<invoke>`/`<parameter>`).
+    MiniMaxM2,
+    /// Longcat envelope (`<longcat_tool_call>`).
+    Longcat,
+    /// Generic XML `<function_calls>` envelope.
+    GenericXml,
+}
+
+// ---------------------------------------------------------------------------
 // Thinking / Reasoning
 // ---------------------------------------------------------------------------
 
@@ -221,6 +258,13 @@ pub struct ChatRequest {
     pub tools: Vec<serde_json::Value>,
     /// How tool calling is communicated to the LLM.
     pub tool_calling_mode: ToolCallingMode,
+    /// Per-model-family tool-call dialect for encoding/decoding.
+    ///
+    /// Defaults to [`ToolDialect::OpenAi`] for `Native` mode and
+    /// [`ToolDialect::YAgentXml`] for `PromptBased` mode. Set explicitly
+    /// when a model family needs a specific encoding (e.g., `DeepSeek` DSML,
+    /// `MiniMax` M2).
+    pub tool_dialect: ToolDialect,
     /// Stop sequences.
     pub stop: Vec<String>,
     /// Arbitrary provider-specific parameters.
@@ -332,6 +376,8 @@ pub struct ProviderMetadata {
     pub cost_per_1k_output: f64,
     /// Effective tool calling mode for this provider (resolved from config).
     pub tool_calling_mode: ToolCallingMode,
+    /// Effective tool-call dialect for this provider (resolved from config).
+    pub tool_dialect: ToolDialect,
 }
 
 /// Supported provider backend types.
