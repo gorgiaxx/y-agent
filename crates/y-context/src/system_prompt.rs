@@ -106,6 +106,22 @@ pub struct BuildSystemPromptProvider {
     /// Dynamic text listing user-callable agents. Injected from `ServiceContainer`
     /// and replaced into the `{{CALLABLE_AGENTS}}` placeholder in core.orchestration.
     callable_agents_text: Arc<RwLock<String>>,
+    /// Cached stable portion of the system prompt (sections that don't change
+    /// within a session). Invalidated when agent mode, selected sections,
+    /// custom prompt, or config flags change.
+    stable_cache: RwLock<Option<StableCache>>,
+}
+
+/// Cached stable system prompt content with its cache key.
+///
+/// The cache key is a hash of all inputs that affect the stable portion:
+/// agent mode, selected prompt sections, custom prompt presence, and
+/// relevant config flags. When the key changes, the cache is invalidated.
+#[derive(Clone)]
+struct StableCache {
+    key: String,
+    content: String,
+    token_estimate: u32,
 }
 
 impl BuildSystemPromptProvider {
@@ -125,6 +141,7 @@ impl BuildSystemPromptProvider {
             prompts_dir: None,
             runtime_backend: RuntimeBackend::Native,
             callable_agents_text: Arc::new(RwLock::new(String::new())),
+            stable_cache: RwLock::new(None),
         }
     }
 
@@ -146,6 +163,7 @@ impl BuildSystemPromptProvider {
             prompts_dir: None,
             runtime_backend,
             callable_agents_text: Arc::new(RwLock::new(String::new())),
+            stable_cache: RwLock::new(None),
         }
     }
 
@@ -166,7 +184,23 @@ impl BuildSystemPromptProvider {
         );
         let mut guard = self.store.write().await;
         *guard = new_store;
+        // Invalidate stable cache since section content may have changed.
+        self.invalidate_stable_cache().await;
         tracing::info!("Prompt section store hot-reloaded");
+    }
+
+    /// Invalidate the stable system prompt cache.
+    ///
+    /// Called when inputs that affect the stable portion change: agent mode,
+    /// selected prompt sections, custom prompt, config flags, or prompt
+    /// section store hot-reload. The next `provide()` call will rebuild the
+    /// stable content from scratch.
+    pub async fn invalidate_stable_cache(&self) {
+        let mut guard = self.stable_cache.write().await;
+        if guard.is_some() {
+            tracing::debug!("stable system prompt cache invalidated");
+            *guard = None;
+        }
     }
 
     /// Get a reference to the callable agents text handle.
@@ -223,6 +257,66 @@ impl BuildSystemPromptProvider {
     }
 }
 
+/// Sections whose content changes every turn and must NOT be cached.
+///
+/// These are rebuilt on every `provide()` call and appended after the
+/// cached stable content. Keeping them out of the stable cache ensures
+/// the system prompt prefix remains byte-stable for KV cache hits.
+fn is_volatile_section(section_id: &str) -> bool {
+    matches!(
+        section_id,
+        "core.datetime" | "core.environment" | "core.mcp_hint"
+    )
+}
+
+/// Compute a cache key for the stable portion of the system prompt.
+///
+/// The key incorporates all inputs that affect stable sections:
+/// - Agent mode
+/// - Selected prompt sections (if any)
+/// - Custom system prompt presence (not content — content changes invalidate)
+/// - Config flags that affect section conditions
+/// - Callable agents text (affects core.orchestration)
+fn compute_cache_key(prompt_ctx: &PromptContext, callable_agents: &str) -> String {
+    let mut key = String::new();
+    key.push_str("mode=");
+    key.push_str(&prompt_ctx.agent_mode);
+    key.push(';');
+    if let Some(ref selected) = prompt_ctx.selected_prompt_sections {
+        key.push_str("sections=");
+        key.push_str(&selected.join(","));
+    }
+    key.push(';');
+    key.push_str("custom=");
+    key.push_str(&prompt_ctx.custom_system_prompt.is_some().to_string());
+    key.push(';');
+    // Include config flags that affect section conditions (tool_calling,
+    // plan_mode, loop_mode, mcp, orchestration).
+    let relevant_flags: Vec<(&String, &bool)> = prompt_ctx
+        .config_flags
+        .iter()
+        .filter(|(k, _)| {
+            k.starts_with("tool_calling.")
+                || k.starts_with("plan_mode.")
+                || k.starts_with("loop_mode.")
+                || k.starts_with("mcp.")
+                || k.starts_with("orchestration.")
+        })
+        .collect();
+    key.push_str("flags=");
+    for (k, v) in &relevant_flags {
+        key.push_str(k);
+        key.push('=');
+        key.push_str(&v.to_string());
+        key.push(',');
+    }
+    key.push(';');
+    // Callable agents text affects core.orchestration.
+    key.push_str("agents=");
+    key.push_str(callable_agents);
+    key
+}
+
 #[async_trait]
 impl ContextProvider for BuildSystemPromptProvider {
     fn name(&self) -> &'static str {
@@ -274,27 +368,12 @@ impl ContextProvider for BuildSystemPromptProvider {
             "system prompt assembly: prompt context state"
         );
 
-        let mut accumulated = String::new();
-        let mut cumulative_tokens: u32 = 0;
-
-        // When a per-session custom prompt is set, emit it first and mark
-        // the replaceable sections for skipping. Dynamic/functional sections
-        // (datetime, environment, tool_protocol, planning, exploration,
-        // orchestration, plan_mode_active) are preserved.
-        if let Some(ref custom) = prompt_ctx.custom_system_prompt {
-            let (custom, truncated) = truncate_to_budget(custom, total_budget);
-            accumulated.push_str(&custom);
-            cumulative_tokens = estimate_tokens(&custom);
-            tracing::debug!(
-                tokens = cumulative_tokens,
-                truncated,
-                "custom system prompt injected, replacing built-in behavioral sections"
-            );
-        }
+        // Compute cache key for the stable portion.
+        let callable_agents = self.callable_agents_text.read().await;
+        let cache_key = compute_cache_key(&prompt_ctx, &callable_agents);
+        drop(callable_agents);
 
         // Resolve sections sorted by their effective priority.
-        // PromptSection.priority is the canonical order; overlay priority_override
-        // takes precedence when present.
         let store = self.store.read().await;
         let mut section_entries: Vec<_> = effective_sections
             .iter()
@@ -306,59 +385,69 @@ impl ContextProvider for BuildSystemPromptProvider {
             .collect();
         section_entries.sort_by_key(|&(_, _, p)| p);
 
-        for (eff, section, _priority) in &section_entries {
-            // When a custom prompt is active, skip the sections it replaces
-            // (identity, guidelines, security, persona). Functional sections
-            // (datetime, environment, tool_protocol, planning, exploration,
-            // orchestration, plan_mode_active) are kept.
-            if has_custom_prompt && is_custom_prompt_replaced(&eff.section_id) {
+        // Try to use cached stable content.
+        let stable_cache_guard = self.stable_cache.read().await;
+        let (mut accumulated, mut cumulative_tokens) = if let Some(ref cached) = *stable_cache_guard
+        {
+            if cached.key == cache_key {
                 tracing::debug!(
-                    section = %eff.section_id,
-                    "section replaced by custom prompt; skipping"
+                    cache_key = %cache_key,
+                    tokens = cached.token_estimate,
+                    "stable system prompt cache hit"
                 );
+                (cached.content.clone(), cached.token_estimate)
+            } else {
+                drop(stable_cache_guard);
+                self.rebuild_stable_cache(
+                    &prompt_ctx,
+                    &store,
+                    &effective_sections,
+                    has_custom_prompt,
+                    total_budget,
+                    &cache_key,
+                )
+                .await
+            }
+        } else {
+            drop(stable_cache_guard);
+            self.rebuild_stable_cache(
+                &prompt_ctx,
+                &store,
+                &effective_sections,
+                has_custom_prompt,
+                total_budget,
+                &cache_key,
+            )
+            .await
+        };
+
+        // Append volatile sections (datetime, environment, mcp_hint).
+        // These are rebuilt every turn and must NOT be cached.
+        for (eff, section, _priority) in &section_entries {
+            if !is_volatile_section(&eff.section_id) {
                 continue;
             }
 
-            // Evaluate condition.
             let condition = eff
                 .condition_override
                 .as_ref()
                 .or(section.condition.as_ref());
             if let Some(cond) = condition {
                 if !cond.evaluate(&prompt_ctx) {
-                    tracing::debug!(
-                        section = %eff.section_id,
-                        condition = ?cond,
-                        "section excluded by condition"
-                    );
                     continue;
                 }
             }
 
-            // Load content (lazy).
-            let content = match store.load_content(&eff.section_id) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!(
-                        section = %eff.section_id,
-                        error = %e,
-                        "failed to load section content; skipping"
-                    );
-                    continue;
-                }
+            let Ok(content) = store.load_content(&eff.section_id) else {
+                continue;
             };
 
-            // Dynamic section replacement.
             let content = match eff.section_id.as_str() {
                 "core.datetime" => Self::generate_datetime(),
                 "core.environment" => Self::generate_environment(
                     prompt_ctx.working_directory.as_deref(),
                     &self.venv_info,
                 ),
-                "core.orchestration" => {
-                    let agents = self.callable_agents_text.read().await;
-                    content.replace("{{CALLABLE_AGENTS}}", &agents)
-                }
                 "core.mcp_hint" => {
                     if let Some(ref instructions) = prompt_ctx.mcp_server_instructions {
                         format!("{content}\n\n{instructions}")
@@ -369,27 +458,10 @@ impl ContextProvider for BuildSystemPromptProvider {
                 _ => content,
             };
 
-            // Per-section token budget.
-            let (content, truncated) = truncate_to_budget(&content, section.token_budget);
-            if truncated {
-                tracing::debug!(
-                    section = %eff.section_id,
-                    budget = section.token_budget,
-                    "section content truncated to fit budget"
-                );
-            }
-
+            let (content, _) = truncate_to_budget(&content, section.token_budget);
             let tokens = estimate_tokens(&content);
 
-            // Total budget check: stop adding if we'd exceed.
             if cumulative_tokens + tokens > total_budget {
-                tracing::debug!(
-                    section = %eff.section_id,
-                    cumulative = cumulative_tokens,
-                    section_tokens = tokens,
-                    total_budget = total_budget,
-                    "dropping section: total token budget exceeded"
-                );
                 break;
             }
 
@@ -414,6 +486,89 @@ impl ContextProvider for BuildSystemPromptProvider {
         });
 
         Ok(())
+    }
+}
+
+impl BuildSystemPromptProvider {
+    /// Rebuild the stable cache from non-volatile sections.
+    async fn rebuild_stable_cache(
+        &self,
+        prompt_ctx: &PromptContext,
+        store: &SectionStore,
+        effective_sections: &[y_prompt::EffectiveSection],
+        has_custom_prompt: bool,
+        total_budget: u32,
+        cache_key: &str,
+    ) -> (String, u32) {
+        let mut accumulated = String::new();
+        let mut cumulative_tokens: u32 = 0;
+
+        if let Some(ref custom) = prompt_ctx.custom_system_prompt {
+            let (custom, _) = truncate_to_budget(custom, total_budget);
+            accumulated.push_str(&custom);
+            cumulative_tokens = estimate_tokens(&custom);
+        }
+
+        let mut section_entries: Vec<_> = effective_sections
+            .iter()
+            .filter_map(|eff| {
+                let section = store.get(&eff.section_id)?;
+                let priority = eff.priority_override.unwrap_or(section.priority);
+                Some((eff, section, priority))
+            })
+            .collect();
+        section_entries.sort_by_key(|&(_, _, p)| p);
+
+        for (eff, section, _priority) in &section_entries {
+            if is_volatile_section(&eff.section_id) {
+                continue;
+            }
+            if has_custom_prompt && is_custom_prompt_replaced(&eff.section_id) {
+                continue;
+            }
+            let condition = eff
+                .condition_override
+                .as_ref()
+                .or(section.condition.as_ref());
+            if let Some(cond) = condition {
+                if !cond.evaluate(prompt_ctx) {
+                    continue;
+                }
+            }
+            let Ok(content) = store.load_content(&eff.section_id) else {
+                continue;
+            };
+            let content = if eff.section_id == "core.orchestration" {
+                let agents = self.callable_agents_text.read().await;
+                content.replace("{{CALLABLE_AGENTS}}", &agents)
+            } else {
+                content
+            };
+            let (content, _) = truncate_to_budget(&content, section.token_budget);
+            let tokens = estimate_tokens(&content);
+            if cumulative_tokens + tokens > total_budget {
+                break;
+            }
+            if !accumulated.is_empty() {
+                accumulated.push('\n');
+            }
+            accumulated.push_str(&content);
+            cumulative_tokens += tokens;
+        }
+
+        let mut cache_guard = self.stable_cache.write().await;
+        *cache_guard = Some(StableCache {
+            key: cache_key.to_string(),
+            content: accumulated.clone(),
+            token_estimate: cumulative_tokens,
+        });
+        tracing::debug!(
+            cache_key = %cache_key,
+            tokens = cumulative_tokens,
+            "stable system prompt cache rebuilt"
+        );
+
+        (accumulated, cumulative_tokens)
     }
 }
 
@@ -867,5 +1022,106 @@ mod tests {
         // Should not error — just skip missing sections and use fallback.
         provider.provide(&mut ctx).await.unwrap();
         assert_eq!(ctx.items[0].content, "fallback");
+    }
+
+    // --- Stable cache tests ---
+
+    #[tokio::test]
+    async fn test_stable_cache_hit_on_second_call() {
+        let provider = make_provider(general_ctx(), SystemPromptConfig::default());
+        let mut ctx1 = AssembledContext::default();
+        provider.provide(&mut ctx1).await.unwrap();
+        let content1 = ctx1.items[0].content.clone();
+
+        let mut ctx2 = AssembledContext::default();
+        provider.provide(&mut ctx2).await.unwrap();
+        let content2 = ctx2.items[0].content.clone();
+
+        // Second call should produce the same stable content (cache hit).
+        // The volatile sections (datetime) may differ, but the stable prefix
+        // should be identical.
+        assert!(
+            content2.starts_with(&content1[..content1.len().min(100)]),
+            "stable prefix should be identical on cache hit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stable_cache_invalidation() {
+        let provider = make_provider(general_ctx(), SystemPromptConfig::default());
+        let mut ctx1 = AssembledContext::default();
+        provider.provide(&mut ctx1).await.unwrap();
+
+        // Invalidate cache.
+        provider.invalidate_stable_cache().await;
+
+        let mut ctx2 = AssembledContext::default();
+        provider.provide(&mut ctx2).await.unwrap();
+
+        // Should still produce valid output after invalidation.
+        assert!(!ctx2.items[0].content.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_volatile_sections_rebuilt_each_call() {
+        let provider = make_provider(general_ctx(), SystemPromptConfig::default());
+        let mut ctx1 = AssembledContext::default();
+        provider.provide(&mut ctx1).await.unwrap();
+
+        // Wait a moment so datetime might change (at least the second call
+        // runs at a different time).
+        tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
+
+        let mut ctx2 = AssembledContext::default();
+        provider.provide(&mut ctx2).await.unwrap();
+
+        // Both should contain datetime (volatile section is present).
+        assert!(ctx1.items[0].content.contains("Current date"));
+        assert!(ctx2.items[0].content.contains("Current date"));
+    }
+
+    #[tokio::test]
+    async fn test_is_volatile_section() {
+        assert!(is_volatile_section("core.datetime"));
+        assert!(is_volatile_section("core.environment"));
+        assert!(is_volatile_section("core.mcp_hint"));
+        assert!(!is_volatile_section("core.identity"));
+        assert!(!is_volatile_section("core.guidelines"));
+        assert!(!is_volatile_section("core.orchestration"));
+    }
+
+    #[tokio::test]
+    async fn test_compute_cache_key_changes_with_mode() {
+        use y_prompt::PromptContext;
+        let mut ctx = PromptContext::default();
+        ctx.agent_mode = "general".into();
+        let key1 = compute_cache_key(&ctx, "");
+
+        ctx.agent_mode = "plan".into();
+        let key2 = compute_cache_key(&ctx, "");
+
+        assert_ne!(key1, key2, "cache key should differ for different modes");
+    }
+
+    #[tokio::test]
+    async fn test_compute_cache_key_changes_with_flags() {
+        use y_prompt::PromptContext;
+        let ctx1 = PromptContext::default();
+        let key1 = compute_cache_key(&ctx1, "");
+
+        let mut ctx2 = PromptContext::default();
+        ctx2.config_flags.insert("plan_mode.active".into(), true);
+        let key2 = compute_cache_key(&ctx2, "");
+
+        assert_ne!(key1, key2, "cache key should differ for different flags");
+    }
+
+    #[tokio::test]
+    async fn test_compute_cache_key_same_inputs_same_key() {
+        use y_prompt::PromptContext;
+        let ctx = PromptContext::default();
+        let key1 = compute_cache_key(&ctx, "agents text");
+        let key2 = compute_cache_key(&ctx, "agents text");
+        assert_eq!(key1, key2, "same inputs should produce same key");
     }
 }
