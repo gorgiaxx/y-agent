@@ -98,12 +98,15 @@ impl ShellExecTool {
 
     fn truncate_output(s: &str) -> String {
         if s.len() > MAX_OUTPUT_BYTES {
-            let truncated = &s[..MAX_OUTPUT_BYTES];
+            // Round down to a UTF-8 char boundary so multibyte output (e.g. CJK
+            // text or replacement chars from lossy decoding) never panics.
+            let boundary = s.floor_char_boundary(MAX_OUTPUT_BYTES);
+            let truncated = &s[..boundary];
             format!(
                 "{}...\n\n[output truncated: {} bytes total, showing first {}]",
                 truncated,
                 s.len(),
-                MAX_OUTPUT_BYTES
+                boundary
             )
         } else {
             s.to_string()
@@ -698,6 +701,18 @@ mod tests {
     fn test_truncate_output_short() {
         let s = "short";
         assert_eq!(ShellExecTool::truncate_output(s), "short");
+    }
+
+    #[test]
+    fn test_truncate_output_multibyte_boundary_does_not_panic() {
+        // Each '好' is 3 UTF-8 bytes, so byte index MAX_OUTPUT_BYTES (10_000)
+        // lands inside a character rather than on a boundary. Slicing at the
+        // raw byte index would panic; truncation must round to a char boundary.
+        let s = "好".repeat(MAX_OUTPUT_BYTES); // 30_000 bytes
+        let result = ShellExecTool::truncate_output(&s);
+        assert!(result.contains("[output truncated:"));
+        // Truncated prefix must stay under the byte cap and remain valid UTF-8.
+        assert!(result.starts_with('好'));
     }
 
     #[tokio::test]
