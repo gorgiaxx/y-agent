@@ -29,6 +29,12 @@ pub enum DiagnosticsEvent {
         model: String,
         input_tokens: u64,
         output_tokens: u64,
+        /// Prompt tokens served from cache (subset of `context_tokens_used`).
+        cache_read_tokens: u64,
+        /// Prompt tokens written to cache (subset of `context_tokens_used`).
+        cache_write_tokens: u64,
+        /// Total prompt tokens processed (fresh + cache) -- context occupancy.
+        context_tokens_used: u64,
         duration_ms: u64,
         cost_usd: f64,
         tool_calls_requested: Vec<String>,
@@ -96,4 +102,39 @@ pub enum DiagnosticsEvent {
         total_cost_usd: f64,
         duration_ms: u64,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn llm_call_completed_serializes_cache_and_context_tokens() {
+        let event = DiagnosticsEvent::LlmCallCompleted {
+            trace_id: uuid::Uuid::nil(),
+            observation_id: uuid::Uuid::nil(),
+            session_id: None,
+            agent_name: "chat-turn".into(),
+            iteration: 1,
+            model: "claude".into(),
+            input_tokens: 797,
+            output_tokens: 38,
+            cache_read_tokens: 12_000,
+            cache_write_tokens: 2_048,
+            context_tokens_used: 14_845,
+            duration_ms: 100,
+            cost_usd: 0.01,
+            tool_calls_requested: vec![],
+            prompt_preview: String::new(),
+            response_text: String::new(),
+            context_window: 200_000,
+        };
+
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "llm_call_completed");
+        assert_eq!(json["cache_read_tokens"], 12_000);
+        assert_eq!(json["cache_write_tokens"], 2_048);
+        // Context occupancy must equal fresh + cache_read + cache_write.
+        assert_eq!(json["context_tokens_used"], 797 + 12_000 + 2_048);
+    }
 }
