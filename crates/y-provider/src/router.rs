@@ -254,6 +254,7 @@ mod tests {
                     cost_per_1k_input: 0.01,
                     cost_per_1k_output: 0.03,
                     tool_calling_mode: ToolCallingMode::default(),
+                    tool_dialect: y_core::provider::ToolDialect::default(),
                 },
             }
         }
@@ -271,6 +272,7 @@ mod tests {
                     cost_per_1k_input: cost_input,
                     cost_per_1k_output: 0.03,
                     tool_calling_mode: ToolCallingMode::default(),
+                    tool_dialect: y_core::provider::ToolDialect::default(),
                 },
             }
         }

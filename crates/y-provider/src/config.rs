@@ -255,6 +255,14 @@ pub struct ProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calling_mode: Option<ToolCallingMode>,
 
+    /// Per-model-family tool-call dialect override.
+    ///
+    /// `None` means auto-detect based on `provider_type` and model name.
+    ///
+    /// See [`ProviderConfig::resolve_tool_dialect`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_dialect: Option<y_core::provider::ToolDialect>,
+
     /// Optional icon identifier for GUI display (e.g. "openai", "anthropic").
     /// Matches icon IDs from the @lobehub/icons library.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -684,6 +692,53 @@ impl ProviderConfig {
         }
     }
 
+    /// Resolve the effective tool-call dialect for this provider.
+    ///
+    /// Priority: explicit `tool_dialect` override > auto-detect from
+    /// `provider_type` and model name patterns.
+    ///
+    /// For `Native` mode, the dialect determines which provider-specific
+    /// API format is used (`OpenAI`, Anthropic, Gemini).
+    ///
+    /// For `PromptBased` mode, the dialect determines which XML envelope
+    /// is used for tool-call encoding in the system prompt and tool-result
+    /// formatting (y-agent XML, `DeepSeek` DSML, `MiniMax` M2, Longcat, generic).
+    pub fn resolve_tool_dialect(&self) -> y_core::provider::ToolDialect {
+        use y_core::provider::ToolDialect;
+
+        if let Some(dialect) = self.tool_dialect {
+            return dialect;
+        }
+
+        // Auto-detect from provider_type for Native mode.
+        match self.provider_type.as_str() {
+            "anthropic" => return ToolDialect::Anthropic,
+            "gemini" => return ToolDialect::Gemini,
+            _ => {}
+        }
+
+        // Auto-detect from model name for PromptBased mode.
+        let model_lower = self.model.to_ascii_lowercase();
+        if model_lower.contains("deepseek") {
+            return ToolDialect::DeepSeekDsml;
+        }
+        if model_lower.contains("minimax") {
+            return ToolDialect::MiniMaxM2;
+        }
+        if model_lower.contains("longcat") {
+            return ToolDialect::Longcat;
+        }
+        if model_lower.contains("dsml") {
+            return ToolDialect::DeepSeekDsml;
+        }
+
+        // Default: OpenAi for Native, YAgentXml for PromptBased.
+        match self.resolve_tool_calling_mode() {
+            y_core::provider::ToolCallingMode::Native => ToolDialect::OpenAi,
+            y_core::provider::ToolCallingMode::PromptBased => ToolDialect::YAgentXml,
+        }
+    }
+
     /// Resolve the effective provider capabilities.
     ///
     /// Priority: explicit `capabilities` > legacy tag-based inference.
@@ -922,6 +977,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -949,6 +1005,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -998,6 +1055,7 @@ mod tests {
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
+            tool_dialect: None,
             icon: None,
             azure_resource_name: None,
             azure_api_version: None,
@@ -1037,6 +1095,7 @@ mod tests {
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
+            tool_dialect: None,
             icon: None,
             azure_resource_name: None,
             azure_api_version: None,
@@ -1395,6 +1454,7 @@ mod tests {
             temperature: None,
             top_p: None,
             tool_calling_mode: None,
+            tool_dialect: None,
             icon: None,
             azure_resource_name: None,
             azure_api_version: None,
@@ -1438,6 +1498,82 @@ mod tests {
         assert_eq!(
             cfg.resolve_tool_calling_mode(),
             ToolCallingMode::PromptBased
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_anthropic_provider() {
+        let cfg = make_provider_config("anthropic");
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::Anthropic
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_gemini_provider() {
+        let cfg = make_provider_config("gemini");
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::Gemini
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_openai_provider() {
+        let cfg = make_provider_config("openai");
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::OpenAi
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_deepseek_model_name() {
+        let mut cfg = make_provider_config("openai-compat");
+        cfg.model = "deepseek-chat".into();
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::DeepSeekDsml
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_minimax_model_name() {
+        let mut cfg = make_provider_config("openai-compat");
+        cfg.model = "MiniMax-M2".into();
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::MiniMaxM2
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_longcat_model_name() {
+        let mut cfg = make_provider_config("custom");
+        cfg.model = "longcat-flash".into();
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::Longcat
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_default_prompt_based() {
+        let cfg = make_provider_config("ollama");
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::YAgentXml
+        );
+    }
+
+    #[test]
+    fn test_resolve_tool_dialect_explicit_override() {
+        let mut cfg = make_provider_config("openai");
+        cfg.tool_dialect = Some(y_core::provider::ToolDialect::DeepSeekDsml);
+        assert_eq!(
+            cfg.resolve_tool_dialect(),
+            y_core::provider::ToolDialect::DeepSeekDsml
         );
     }
 

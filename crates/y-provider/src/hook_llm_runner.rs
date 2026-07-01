@@ -69,6 +69,7 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,

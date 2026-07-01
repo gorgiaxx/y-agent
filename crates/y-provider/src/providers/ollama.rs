@@ -50,6 +50,7 @@ impl OllamaProvider {
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
+        tool_dialect: y_core::provider::ToolDialect,
     ) -> Self {
         let headers = std::collections::HashMap::new();
         Self::with_headers(
@@ -63,6 +64,7 @@ impl OllamaProvider {
             max_concurrency,
             context_window,
             tool_calling_mode,
+            tool_dialect,
             &headers,
             HttpProtocol::Http1,
         )
@@ -80,6 +82,7 @@ impl OllamaProvider {
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
+        tool_dialect: y_core::provider::ToolDialect,
         headers: &std::collections::HashMap<String, String, S>,
         http_protocol: HttpProtocol,
     ) -> Self {
@@ -111,6 +114,7 @@ impl OllamaProvider {
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
                 tool_calling_mode,
+                tool_dialect,
             },
         }
     }
@@ -554,6 +558,7 @@ mod tests {
             3,
             32_768,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
 
         let meta = provider.metadata();
@@ -579,6 +584,7 @@ mod tests {
             3,
             32_768,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
         assert_eq!(
             provider.api_url("api/chat"),
@@ -599,6 +605,7 @@ mod tests {
             3,
             32_768,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
         assert_eq!(
             provider.api_url("api/chat"),
@@ -748,6 +755,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,

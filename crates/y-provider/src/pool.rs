@@ -171,6 +171,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
 
         let proxy_url = config.resolve_proxy_url(&cfg.id, &cfg.tags);
         let tool_calling_mode = cfg.resolve_tool_calling_mode();
+        let tool_dialect = cfg.resolve_tool_dialect();
         let capabilities = cfg.resolve_capabilities();
 
         // DeepSeek uses an OpenAI-compatible REST API with a default base URL.
@@ -194,6 +195,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.max_concurrency,
                     cfg.context_window,
                     tool_calling_mode,
+                    tool_dialect,
                     &cfg.headers,
                     cfg.http_protocol,
                 )) as Arc<dyn LlmProvider>
@@ -231,6 +233,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.max_concurrency,
                     cfg.context_window,
                     tool_calling_mode,
+                    tool_dialect,
                     &cfg.headers,
                     cfg.http_protocol,
                 )
@@ -252,6 +255,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.max_concurrency,
                     cfg.context_window,
                     tool_calling_mode,
+                    tool_dialect,
                     &cfg.headers,
                     cfg.http_protocol,
                 )
@@ -727,6 +731,7 @@ mod tests {
                         cost_per_1k_input: 0.01,
                         cost_per_1k_output: 0.03,
                         tool_calling_mode: ToolCallingMode::default(),
+                        tool_dialect: y_core::provider::ToolDialect::default(),
                     },
                     should_fail,
                     recorded_request: Arc::clone(&recorded_request),
@@ -830,6 +835,7 @@ mod tests {
                         cost_per_1k_input: 0.0,
                         cost_per_1k_output: 0.0,
                         tool_calling_mode: ToolCallingMode::default(),
+                        tool_dialect: y_core::provider::ToolDialect::default(),
                     },
                     remaining_failures: AtomicUsize::new(fail_times),
                     total_calls: Arc::clone(&total_calls),
@@ -980,6 +986,7 @@ mod tests {
                 temperature,
                 top_p: None,
                 tool_calling_mode: None,
+                tool_dialect: None,
                 icon: None,
                 azure_resource_name: None,
                 azure_api_version: None,
@@ -1011,6 +1018,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
@@ -1316,6 +1324,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -1343,6 +1352,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -1370,6 +1380,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -1397,6 +1408,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -1424,6 +1436,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -1502,6 +1515,7 @@ mod tests {
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,
+                tool_dialect: None,
                 icon: None,
                 azure_resource_name: None,
                 azure_api_version: None,

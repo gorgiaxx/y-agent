@@ -50,6 +50,7 @@ impl AnthropicProvider {
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
+        tool_dialect: y_core::provider::ToolDialect,
     ) -> Self {
         let headers = std::collections::HashMap::new();
         Self::with_headers(
@@ -63,6 +64,7 @@ impl AnthropicProvider {
             max_concurrency,
             context_window,
             tool_calling_mode,
+            tool_dialect,
             &headers,
             HttpProtocol::Http1,
         )
@@ -80,6 +82,7 @@ impl AnthropicProvider {
         max_concurrency: usize,
         context_window: usize,
         tool_calling_mode: ToolCallingMode,
+        tool_dialect: y_core::provider::ToolDialect,
         headers: &std::collections::HashMap<String, String, S>,
         http_protocol: HttpProtocol,
     ) -> Self {
@@ -108,6 +111,7 @@ impl AnthropicProvider {
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
                 tool_calling_mode,
+                tool_dialect,
             },
         }
     }
@@ -1237,6 +1241,7 @@ mod tests {
             3,
             200_000,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
 
         let meta = provider.metadata();
@@ -1259,6 +1264,7 @@ mod tests {
             3,
             200_000,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
         assert_eq!(
             provider.api_url("messages"),
@@ -1279,6 +1285,7 @@ mod tests {
             3,
             200_000,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
         assert_eq!(
             provider.api_url("messages"),
@@ -1418,6 +1425,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
@@ -1487,6 +1495,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
@@ -1603,6 +1612,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
@@ -1857,6 +1867,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
@@ -1901,6 +1912,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: Some(ThinkingConfig {
@@ -1921,6 +1933,7 @@ mod tests {
             3,
             200_000,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
         let body = provider.build_request_body(&request, false);
         let json = serde_json::to_value(&body).unwrap();
@@ -2022,6 +2035,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
@@ -2041,6 +2055,7 @@ mod tests {
             3,
             200_000,
             ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
         );
 
         // Unset -> falls back to the model cap (128000), not the old 32000.
