@@ -389,6 +389,9 @@ pub fn run() {
             commands::chat::chat_add_steer,
             commands::chat::chat_delete_steer,
             commands::chat::chat_list_steers,
+            commands::chat::chat_add_follow_up,
+            commands::chat::chat_delete_follow_up,
+            commands::chat::chat_list_follow_ups,
             commands::chat::session_last_turn_meta,
             commands::chat::chat_undo,
             commands::chat::chat_checkpoint_list,
@@ -405,6 +408,7 @@ pub fn run() {
             commands::chat::resume_plan_execution,
             // Sessions
             commands::session::session_list,
+            commands::session::session_list_children,
             commands::session::session_create,
             commands::session::session_get_messages,
             commands::session::session_delete,

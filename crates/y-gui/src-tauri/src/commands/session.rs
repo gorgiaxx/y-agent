@@ -119,6 +119,62 @@ pub async fn session_list(
     Ok(infos)
 }
 
+/// Child (sub-agent) session summary for drill-in into plan phase / loop round
+/// / delegated-task transcripts.
+#[derive(Debug, Serialize, Clone)]
+pub struct ChildSessionInfo {
+    pub id: String,
+    pub title: Option<String>,
+    /// Snake-case session type (`sub_agent`, `child`, ...).
+    pub session_type: String,
+    pub agent_id: Option<String>,
+    pub message_count: usize,
+    pub created_at: String,
+}
+
+/// List a session's direct child sessions (sub-agents), oldest first.
+///
+/// Powers drill-in: each plan phase / loop round / delegated task runs in its
+/// own child session whose transcript is rendered with the same chat pipeline.
+#[tauri::command]
+pub async fn session_list_children(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<ChildSessionInfo>, String> {
+    let sid = SessionId(session_id);
+    let children = state
+        .container
+        .session_manager
+        .children(&sid)
+        .await
+        .map_err(|e| format!("Failed to list child sessions: {e}"))?;
+
+    Ok(children
+        .into_iter()
+        .filter(|c| c.state == SessionState::Active)
+        .map(|c| ChildSessionInfo {
+            id: c.id.0,
+            title: c.title,
+            session_type: session_type_slug(c.session_type),
+            agent_id: c.agent_id.map(|a| a.0),
+            message_count: c.message_count as usize,
+            created_at: c.created_at.to_rfc3339(),
+        })
+        .collect())
+}
+
+fn session_type_slug(t: SessionType) -> String {
+    match t {
+        SessionType::Main => "main",
+        SessionType::Child => "child",
+        SessionType::Branch => "branch",
+        SessionType::Ephemeral => "ephemeral",
+        SessionType::SubAgent => "sub_agent",
+        SessionType::Canonical => "canonical",
+    }
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::is_user_visible_session;

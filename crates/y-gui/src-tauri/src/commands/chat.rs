@@ -18,8 +18,8 @@ use y_service::chat_types::{
 use y_service::decode_session_prompt_config;
 use y_service::event_sink::EventSink;
 use y_service::{
-    ChatService, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn, ResendTurnRequest,
-    SteerMessage, TurnEvent,
+    ChatService, FollowUpMessage, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn,
+    ResendTurnRequest, SteerMessage, TurnEvent,
 };
 
 use crate::state::AppState;
@@ -87,6 +87,10 @@ pub struct ProgressPayload {
     pub run_id: String,
     /// Forwarded event from the service layer.
     pub event: TurnEvent,
+    /// Originating sub-agent (child) session id when the event came from a plan
+    /// phase / loop round / plan-writer; `None` for root-turn events.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// Payload emitted on `session:title_updated` after auto title generation.
@@ -260,12 +264,13 @@ impl EventSink for TauriEventSink {
         );
     }
 
-    fn emit_progress(&self, run_id: &str, event: &TurnEvent) {
+    fn emit_progress(&self, run_id: &str, event: &TurnEvent, child_session_id: Option<&str>) {
         let _ = self.0.emit(
             "chat:progress",
             ProgressPayload {
                 run_id: run_id.to_owned(),
                 event: event.clone(),
+                session_id: child_session_id.map(str::to_owned),
             },
         );
     }
@@ -575,6 +580,71 @@ pub async fn chat_list_steers(
 ) -> Result<Vec<SteerMessage>, String> {
     let sid = SessionId(session_id);
     Ok(ChatService::list_steers(&state.container, &sid).await)
+}
+
+// ---------------------------------------------------------------------------
+// Follow-up queue commands
+// ---------------------------------------------------------------------------
+
+/// Payload emitted on `chat:follow_up_queue` when a session's queue changes.
+#[derive(Debug, Serialize, Clone)]
+pub struct FollowUpQueuePayload {
+    pub session_id: String,
+    pub queue: Vec<FollowUpMessage>,
+}
+
+/// Emit the current follow-up queue for a session so the UI stays in sync.
+async fn emit_follow_up_queue(app: &AppHandle, state: &AppState, session_id: &SessionId) {
+    let queue = ChatService::list_follow_ups(&state.container, session_id).await;
+    let _ = app.emit(
+        "chat:follow_up_queue",
+        FollowUpQueuePayload {
+            session_id: session_id.0.clone(),
+            queue,
+        },
+    );
+}
+
+/// Enqueue a follow-up message for a session (processed after the run stops).
+#[tauri::command]
+pub async fn chat_add_follow_up(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    text: String,
+) -> Result<FollowUpMessage, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("follow-up text must not be empty".to_string());
+    }
+    let sid = SessionId(session_id);
+    let msg = ChatService::add_follow_up(&state.container, &sid, trimmed.to_string()).await;
+    emit_follow_up_queue(&app, &state, &sid).await;
+    Ok(msg)
+}
+
+/// Remove a pending follow-up message by id.
+#[tauri::command]
+pub async fn chat_delete_follow_up(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    follow_up_id: String,
+) -> Result<bool, String> {
+    let sid = SessionId(session_id);
+    let deleted = ChatService::delete_follow_up(&state.container, &sid, &follow_up_id).await;
+    emit_follow_up_queue(&app, &state, &sid).await;
+    Ok(deleted)
+}
+
+/// List the pending follow-up messages for a session (FIFO order).
+#[tauri::command]
+pub async fn chat_list_follow_ups(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<FollowUpMessage>, String> {
+    let sid = SessionId(session_id);
+    Ok(ChatService::list_follow_ups(&state.container, &sid).await)
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,14 +1317,18 @@ pub async fn resume_plan_execution(
     let pending_runs = Arc::clone(&state.pending_runs);
 
     tokio::spawn(async move {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        let (tx, mut rx) = y_service::TurnEventSender::channel();
         let sink = Arc::new(TauriEventSink(app));
 
         let progress_run_id = run_id_clone.clone();
         let progress_sink = Arc::clone(&sink);
         let progress_task = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                progress_sink.emit_progress(&progress_run_id, &event);
+            while let Some((event, child_session_id)) = rx.recv().await {
+                progress_sink.emit_progress(
+                    &progress_run_id,
+                    &event,
+                    child_session_id.as_ref().map(SessionId::as_str),
+                );
             }
         });
 
