@@ -228,8 +228,8 @@ impl RuntimeManager {
         let (shell, shell_flag) = crate::platform::shell_command();
 
         ExecutionRequest {
-            command: shell.into(),
-            args: vec![shell_flag.into(), command.into()],
+            command: shell,
+            args: vec![shell_flag, command.into()],
             working_dir: working_dir.map(String::from),
             env: HashMap::new(),
             stdin: None,
