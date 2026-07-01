@@ -5,7 +5,33 @@ import {
   buildHistorySegments,
   completeStreamingReasoningSegments,
   extractFinalAnswer,
+  streamSegmentsToHistoryMetadata,
+  type InterleavedSegment,
 } from '../hooks/useInterleavedSegments';
+
+/** Re-project segments through the metadata round-trip and compare ordering. */
+function roundTrip(segments: InterleavedSegment[]): InterleavedSegment[] {
+  const hist = streamSegmentsToHistoryMetadata(segments);
+  const flatTools = segments
+    .filter((s): s is Extract<InterleavedSegment, { type: 'tool_result' }> => s.type === 'tool_result')
+    .map((s) => s.record);
+  return buildHistorySegments(
+    hist.iteration_texts,
+    undefined,
+    flatTools,
+    hist.iteration_reasonings,
+    hist.iteration_reasoning_durations_ms,
+    null,
+    null,
+    hist.iteration_tool_counts,
+    hist.injected_steers.map((s) => ({
+      afterIteration: s.after_iteration,
+      text: s.text,
+      steerId: s.steer_id,
+    })),
+  );
+}
+
 
 describe('buildHistorySegments', () => {
   it('keeps the final response for single-turn messages that only have reasoning metadata', () => {
@@ -92,6 +118,56 @@ describe('buildHistorySegments', () => {
       { type: 'steer', text: 'reconsider', steerId: 's0' },
       { type: 'text', text: 'final' },
     ]);
+  });
+});
+
+describe('streamSegmentsToHistoryMetadata', () => {
+  const toolA = { name: 'Read', arguments: '', success: true, durationMs: 1, resultPreview: 'a' };
+  const toolB = { name: 'Grep', arguments: '', success: true, durationMs: 2, resultPreview: 'b' };
+
+  it('round-trips reasoning + text + tool interleaving through buildHistorySegments', () => {
+    const segments: InterleavedSegment[] = [
+      { type: 'reasoning', content: 'think 1', durationMs: 100 },
+      { type: 'text', text: 'I will read the file.' },
+      { type: 'tool_result', record: toolA },
+      { type: 'reasoning', content: 'think 2', durationMs: 200 },
+      { type: 'text', text: 'Now searching.' },
+      { type: 'tool_result', record: toolB },
+      { type: 'text', text: 'Done.' },
+    ];
+
+    expect(roundTrip(segments)).toEqual(segments);
+  });
+
+  it('captures text that precedes a tool call so it is not dropped', () => {
+    const segments: InterleavedSegment[] = [
+      { type: 'text', text: 'Let me check.' },
+      { type: 'tool_result', record: toolA },
+    ];
+
+    const hist = streamSegmentsToHistoryMetadata(segments);
+    expect(hist.iteration_texts).toEqual(['Let me check.']);
+    expect(hist.iteration_tool_counts).toEqual([1]);
+    expect(roundTrip(segments)).toEqual(segments);
+  });
+
+  it('round-trips a steer chip anchored between tool blocks', () => {
+    const segments: InterleavedSegment[] = [
+      { type: 'text', text: 'look' },
+      { type: 'tool_result', record: toolA },
+      { type: 'steer', text: 'focus on the parser', steerId: 's1' },
+      { type: 'text', text: 'search' },
+      { type: 'tool_result', record: toolB },
+    ];
+
+    expect(roundTrip(segments)).toEqual(segments);
+  });
+
+  it('flags reasoning presence so the flat reasoning copy can be dropped', () => {
+    expect(streamSegmentsToHistoryMetadata([{ type: 'text', text: 'hi' }]).hasReasoning).toBe(false);
+    expect(
+      streamSegmentsToHistoryMetadata([{ type: 'reasoning', content: 'r' }]).hasReasoning,
+    ).toBe(true);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   isLiveStreamingAssistantMessage,
   mergeBackendMessagesPreservingLocalStreamState,
 } from '../hooks/chatStreamingMessages';
+import type { InterleavedSegment } from '../hooks/useInterleavedSegments';
 import type { Message } from '../types';
 
 describe('ensureStreamingAssistantMessage', () => {
@@ -179,6 +180,58 @@ describe('ensureStreamingAssistantMessage', () => {
       },
     });
     expect(updated[0]).not.toHaveProperty('_streaming');
+  });
+
+  it('projects streamed text and reasoning into iteration metadata on provider error', () => {
+    // Bug: on error the streaming message is re-id'd to error-* and routed to
+    // StaticBubble, which rebuilds history from iteration_texts. Without
+    // carrying the segments over, text + reasoning were dropped and only tool
+    // cards survived. The finalize must project the live ordering into the
+    // same per-iteration metadata the backend persists.
+    const messages: Message[] = [
+      {
+        id: 'streaming-session-1',
+        role: 'assistant',
+        content: 'Let me inspect the file.',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+        _streaming: true,
+        metadata: { reasoning_content: 'Planning the read.' },
+      } as Message,
+    ];
+
+    const toolRecord = {
+      name: 'FileRead',
+      arguments: '{}',
+      success: true,
+      durationMs: 5,
+      resultPreview: 'ok',
+    };
+    const segments: InterleavedSegment[] = [
+      { type: 'reasoning', content: 'Planning the read.', durationMs: 50 },
+      { type: 'text', text: 'Let me inspect the file.' },
+      { type: 'tool_result', record: toolRecord },
+    ];
+
+    const updated = finalizeStreamingAssistantMessage(
+      messages,
+      'session-1',
+      'error-run-1',
+      [toolRecord],
+      'LLM error: HTTP 500',
+      segments,
+    );
+
+    expect(updated).toHaveLength(1);
+    const meta = updated[0].metadata as Record<string, unknown>;
+    expect(meta.stream_error).toBe('LLM error: HTTP 500');
+    expect(meta.iteration_texts).toEqual(['Let me inspect the file.']);
+    expect(meta.iteration_reasonings).toEqual(['Planning the read.']);
+    expect(meta.iteration_tool_counts).toEqual([1]);
+    // Flat reasoning copy removed to avoid rendering reasoning twice.
+    expect(meta).not.toHaveProperty('reasoning_content');
+    // Streamed content preserved verbatim on the finalized message.
+    expect(updated[0].content).toBe('Let me inspect the file.');
   });
 
   it('treats only active streaming placeholders as live stream targets', () => {

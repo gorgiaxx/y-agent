@@ -7,6 +7,7 @@ import { PlanTaskItem } from '../components/chat-panel/chat-box/tool-renderers/P
 import {
   shouldDisplayStreamingAgent,
   shouldDisplayStreamingContentAgent,
+  isSubSessionEvent,
 } from '../hooks/chatStreamTypes';
 
 describe('Plan tool rendering', () => {
@@ -844,15 +845,36 @@ describe('Plan tool rendering', () => {
 });
 
 describe('shouldDisplayStreamingAgent', () => {
-  it('keeps root-agent deltas and hides sub-agent deltas', () => {
+  it('keeps root-agent and orchestrator output, hides executor/writer sub-agents', () => {
     expect(shouldDisplayStreamingAgent(undefined)).toBe(true);
     expect(shouldDisplayStreamingAgent('chat-turn')).toBe(true);
-    expect(shouldDisplayStreamingAgent('plan-writer')).toBe(true);
+    expect(shouldDisplayStreamingAgent('plan-orchestrator')).toBe(true);
+    expect(shouldDisplayStreamingAgent('loop-orchestrator')).toBe(true);
+    // Sub-agents run in their own child session / sub-chat, not the main chat.
+    expect(shouldDisplayStreamingAgent('plan-writer')).toBe(false);
+    expect(shouldDisplayStreamingAgent('plan-phase-executor:phase-1')).toBe(false);
+    expect(shouldDisplayStreamingAgent('loop-executor')).toBe(false);
+    expect(shouldDisplayStreamingAgent('general-purpose')).toBe(false);
   });
 
-  it('hides plan-writer content deltas while keeping plan orchestrator cards visible', () => {
+  it('hides sub-agent content deltas while keeping orchestrator + root visible', () => {
     expect(shouldDisplayStreamingContentAgent('chat-turn')).toBe(true);
     expect(shouldDisplayStreamingContentAgent('plan-orchestrator')).toBe(true);
+    expect(shouldDisplayStreamingContentAgent('loop-orchestrator')).toBe(true);
     expect(shouldDisplayStreamingContentAgent('plan-writer')).toBe(false);
+    expect(shouldDisplayStreamingContentAgent('plan-phase-executor:phase-2')).toBe(false);
+    expect(shouldDisplayStreamingContentAgent('loop-executor')).toBe(false);
+  });
+});
+
+describe('isSubSessionEvent', () => {
+  it('is true only when the event is attributed to a distinct child session', () => {
+    // Plan phase / loop round: distinct child session id.
+    expect(isSubSessionEvent('child-1', 'parent-1')).toBe(true);
+    // Root turn / orchestrator: event on the parent session.
+    expect(isSubSessionEvent('parent-1', 'parent-1')).toBe(false);
+    // Task delegate: reuses the parent session id -> not a sub-session.
+    expect(isSubSessionEvent(undefined, 'parent-1')).toBe(false);
+    expect(isSubSessionEvent(null, 'parent-1')).toBe(false);
   });
 });
