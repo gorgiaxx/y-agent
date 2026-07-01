@@ -433,6 +433,37 @@ fn resolve_max_tokens(requested: Option<u32>, model: &str) -> u32 {
     }
 }
 
+/// Merge a streaming `usage` payload into the usage accumulated so far.
+///
+/// Anthropic reports cache/input counts in `message_start` and the final
+/// output count in `message_delta`. Anthropic-compatible gateways, however,
+/// often send the *complete* usage (input, output, and cache) only in the
+/// final `message_delta`. Both shapes must survive: every field present on the
+/// delta overrides the accumulated value, so a late cache count is not lost,
+/// while fields absent from the delta keep their `message_start` value.
+///
+/// `input_tokens` is only overridden when the delta reports a positive count,
+/// since Anthropic sends `input_tokens: 0` in `message_delta` and that must not
+/// clobber the real prompt size captured at `message_start`.
+fn merge_stream_usage(accumulated: Option<TokenUsage>, delta: &AnthropicStreamUsage) -> TokenUsage {
+    let mut merged = accumulated.unwrap_or_default();
+    if let Some(out) = delta.output_tokens {
+        merged.output_tokens = out;
+    }
+    if let Some(inp) = delta.input_tokens {
+        if inp > 0 {
+            merged.input_tokens = inp;
+        }
+    }
+    if delta.cache_read_input_tokens.is_some() {
+        merged.cache_read_tokens = delta.cache_read_input_tokens;
+    }
+    if delta.cache_creation_input_tokens.is_some() {
+        merged.cache_write_tokens = delta.cache_creation_input_tokens;
+    }
+    merged
+}
+
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
     #[instrument(skip(self, request), fields(model = %self.metadata.model, provider_id = %self.metadata.id))]
@@ -785,23 +816,7 @@ impl LlmProvider for AnthropicProvider {
                                         _ => FinishReason::Unknown,
                                     });
                                 let usage_info = if let Some(u) = usage {
-                                    let mut merged =
-                                        state.accumulated_usage.take().unwrap_or(TokenUsage {
-                                            input_tokens: 0,
-                                            output_tokens: 0,
-                                            cache_read_tokens: None,
-                                            cache_write_tokens: None,
-                                            ..Default::default()
-                                        });
-                                    if let Some(out) = u.output_tokens {
-                                        merged.output_tokens = out;
-                                    }
-                                    if let Some(inp) = u.input_tokens {
-                                        if inp > 0 {
-                                            merged.input_tokens = inp;
-                                        }
-                                    }
-                                    Some(merged)
+                                    Some(merge_stream_usage(state.accumulated_usage.take(), &u))
                                 } else {
                                     state.accumulated_usage.take()
                                 };
@@ -2036,5 +2051,87 @@ mod tests {
         let body = provider
             .build_request_body(&make_request(Some("claude-opus-4-1"), Some(99_999)), false);
         assert_eq!(body.max_tokens, 32_000);
+    }
+
+    #[test]
+    fn test_merge_stream_usage_captures_cache_from_delta_only() {
+        // Gateway shape: no message_start usage, full usage (incl. cache) in the
+        // final message_delta. Cache must not be dropped.
+        let delta = AnthropicStreamUsage {
+            input_tokens: Some(797),
+            output_tokens: Some(38),
+            cache_read_input_tokens: Some(12_000),
+            cache_creation_input_tokens: Some(2_048),
+        };
+        let merged = merge_stream_usage(None, &delta);
+        assert_eq!(merged.input_tokens, 797);
+        assert_eq!(merged.output_tokens, 38);
+        assert_eq!(merged.cache_read_tokens, Some(12_000));
+        assert_eq!(merged.cache_write_tokens, Some(2_048));
+    }
+
+    #[test]
+    fn test_merge_stream_usage_preserves_message_start_cache() {
+        // Standard Anthropic shape: cache in message_start, only output in the
+        // delta. The delta must not wipe the accumulated cache counts.
+        let accumulated = TokenUsage {
+            input_tokens: 797,
+            output_tokens: 1,
+            cache_read_tokens: Some(12_000),
+            cache_write_tokens: Some(2_048),
+            ..Default::default()
+        };
+        let delta = AnthropicStreamUsage {
+            input_tokens: None,
+            output_tokens: Some(38),
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+        };
+        let merged = merge_stream_usage(Some(accumulated), &delta);
+        assert_eq!(merged.input_tokens, 797);
+        assert_eq!(merged.output_tokens, 38);
+        assert_eq!(merged.cache_read_tokens, Some(12_000));
+        assert_eq!(merged.cache_write_tokens, Some(2_048));
+    }
+
+    #[test]
+    fn test_merge_stream_usage_zero_input_does_not_clobber() {
+        // Anthropic sends input_tokens: 0 in message_delta; the real prompt size
+        // captured at message_start must be kept.
+        let accumulated = TokenUsage {
+            input_tokens: 797,
+            output_tokens: 1,
+            ..Default::default()
+        };
+        let delta = AnthropicStreamUsage {
+            input_tokens: Some(0),
+            output_tokens: Some(38),
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
+        };
+        let merged = merge_stream_usage(Some(accumulated), &delta);
+        assert_eq!(merged.input_tokens, 797);
+        assert_eq!(merged.output_tokens, 38);
+    }
+
+    #[test]
+    fn test_merge_stream_usage_delta_cache_overrides_accumulated() {
+        // If both events carry cache, the later (delta) count wins.
+        let accumulated = TokenUsage {
+            input_tokens: 797,
+            output_tokens: 1,
+            cache_read_tokens: Some(0),
+            cache_write_tokens: Some(0),
+            ..Default::default()
+        };
+        let delta = AnthropicStreamUsage {
+            input_tokens: None,
+            output_tokens: Some(38),
+            cache_read_input_tokens: Some(12_000),
+            cache_creation_input_tokens: Some(2_048),
+        };
+        let merged = merge_stream_usage(Some(accumulated), &delta);
+        assert_eq!(merged.cache_read_tokens, Some(12_000));
+        assert_eq!(merged.cache_write_tokens, Some(2_048));
     }
 }
