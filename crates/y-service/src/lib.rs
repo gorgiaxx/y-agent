@@ -65,10 +65,10 @@ pub use background_tasks::{
 };
 pub use bot::{BotConfig, BotPersona, BotService, BotServiceError};
 pub use chat::{
-    ChatService, PendingInteractions, PendingPermissions, PermissionPromptResponse,
-    PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError, ResendTurnRequest,
-    SteerMessage, SteeringQueues, ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput,
-    TurnMetaSummary, TurnResult,
+    ChatService, FollowUpMessage, FollowUpQueues, PendingInteractions, PendingPermissions,
+    PermissionPromptResponse, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError,
+    ResendTurnRequest, SteerMessage, SteeringQueues, ToolCallRecord, TurnError, TurnEvent,
+    TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
 };
 pub use config::ServiceConfig;
 pub use container::ServiceContainer;

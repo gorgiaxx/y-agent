@@ -383,7 +383,7 @@ mod tests {
         let pending: PendingInteractions =
             std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::chat::TurnEventSender::channel();
 
         let args = serde_json::json!({
             "questions": [{
@@ -404,7 +404,7 @@ mod tests {
         });
 
         // Wait for the event.
-        let event = rx.recv().await.unwrap();
+        let (event, _session_id) = rx.recv().await.unwrap();
         let interaction_id = match event {
             TurnEvent::UserInteractionRequest { interaction_id, .. } => interaction_id,
             other => panic!("unexpected event: {other:?}"),

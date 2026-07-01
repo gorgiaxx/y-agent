@@ -185,6 +185,10 @@ pub struct ServiceContainer {
     /// is streaming; drained and injected at LLM-call boundaries by the agent
     /// execution loop (root and sub-agents alike, keyed by session id).
     pub steering_queues: crate::chat::SteeringQueues,
+    /// Per-session follow-up queues. Holds user messages enqueued while a
+    /// turn is streaming but intended for processing after the run naturally
+    /// stops. Drained by the agent execution loop to extend the run.
+    pub follow_up_queues: crate::chat::FollowUpQueues,
 
     /// Session-scoped permission overrides.
     pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
@@ -383,6 +387,7 @@ impl ServiceContainer {
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_plan_reviews: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             steering_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            follow_up_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
             session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
             persona_dir: config.persona_dir.clone(),
@@ -1691,6 +1696,7 @@ mod tests {
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,
+                tool_dialect: None,
                 icon: None,
                 azure_resource_name: None,
                 azure_api_version: None,
@@ -1728,6 +1734,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -1766,6 +1773,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,
@@ -1815,6 +1823,7 @@ mod tests {
                 temperature: None,
                 top_p: None,
                 tool_calling_mode: None,
+                tool_dialect: None,
                 icon: None,
                 azure_resource_name: None,
                 azure_api_version: None,
@@ -1877,6 +1886,7 @@ mod tests {
                     temperature: None,
                     top_p: None,
                     tool_calling_mode: None,
+                    tool_dialect: None,
                     icon: None,
                     azure_resource_name: None,
                     azure_api_version: None,

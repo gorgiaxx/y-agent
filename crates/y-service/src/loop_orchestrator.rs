@@ -366,6 +366,7 @@ impl LoopOrchestrator {
             max_tool_calls: settings.max_tool_calls,
             tool_definitions: tool_defs,
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages,
             provider_id: None,
             preferred_models: settings.preferred_models.clone(),
@@ -410,9 +411,19 @@ impl LoopOrchestrator {
         )
         .await;
 
-        AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
-            .await
-            .map_err(|e| map_loop_agent_error("loop-executor", &e))?;
+        let result =
+            AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
+                .await
+                .map_err(|e| map_loop_agent_error("loop-executor", &e))?;
+
+        // Persist the round's transcript to its child session for drill-in.
+        crate::chat::ChatService::persist_subagent_turn(
+            container,
+            &child_session.id,
+            &format!("Round {round_num} of {max_rounds}"),
+            &result,
+        )
+        .await;
 
         emit_subagent_completed(container, child_uuid, LOOP_EXECUTOR_AGENT_ID, true);
 
@@ -485,6 +496,7 @@ impl LoopOrchestrator {
             max_tool_calls: settings.max_tool_calls,
             tool_definitions: tool_defs,
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages,
             provider_id: None,
             preferred_models: settings.preferred_models.clone(),

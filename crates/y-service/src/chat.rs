@@ -26,11 +26,11 @@ use crate::container::ServiceContainer;
 
 // Re-export types from chat_types for backward compatibility.
 pub use crate::chat_types::{
-    OperationMode, PendingInteractions, PendingPermissions, PendingPlanReviews,
-    PermissionPromptResponse, PlanReviewDecision, PrepareTurnError, PrepareTurnRequest,
-    PreparedTurn, ResendTurnError, ResendTurnRequest, SessionAgentConfig, SessionAgentFeatures,
-    SteerMessage, SteeringQueues, ToolCallRecord, TurnCancellationToken, TurnError, TurnEvent,
-    TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
+    FollowUpMessage, FollowUpQueues, OperationMode, PendingInteractions, PendingPermissions,
+    PendingPlanReviews, PermissionPromptResponse, PlanReviewDecision, PrepareTurnError,
+    PrepareTurnRequest, PreparedTurn, ResendTurnError, ResendTurnRequest, SessionAgentConfig,
+    SessionAgentFeatures, SteerMessage, SteeringQueues, ToolCallRecord, TurnCancellationToken,
+    TurnError, TurnEvent, TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -109,6 +109,70 @@ impl ChatService {
         queues.remove(session_id);
     }
 
+    // -- Follow-up queue management ----------------------------------------
+    //
+    // Per-session FIFO queues of user messages enqueued while a turn is
+    // streaming but intended for processing after the run naturally stops.
+    // The agent execution loop drains them after the inner loop exits
+    // (no tool calls, no steering). When non-empty, the run continues.
+
+    /// Enqueue a follow-up message for a session. Returns the created entry.
+    pub async fn add_follow_up(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        text: String,
+    ) -> FollowUpMessage {
+        let msg = FollowUpMessage::new(text);
+        let mut queues = container.follow_up_queues.lock().await;
+        queues
+            .entry(session_id.clone())
+            .or_default()
+            .push(msg.clone());
+        msg
+    }
+
+    /// List the pending follow-up messages for a session (FIFO order).
+    pub async fn list_follow_ups(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Vec<FollowUpMessage> {
+        let queues = container.follow_up_queues.lock().await;
+        queues.get(session_id).cloned().unwrap_or_default()
+    }
+
+    /// Remove a single follow-up message by id. Returns true if it was present.
+    pub async fn delete_follow_up(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        follow_up_id: &str,
+    ) -> bool {
+        let mut queues = container.follow_up_queues.lock().await;
+        let Some(queue) = queues.get_mut(session_id) else {
+            return false;
+        };
+        let before = queue.len();
+        queue.retain(|f| f.id != follow_up_id);
+        queue.len() != before
+    }
+
+    /// Take all pending follow-up messages for a session, leaving it empty.
+    pub async fn drain_follow_ups(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Vec<FollowUpMessage> {
+        let mut queues = container.follow_up_queues.lock().await;
+        queues
+            .get_mut(session_id)
+            .map(std::mem::take)
+            .unwrap_or_default()
+    }
+
+    /// Clear a session's follow-up queue (called at run start).
+    pub async fn clear_follow_ups(container: &ServiceContainer, session_id: &SessionId) {
+        let mut queues = container.follow_up_queues.lock().await;
+        queues.remove(session_id);
+    }
+
     /// Execute a single chat turn (no progress events).
     pub async fn execute_turn(
         container: &ServiceContainer,
@@ -151,6 +215,7 @@ impl ChatService {
             max_tool_calls: input.max_tool_calls.unwrap_or(usize::MAX),
             tool_definitions: tool_defs,
             tool_calling_mode,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages: input.history.to_vec(),
             provider_id: input.provider_id.clone(),
             preferred_models: input.preferred_models.clone(),
@@ -475,6 +540,7 @@ impl ChatService {
         // by the client only while a run is streaming, so clearing here just
         // guards against stale entries leaking across runs.
         Self::clear_steers(container, &session_id).await;
+        Self::clear_follow_ups(container, &session_id).await;
         let agent_config = Self::resolve_session_agent_config(container, &session)
             .await
             .map_err(PrepareTurnError::SessionAgentNotFound)?;
@@ -1458,42 +1524,42 @@ impl ChatService {
         let tool_calls = Self::extract_tool_call_records(partial_messages);
         let accumulated_content = Self::accumulate_assistant_content(partial_messages);
 
-        // No partial work was produced before the failure (e.g. the first LLM
-        // call of the turn timed out with zero tokens). Nothing to preserve, so
-        // leave the display transcript untouched -- a retry then does a correct
-        // full rollback to the user message.
-        if accumulated_content.trim().is_empty() && tool_calls.is_empty() {
-            return;
-        }
-
         let display_store = container.session_manager.display_transcript_store();
 
         // Persist completed work (text + executed tool calls) as a standalone
         // consolidated message WITHOUT `stream_error`, so it survives an
         // intra-turn retry instead of being discarded with the failure.
-        let success_metadata = serde_json::json!({
-            "tool_results": Self::build_tool_results_metadata(&tool_calls),
-            "iteration_texts": Self::assistant_iteration_texts(partial_messages),
-            "iteration_reasonings": Self::assistant_iteration_reasonings(partial_messages),
-            "iteration_reasoning_durations_ms": Vec::<Option<u64>>::new(),
-            "iteration_tool_counts": Self::assistant_iteration_tool_counts(partial_messages),
-        });
-        let success_msg = Message {
-            message_id: y_core::types::generate_message_id(),
-            role: Role::Assistant,
-            content: accumulated_content,
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: success_metadata,
-        };
-        let _ = display_store.append(&input.session_id, &success_msg).await;
+        // Skip this only when there is genuinely no work to show -- but still
+        // append the failure marker below so the retry path can detect an
+        // intra-turn retry and preserve earlier partial state.
+        let has_work = !accumulated_content.trim().is_empty() || !tool_calls.is_empty();
+        if has_work {
+            let success_metadata = serde_json::json!({
+                "tool_results": Self::build_tool_results_metadata(&tool_calls),
+                "iteration_texts": Self::assistant_iteration_texts(partial_messages),
+                "iteration_reasonings": Self::assistant_iteration_reasonings(partial_messages),
+                "iteration_reasoning_durations_ms": Vec::<Option<u64>>::new(),
+                "iteration_tool_counts": Self::assistant_iteration_tool_counts(partial_messages),
+            });
+            let success_msg = Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::Assistant,
+                content: accumulated_content,
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: success_metadata,
+            };
+            let _ = display_store.append(&input.session_id, &success_msg).await;
+        }
 
-        // Append the failure marker as the LAST display message. Both the
-        // frontend and `prepare_resend_turn` detect an intra-turn retry by a
-        // trailing assistant message carrying a non-empty `stream_error`, and
-        // the intra-turn truncate removes ONLY this trailing marker -- which is
-        // what keeps the successful-iteration message above intact.
+        // Always append the failure marker as the LAST display message. Both
+        // the frontend and `prepare_resend_turn` detect an intra-turn retry by
+        // a trailing assistant message carrying a non-empty `stream_error`,
+        // and the intra-turn truncate removes ONLY this trailing marker --
+        // which keeps the successful-iteration message above intact. Without
+        // this marker, a retry falls through to the destructive turn-level
+        // branch and wipes all partial work from the display transcript.
         let failure_marker = Message {
             message_id: y_core::types::generate_message_id(),
             role: Role::Assistant,
@@ -1841,6 +1907,63 @@ impl ChatService {
                 message_id = %msg.message_id,
                 "failed to mirror message to chat_message_store"
             );
+        }
+    }
+
+    /// Persist a sub-agent run (plan phase, loop round, plan-writer, ...) to its
+    /// own child session transcript, using the SAME message assembly the main
+    /// turn uses so the child session renders identically in the GUI.
+    ///
+    /// Unlike the root turn, sub-agents never steer and get no checkpoint /
+    /// post-turn optimization — this only records the initiating prompt and the
+    /// resulting assistant message(s) so the child session is a faithful,
+    /// drill-in-able transcript.
+    pub(crate) async fn persist_subagent_turn(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        user_input: &str,
+        result: &AgentExecutionResult,
+    ) {
+        let user_msg = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::User,
+            content: user_input.to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({}),
+        };
+        if let Err(e) = container
+            .session_manager
+            .append_message(session_id, &user_msg)
+            .await
+        {
+            tracing::warn!(error = %e, session_id = %session_id, "failed to persist sub-agent prompt");
+        }
+
+        let messages = Self::build_steered_messages(result);
+        for msg in &messages {
+            if let Err(e) = container
+                .session_manager
+                .append_message(session_id, msg)
+                .await
+            {
+                tracing::warn!(error = %e, session_id = %session_id, "failed to persist sub-agent message");
+            }
+        }
+
+        if let Some(assistant_msg) = messages.last() {
+            Self::mirror_to_chat_message_store(
+                container,
+                session_id,
+                assistant_msg,
+                Some(&result.model),
+                Some(result.input_tokens),
+                Some(result.output_tokens),
+                Some(result.cost_usd),
+                Some(result.context_window),
+            )
+            .await;
         }
     }
 }
@@ -2197,6 +2320,46 @@ mod tests {
             .await
             .expect("test container should build");
         (container, tmpdir)
+    }
+
+    #[tokio::test]
+    async fn persist_subagent_turn_writes_prompt_and_assistant_to_child_session() {
+        let (container, _tmp) = make_test_container().await;
+        let parent = container
+            .session_manager
+            .create_session(y_core::session::CreateSessionOptions {
+                parent_id: None,
+                session_type: y_core::session::SessionType::Main,
+                agent_id: None,
+                title: Some("parent".into()),
+            })
+            .await
+            .expect("parent session");
+        let child = container
+            .session_manager
+            .create_session(y_core::session::CreateSessionOptions {
+                parent_id: Some(parent.id.clone()),
+                session_type: y_core::session::SessionType::SubAgent,
+                agent_id: None,
+                title: Some("Phase 1: demo".into()),
+            })
+            .await
+            .expect("child session");
+
+        let result = make_steer_result(vec!["working\n".into()], vec![0], "phase done", vec![]);
+        ChatService::persist_subagent_turn(&container, &child.id, "Phase 1: demo", &result).await;
+
+        let msgs = container
+            .session_manager
+            .read_display_transcript(&child.id)
+            .await
+            .expect("read child transcript");
+
+        assert_eq!(msgs.len(), 2, "expected user prompt + assistant message");
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[0].content, "Phase 1: demo");
+        assert_eq!(msgs[1].role, Role::Assistant);
+        assert_eq!(msgs[1].content, "working\nphase done");
     }
 
     #[tokio::test]
@@ -3165,5 +3328,426 @@ max_iterations = 1
             err,
             PrepareTurnError::SessionTurnLimitReached { .. }
         ));
+    }
+
+    // --- Follow-up queue tests ---
+
+    #[tokio::test]
+    async fn test_follow_up_queue_add_and_list() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-1".into());
+
+        let msg1 = ChatService::add_follow_up(&container, &sid, "first follow-up".into()).await;
+        let msg2 = ChatService::add_follow_up(&container, &sid, "second follow-up".into()).await;
+
+        let list = ChatService::list_follow_ups(&container, &sid).await;
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].text, "first follow-up");
+        assert_eq!(list[1].text, "second follow-up");
+        assert_eq!(list[0].id, msg1.id);
+        assert_eq!(list[1].id, msg2.id);
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_delete() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-2".into());
+
+        let msg = ChatService::add_follow_up(&container, &sid, "to be deleted".into()).await;
+        ChatService::add_follow_up(&container, &sid, "to keep".into()).await;
+
+        let deleted = ChatService::delete_follow_up(&container, &sid, &msg.id).await;
+        assert!(deleted);
+
+        let list = ChatService::list_follow_ups(&container, &sid).await;
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].text, "to keep");
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_delete_nonexistent() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-3".into());
+
+        ChatService::add_follow_up(&container, &sid, "exists".into()).await;
+        let deleted = ChatService::delete_follow_up(&container, &sid, "nonexistent-id").await;
+        assert!(!deleted);
+
+        let list = ChatService::list_follow_ups(&container, &sid).await;
+        assert_eq!(list.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_drain() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-4".into());
+
+        ChatService::add_follow_up(&container, &sid, "msg1".into()).await;
+        ChatService::add_follow_up(&container, &sid, "msg2".into()).await;
+
+        let drained = ChatService::drain_follow_ups(&container, &sid).await;
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].text, "msg1");
+        assert_eq!(drained[1].text, "msg2");
+
+        // Queue should be empty after drain.
+        let list = ChatService::list_follow_ups(&container, &sid).await;
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_clear() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-5".into());
+
+        ChatService::add_follow_up(&container, &sid, "msg1".into()).await;
+        ChatService::add_follow_up(&container, &sid, "msg2".into()).await;
+
+        ChatService::clear_follow_ups(&container, &sid).await;
+
+        let list = ChatService::list_follow_ups(&container, &sid).await;
+        assert!(list.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_empty_session() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-empty".into());
+
+        let list = ChatService::list_follow_ups(&container, &sid).await;
+        assert!(list.is_empty());
+
+        let drained = ChatService::drain_follow_ups(&container, &sid).await;
+        assert!(drained.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_message_new_generates_id_and_timestamp() {
+        let msg = FollowUpMessage::new("test text".into());
+        assert!(!msg.id.is_empty());
+        assert_eq!(msg.text, "test text");
+        assert!(msg.created_at > 0);
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_independent_from_steering() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-steer".into());
+
+        // Add both steer and follow-up.
+        ChatService::add_steer(&container, &sid, "steer msg".into()).await;
+        ChatService::add_follow_up(&container, &sid, "follow-up msg".into()).await;
+
+        // Both queues should be independent.
+        let steers = ChatService::list_steers(&container, &sid).await;
+        let follow_ups = ChatService::list_follow_ups(&container, &sid).await;
+        assert_eq!(steers.len(), 1);
+        assert_eq!(follow_ups.len(), 1);
+        assert_eq!(steers[0].text, "steer msg");
+        assert_eq!(follow_ups[0].text, "follow-up msg");
+
+        // Draining one should not affect the other.
+        let drained_follow_ups = ChatService::drain_follow_ups(&container, &sid).await;
+        assert_eq!(drained_follow_ups.len(), 1);
+
+        let steers_after = ChatService::list_steers(&container, &sid).await;
+        assert_eq!(steers_after.len(), 1);
+    }
+    // -----------------------------------------------------------------------
+    // Retry data-loss regression tests
+    // -----------------------------------------------------------------------
+
+    /// When the LLM call fails on the very first iteration (no tool calls
+    /// completed, no assistant message in `partial_messages`), the display
+    /// transcript must STILL receive a failure marker. Without it,
+    /// `prepare_resend_turn` cannot detect an intra-turn retry and falls
+    /// through to the destructive turn-level branch, wiping the entire turn.
+    #[tokio::test]
+    async fn persist_llm_error_appends_failure_marker_even_with_no_partial_work() {
+        let (container, _tmp) = make_test_container().await;
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: None,
+                user_input: "do something".into(),
+                provider_id: None,
+                request_mode: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+                operation_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
+                image_generation_options: None,
+            },
+        )
+        .await
+        .expect("prepare_turn should succeed");
+        let input = prepared.as_turn_input();
+
+        // Simulate a first-iteration LLM failure with zero partial messages
+        // (the LLM call timed out before producing any tool call).
+        ChatService::persist_llm_error_partial_state(
+            &container,
+            &input,
+            "LLM error: rate limited by SenseNova: retry after 60s",
+            &[],
+        )
+        .await;
+
+        let display = container
+            .session_manager
+            .read_display_transcript(&prepared.session_id)
+            .await
+            .expect("read display transcript");
+
+        // user message + failure marker (no success message because there
+        // was no completed work).
+        assert_eq!(
+            display.len(),
+            2,
+            "display must contain the user message plus a failure marker; got {:?}",
+            display
+                .iter()
+                .map(|m| (format!("{:?}", m.role), m.content.clone()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(display[0].role, Role::User);
+        assert_eq!(display[1].role, Role::Assistant);
+        assert_eq!(display[1].content, "");
+        let stream_error = display[1]
+            .metadata
+            .get("stream_error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(
+            stream_error.contains("rate limited"),
+            "failure marker must carry the error message; got metadata {:?}",
+            display[1].metadata
+        );
+    }
+
+    /// When the LLM streams partial text before failing (e.g. a 504 mid-stream),
+    /// that partial content must be persisted to the display transcript so it
+    /// survives a retry. The executor materializes partial streaming content as
+    /// an assistant message in `partial_messages`; this test verifies
+    /// `persist_llm_error_partial_state` renders it correctly.
+    #[tokio::test]
+    async fn persist_llm_error_preserves_partial_streaming_text() {
+        let (container, _tmp) = make_test_container().await;
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: None,
+                user_input: "write some code".into(),
+                provider_id: None,
+                request_mode: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+                operation_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
+                image_generation_options: None,
+            },
+        )
+        .await
+        .expect("prepare_turn should succeed");
+        let input = prepared.as_turn_input();
+
+        // The executor's Err(e) branch materializes partial streaming content
+        // as an assistant message before calling persist_llm_error_partial_state.
+        let partial_assistant = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: "Here is a partial answer that was streaming when".into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        };
+        ChatService::persist_llm_error_partial_state(
+            &container,
+            &input,
+            "LLM error: HTTP 504 Gateway Timeout",
+            &[partial_assistant],
+        )
+        .await;
+
+        let display = container
+            .session_manager
+            .read_display_transcript(&prepared.session_id)
+            .await
+            .expect("read display transcript");
+
+        // user + success(partial text) + failure marker
+        assert_eq!(display.len(), 3);
+        assert_eq!(display[0].role, Role::User);
+        assert_eq!(display[1].role, Role::Assistant);
+        assert!(
+            display[1]
+                .content
+                .contains("partial answer that was streaming"),
+            "partial streaming text must be persisted; got {:?}",
+            display[1].content
+        );
+        // The success message must NOT carry stream_error.
+        assert!(
+            display[1].metadata.get("stream_error").is_none(),
+            "success message must not have stream_error"
+        );
+        // The failure marker must carry stream_error.
+        assert_eq!(display[2].role, Role::Assistant);
+        assert!(
+            display[2]
+                .metadata
+                .get("stream_error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("504"),
+            "failure marker must carry the error"
+        );
+    }
+
+    /// Full regression: first-iteration failure with partial streaming text,
+    /// then a retry that also fails. The partial text from the first attempt
+    /// must survive the second failure -- not be wiped to just an error banner.
+    #[tokio::test]
+    async fn retry_after_failed_retry_preserves_partial_work() {
+        let (container, _tmp) = make_test_container().await;
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                session_id: None,
+                user_input: "write a function".into(),
+                provider_id: None,
+                request_mode: None,
+                skills: None,
+                knowledge_collections: None,
+                thinking: None,
+                user_message_metadata: None,
+                plan_mode: None,
+                operation_mode: None,
+                mcp_mode: None,
+                mcp_servers: None,
+                image_generation_options: None,
+            },
+        )
+        .await
+        .expect("prepare_turn should succeed");
+        let input = prepared.as_turn_input();
+
+        // 1. First attempt: partial text streamed, then 504.
+        let partial_assistant = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: "def hello():\n    print(\"hello".into(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        };
+        ChatService::persist_llm_error_partial_state(
+            &container,
+            &input,
+            "LLM error: HTTP 504 Gateway Timeout",
+            &[partial_assistant],
+        )
+        .await;
+        ChatService::persist_turn_checkpoint(&container, &input).await;
+
+        // 2. Retry: intra-turn retry detected (trailing failure marker).
+        let checkpoint = container
+            .chat_checkpoint_manager
+            .list_checkpoints(&prepared.session_id)
+            .await
+            .expect("list checkpoints")
+            .into_iter()
+            .find(|cp| cp.message_count_before == 0)
+            .expect("failed turn should record a boundary checkpoint");
+
+        let resent = ChatService::prepare_resend_turn(
+            &container,
+            ResendTurnRequest {
+                session_id: prepared.session_id.clone(),
+                checkpoint_id: checkpoint.checkpoint_id,
+                provider_id: Some("other-model".into()),
+                request_mode: None,
+                knowledge_collections: None,
+                thinking: None,
+                plan_mode: None,
+                operation_mode: None,
+            },
+        )
+        .await
+        .expect("prepare_resend_turn should succeed");
+
+        // The intra-turn branch must have been taken.
+        assert_eq!(
+            resent.pre_turn_message_count,
+            Some(0),
+            "intra-turn retry should resume from the pre-turn message count"
+        );
+
+        // Display after resend prep: user + partial work (failure marker removed).
+        let display_after_resend = container
+            .session_manager
+            .read_display_transcript(&prepared.session_id)
+            .await
+            .expect("read display transcript");
+        assert_eq!(display_after_resend.len(), 2);
+        assert!(
+            display_after_resend[1].content.contains("def hello"),
+            "partial work must survive resend prep"
+        );
+
+        // 3. Second attempt also fails (rate-limited, no new work).
+        let retry_input = resent.as_turn_input();
+        ChatService::persist_llm_error_partial_state(
+            &container,
+            &retry_input,
+            "LLM error: rate limited by SenseNova: retry after 60s",
+            &[],
+        )
+        .await;
+        ChatService::persist_turn_checkpoint(&container, &retry_input).await;
+
+        // 4. The partial work from the first attempt must STILL be visible.
+        let final_display = container
+            .session_manager
+            .read_display_transcript(&prepared.session_id)
+            .await
+            .expect("read final display transcript");
+
+        let has_partial_work = final_display
+            .iter()
+            .any(|m| m.content.contains("def hello"));
+        assert!(
+            has_partial_work,
+            "partial work from the first attempt must survive a failed retry; \
+             final display = {:?}",
+            final_display
+                .iter()
+                .map(|m| (format!("{:?}", m.role), m.content.clone()))
+                .collect::<Vec<_>>()
+        );
+
+        // And a failure marker must be present for the second failure.
+        let has_failure_marker = final_display.iter().any(|m| {
+            m.role == Role::Assistant
+                && m.metadata
+                    .get("stream_error")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|s| s.contains("rate limited"))
+        });
+        assert!(
+            has_failure_marker,
+            "a failure marker must be appended for the second failure so the \
+             user can retry again"
+        );
     }
 }

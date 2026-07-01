@@ -207,10 +207,76 @@ pub enum TurnEvent {
         steer_id: String,
         text: String,
     },
+    /// A queued follow-up message was drained and injected after the agent's
+    /// natural stop. Lets the GUI render the injected user bubble and continue
+    /// the run instead of starting a new turn.
+    FollowUpInjected {
+        follow_up_id: String,
+        text: String,
+    },
 }
 
-pub type TurnEventSender = mpsc::UnboundedSender<TurnEvent>;
+/// Sender for streaming turn events, tagging each event with an optional
+/// originating session id so downstream consumers can attribute events to a
+/// specific (possibly sub-agent / child) session — even when the same sender is
+/// shared across concurrently-executing sub-agents (e.g. plan phases run via
+/// `join_all`, loop rounds).
+///
+/// The many emit sites call [`TurnEventSender::send`] unchanged; the stored
+/// `session_id` (set via [`TurnEventSender::with_session`] at a sub-agent
+/// boundary) is stamped automatically. Root turns leave it `None`, so the
+/// presentation layer falls back to the run's parent session id.
+#[derive(Clone)]
+pub struct TurnEventSender {
+    inner: mpsc::UnboundedSender<(TurnEvent, Option<SessionId>)>,
+    session_id: Option<SessionId>,
+}
 
+/// Receiver end paired with [`TurnEventSender`]; yields each event alongside the
+/// optional child session id it was stamped with.
+pub type TurnEventReceiver = mpsc::UnboundedReceiver<(TurnEvent, Option<SessionId>)>;
+
+impl TurnEventSender {
+    /// Create a new turn-event channel (sender + receiver).
+    #[must_use]
+    pub fn channel() -> (Self, TurnEventReceiver) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                inner: tx,
+                session_id: None,
+            },
+            rx,
+        )
+    }
+
+    /// Send an event, stamped with this sender's session id (if any).
+    ///
+    /// The error intentionally does not carry the (large) event back: all call
+    /// sites ignore send failures (the receiver is only gone once a turn ends).
+    pub fn send(&self, event: TurnEvent) -> Result<(), mpsc::error::SendError<()>> {
+        self.inner
+            .send((event, self.session_id.clone()))
+            .map_err(|_| mpsc::error::SendError(()))
+    }
+
+    /// Return a clone of this sender that stamps every event with `session_id`.
+    /// Used at sub-agent execution boundaries so the whole subtree's events are
+    /// attributed to the child session rather than the root turn.
+    #[must_use]
+    pub fn with_session(&self, session_id: SessionId) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            session_id: Some(session_id),
+        }
+    }
+
+    /// True once the receiver has been dropped.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+}
 // ---------------------------------------------------------------------------
 // Permission prompt
 // ---------------------------------------------------------------------------
@@ -366,6 +432,40 @@ impl SteerMessage {
 /// Drained at LLM-call boundaries by the agent execution loop.
 pub type SteeringQueues =
     std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<SessionId, Vec<SteerMessage>>>>;
+
+// ---------------------------------------------------------------------------
+// Follow-up queue
+// ---------------------------------------------------------------------------
+
+/// A queued follow-up message: user text awaiting injection after the current
+/// run naturally stops (no more tool calls, no steering). Unlike steering
+/// (injected mid-run at LLM-call boundaries), follow-ups extend the run by
+/// triggering another LLM call with the new user message appended.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FollowUpMessage {
+    pub id: String,
+    pub text: String,
+    /// Unix epoch milliseconds when the follow-up was enqueued.
+    pub created_at: i64,
+}
+
+impl FollowUpMessage {
+    /// Build a follow-up with a freshly generated id and current timestamp.
+    pub fn new(text: String) -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            text,
+            created_at: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+}
+
+/// Per-session FIFO queue of pending follow-up messages, keyed by session id.
+/// Drained after the agent loop naturally exits (no tool calls, no steering)
+/// by the agent execution loop. When non-empty, the run continues instead of
+/// stopping.
+pub type FollowUpQueues =
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<SessionId, Vec<FollowUpMessage>>>>;
 
 // ---------------------------------------------------------------------------
 // Turn result / error

@@ -16,7 +16,12 @@ pub trait EventSink: Send + Sync + 'static {
     fn emit_started(&self, run_id: &str, session_id: &str);
 
     /// Emitted for each real-time progress event during the turn.
-    fn emit_progress(&self, run_id: &str, event: &TurnEvent);
+    ///
+    /// `child_session_id` is `Some` when the event originated from a sub-agent
+    /// running under a child session (plan phase, loop round, plan-writer);
+    /// presentation layers should attribute the event to that session instead
+    /// of the run's parent session. `None` for root-turn events.
+    fn emit_progress(&self, run_id: &str, event: &TurnEvent, child_session_id: Option<&str>);
 
     /// Emitted when the LLM requests user input (`AskUser` dialog).
     fn emit_ask_user(
