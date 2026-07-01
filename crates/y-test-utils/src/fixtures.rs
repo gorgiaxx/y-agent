@@ -48,6 +48,7 @@ pub fn make_chat_request(user_input: &str) -> ChatRequest {
         stop: vec![],
         tools: vec![],
         tool_calling_mode: ToolCallingMode::default(),
+        tool_dialect: y_core::provider::ToolDialect::default(),
         extra: serde_json::Value::Null,
         thinking: None,
         response_format: None,
@@ -93,6 +94,7 @@ pub fn make_provider_metadata(name: &str) -> ProviderMetadata {
         cost_per_1k_input: 0.001,
         cost_per_1k_output: 0.002,
         tool_calling_mode: ToolCallingMode::default(),
+        tool_dialect: y_core::provider::ToolDialect::default(),
     }
 }
 

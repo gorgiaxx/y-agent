@@ -278,13 +278,13 @@ pub fn submit_message(
         };
 
         // Set up a progress channel to receive streaming deltas.
-        let (progress_tx, mut progress_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (progress_tx, mut progress_rx) = y_service::TurnEventSender::channel();
 
         // Spawn a sub-task to forward StreamDelta events from the progress
         // channel to the TUI event channel.
         let tx_stream = tx.clone();
         let progress_forwarder = tokio::spawn(async move {
-            while let Some(event) = progress_rx.recv().await {
+            while let Some((event, _session_id)) = progress_rx.recv().await {
                 match event {
                     y_service::TurnEvent::StreamDelta { content, .. } => {
                         let _ = tx_stream.send(ChatEvent::StreamDelta { content }).await;
