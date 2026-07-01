@@ -45,9 +45,10 @@ pub use formatter::{FormattedResult, FormatterConfig, ResultFormat, ResultFormat
 pub use index::ToolIndex;
 pub use mcp_integration::McpServerConfig;
 pub use parser::{
-    format_tool_result, parse_tool_calls, strip_tool_call_blocks, ParseResult, ParsedToolCall,
+    format_tool_result, format_tool_result_dialect, parse_tool_calls, prompt_tool_call_syntax_for,
+    strip_tool_call_blocks, ParseResult, ParsedToolCall,
 };
 pub use rate_limiter::{RateLimitConfig, RateLimitResult, RateLimiter};
-pub use registry::ToolRegistryImpl;
+pub use registry::{ToolCheckFn, ToolRegistryImpl};
 pub use taxonomy::ToolTaxonomy;
 pub use validator::JsonSchemaValidator;

@@ -25,6 +25,7 @@ use y_knowledge::middleware::InjectKnowledge;
 use y_knowledge::tokenizer::AutoTokenizer;
 
 use crate::registry::ToolRegistryImpl;
+use y_core::types::ToolName;
 
 /// Optional knowledge handle for the knowledge search tool.
 pub type KnowledgeHandle = Option<Arc<Mutex<InjectKnowledge<AutoTokenizer>>>>;
@@ -167,8 +168,66 @@ pub async fn register_builtin_tools(
             tracing::warn!(error = %e, "failed to register built-in tool");
         }
     }
+    // Register check_fn for tools whose availability depends on runtime
+    // environment. The Browser tool is only useful when a Chrome/Chromium
+    // binary is configured; when absent, hiding its schema saves context
+    // tokens on every LLM call.
+    let chrome_path = y_browser::BrowserConfig::default().chrome_path;
+    registry
+        .set_check_fn(
+            &ToolName::from_string("Browser"),
+            Arc::new(move || is_browser_available(&chrome_path)),
+        )
+        .await;
 }
 
+/// Check whether a Chrome/Chromium browser binary is available.
+fn is_browser_available(chrome_path: &str) -> bool {
+    if !chrome_path.is_empty() {
+        return std::path::Path::new(chrome_path).exists();
+    }
+    chrome_system_path().is_some()
+}
+
+/// Detect a system Chrome/Chromium binary at standard install locations.
+#[cfg(target_os = "macos")]
+fn chrome_system_path() -> Option<&'static str> {
+    let candidates = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ];
+    candidates
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+}
+
+#[cfg(target_os = "linux")]
+fn chrome_system_path() -> Option<&'static str> {
+    let candidates = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+    ];
+    candidates
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+}
+
+#[cfg(target_os = "windows")]
+fn chrome_system_path() -> Option<&'static str> {
+    let candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ];
+    candidates
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn chrome_system_path() -> Option<&'static str> {
+    None
+}
 #[cfg(test)]
 mod tests {
     use super::*;

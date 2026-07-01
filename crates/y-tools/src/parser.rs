@@ -890,12 +890,123 @@ pub fn format_tool_result(name: &str, success: bool, content: &serde_json::Value
 }
 
 // ---------------------------------------------------------------------------
+// Dialect-specific tool result formatting and prompt syntax
+// ---------------------------------------------------------------------------
+
+/// Format a tool result using the dialect-specific envelope.
+///
+/// For `ToolDialect::YAgentXml` (default), this is equivalent to
+/// [`format_tool_result`]. Other dialects use their own envelope format
+/// to match the model's expected tool-call syntax.
+///
+/// Native-mode dialects (`OpenAi`, `Anthropic`, `Gemini`) fall through to
+/// the default `YAgentXml` format — in Native mode, tool results are sent
+/// via API fields, not text envelopes, so this function is only called
+/// in `PromptBased` mode.
+pub fn format_tool_result_dialect(
+    name: &str,
+    success: bool,
+    content: &serde_json::Value,
+    dialect: y_core::provider::ToolDialect,
+) -> String {
+    use y_core::provider::ToolDialect;
+
+    let pretty = serde_json::to_string_pretty(content).unwrap_or_else(|_| content.to_string());
+
+    match dialect {
+        ToolDialect::DeepSeekDsml => {
+            format!(
+                "<|DSML|tool_result name=\"{name}\" success=\"{success}\">\n{pretty}\n</|DSML|tool_result>"
+            )
+        }
+        ToolDialect::MiniMaxM2 => {
+            format!(
+                "<minimax:tool_result name=\"{name}\" success=\"{success}\">\n{pretty}\n</minimax:tool_result>"
+            )
+        }
+        ToolDialect::Longcat => {
+            format!(
+                "<longcat_tool_result name=\"{name}\" success=\"{success}\">\n{pretty}\n</longcat_tool_result>"
+            )
+        }
+        ToolDialect::GenericXml => {
+            format!(
+                "<function_result name=\"{name}\" success=\"{success}\">\n{pretty}\n</function_result>"
+            )
+        }
+        // YAgentXml, OpenAi, Anthropic, Gemini — all use the default format.
+        _ => format_tool_result(name, success, content),
+    }
+}
+
+/// The `DeepSeek` DSML tool-call syntax prompt instruction.
+const PROMPT_DSML_SYNTAX: &str = r#"When you do need a tool, output a <|DSML|function_calls> block:
+
+<|DSML|function_calls>
+{"name": "tool_name", "arguments": {"param1": "value1"}}
+</|DSML|function_calls>
+
+After each tool call, you will receive the result in a <|DSML|tool_result> block."#;
+
+/// The `MiniMax` M2 tool-call syntax prompt instruction.
+const PROMPT_MINIMAX_SYNTAX: &str = r#"When you do need a tool, output a <minimax:tool_call> block:
+
+<minimax:tool_call>
+<invoke name="tool_name"> <parameter name="param1">value1</parameter> </invoke>
+</minimax:tool_call>
+
+After each tool call, you will receive the result in a <minimax:tool_result> block."#;
+
+/// The Longcat tool-call syntax prompt instruction.
+const PROMPT_LONGCAT_SYNTAX: &str = r#"When you do need a tool, output a <longcat_tool_call> block:
+
+<longcat_tool_call>
+<name>tool_name</name>
+<arguments>{"param1": "value1"}</arguments>
+</longcat_tool_call>
+
+After each tool call, you will receive the result in a <longcat_tool_result> block."#;
+
+/// The generic XML function-calls syntax prompt instruction.
+const PROMPT_GENERIC_XML_SYNTAX: &str = r#"When you do need a tool, output a <function_calls> block:
+
+<function_calls>
+{"name": "tool_name", "arguments": {"param1": "value1"}}
+</function_calls>
+
+After each tool call, you will receive the result in a <function_result> block."#;
+
+/// Get the tool-call syntax prompt instruction for a specific dialect.
+///
+/// Returns the dialect-specific instruction text that should be injected
+/// into the system prompt to teach the model how to call tools.
+///
+/// For Native-mode dialects (`OpenAi`, `Anthropic`, `Gemini`), this returns
+/// the default y-agent XML syntax — in Native mode, the provider's API
+/// handles tool-call encoding, so this text is only a fallback.
+pub fn prompt_tool_call_syntax_for(dialect: y_core::provider::ToolDialect) -> &'static str {
+    use y_core::provider::ToolDialect;
+
+    match dialect {
+        ToolDialect::YAgentXml
+        | ToolDialect::OpenAi
+        | ToolDialect::Anthropic
+        | ToolDialect::Gemini => PROMPT_TOOL_CALL_SYNTAX,
+        ToolDialect::DeepSeekDsml => PROMPT_DSML_SYNTAX,
+        ToolDialect::MiniMaxM2 => PROMPT_MINIMAX_SYNTAX,
+        ToolDialect::Longcat => PROMPT_LONGCAT_SYNTAX,
+        ToolDialect::GenericXml => PROMPT_GENERIC_XML_SYNTAX,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use y_core::provider::ToolDialect;
 
     #[test]
     fn test_parse_single_tool_call() {
@@ -1904,5 +2015,97 @@ After text."#;
         assert_eq!(result.tool_calls[0].name, "Glob");
         assert!(result.text.contains("Before text."));
         assert!(result.text.contains("After text."));
+    }
+
+    // --- Dialect-specific formatting tests ---
+
+    #[test]
+    fn test_format_tool_result_dialect_yagent_xml() {
+        let content = serde_json::json!({"result": "ok"});
+        let formatted =
+            format_tool_result_dialect("FileRead", true, &content, ToolDialect::YAgentXml);
+        assert!(formatted.contains("<tool_result"));
+        assert!(formatted.contains("name=\"FileRead\""));
+        assert!(formatted.contains("success=\"true\""));
+    }
+
+    #[test]
+    fn test_format_tool_result_dialect_deepseek_dsml() {
+        let content = serde_json::json!({"result": "ok"});
+        let formatted =
+            format_tool_result_dialect("FileRead", true, &content, ToolDialect::DeepSeekDsml);
+        assert!(formatted.contains("<|DSML|tool_result"));
+        assert!(formatted.contains("name=\"FileRead\""));
+    }
+
+    #[test]
+    fn test_format_tool_result_dialect_minimax_m2() {
+        let content = serde_json::json!({"result": "ok"});
+        let formatted =
+            format_tool_result_dialect("FileRead", true, &content, ToolDialect::MiniMaxM2);
+        assert!(formatted.contains("<minimax:tool_result"));
+        assert!(formatted.contains("name=\"FileRead\""));
+    }
+
+    #[test]
+    fn test_format_tool_result_dialect_longcat() {
+        let content = serde_json::json!({"result": "ok"});
+        let formatted =
+            format_tool_result_dialect("FileRead", true, &content, ToolDialect::Longcat);
+        assert!(formatted.contains("<longcat_tool_result"));
+        assert!(formatted.contains("name=\"FileRead\""));
+    }
+
+    #[test]
+    fn test_format_tool_result_dialect_generic_xml() {
+        let content = serde_json::json!({"result": "ok"});
+        let formatted =
+            format_tool_result_dialect("FileRead", true, &content, ToolDialect::GenericXml);
+        assert!(formatted.contains("<function_result"));
+        assert!(formatted.contains("name=\"FileRead\""));
+    }
+
+    #[test]
+    fn test_format_tool_result_dialect_native_falls_through() {
+        let content = serde_json::json!({"result": "ok"});
+        // Native-mode dialects fall through to the default format.
+        let formatted = format_tool_result_dialect("FileRead", true, &content, ToolDialect::OpenAi);
+        assert!(formatted.contains("<tool_result"));
+    }
+
+    #[test]
+    fn test_prompt_tool_call_syntax_for_yagent_xml() {
+        let syntax = prompt_tool_call_syntax_for(ToolDialect::YAgentXml);
+        assert!(syntax.contains("<tool_call>"));
+    }
+
+    #[test]
+    fn test_prompt_tool_call_syntax_for_deepseek_dsml() {
+        let syntax = prompt_tool_call_syntax_for(ToolDialect::DeepSeekDsml);
+        assert!(syntax.contains("<|DSML|function_calls>"));
+    }
+
+    #[test]
+    fn test_prompt_tool_call_syntax_for_minimax_m2() {
+        let syntax = prompt_tool_call_syntax_for(ToolDialect::MiniMaxM2);
+        assert!(syntax.contains("<minimax:tool_call>"));
+    }
+
+    #[test]
+    fn test_prompt_tool_call_syntax_for_longcat() {
+        let syntax = prompt_tool_call_syntax_for(ToolDialect::Longcat);
+        assert!(syntax.contains("<longcat_tool_call>"));
+    }
+
+    #[test]
+    fn test_prompt_tool_call_syntax_for_generic_xml() {
+        let syntax = prompt_tool_call_syntax_for(ToolDialect::GenericXml);
+        assert!(syntax.contains("<function_calls>"));
+    }
+
+    #[test]
+    fn test_prompt_tool_call_syntax_for_native_falls_through() {
+        let syntax = prompt_tool_call_syntax_for(ToolDialect::OpenAi);
+        assert!(syntax.contains("<tool_call>"));
     }
 }

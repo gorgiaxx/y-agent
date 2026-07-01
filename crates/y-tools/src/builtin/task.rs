@@ -37,9 +37,11 @@ impl TaskTool {
     pub fn tool_definition() -> ToolDefinition {
         ToolDefinition {
             name: ToolName::from_string("Task"),
-            description: "Delegate a Task to a sub-agent. \
+            description: "Delegate a Task to a sub-agent with optional schema-validated output. \
                 Use ToolSearch to discover available agents first, \
-                then call this tool with the agent's id and a prompt."
+                then call this tool with the agent's id and a prompt. \
+                When result_schema is provided, the agent's response is \
+                validated as JSON against the schema before returning."
                 .into(),
             help: Some(
                 "Delegates a Task to a registered sub-agent and returns the agent's output.\n\
@@ -50,7 +52,11 @@ impl TaskTool {
                  \n\
                  Optional parameters:\n\
                  - mode: Override the agent's default mode (build/plan/explore/general)\n\
-                 - context_strategy: Control context sharing (none/summary/filtered/full)"
+                 - context_strategy: Control context sharing (none/summary/filtered/full)\n\
+                 - result_schema: JSON Schema for structured output. When provided, the \
+                   agent's response is parsed as JSON and validated against this schema. \
+                   The parent agent receives the validated JSON directly, eliminating the \
+                   need to parse prose."
                     .into(),
             ),
             parameters: serde_json::json!({
@@ -73,6 +79,11 @@ impl TaskTool {
                         "type": "string",
                         "enum": ["none", "summary", "filtered", "full"],
                         "description": "Optional context sharing strategy override"
+                    },
+                    "result_schema": {
+                        "type": "object",
+                        "description": "Optional JSON Schema for structured output. When provided, the agent's response is validated against this schema and returned as JSON.",
+                        "additionalProperties": true
                     }
                 },
                 "required": ["agent_name", "prompt"]
@@ -102,6 +113,7 @@ impl Tool for TaskTool {
             .arguments
             .get("context_strategy")
             .and_then(|v| v.as_str());
+        let result_schema = input.arguments.get("result_schema").cloned();
 
         let Some(agent_name) = agent_name else {
             return Err(ToolError::ValidationError {
@@ -125,6 +137,7 @@ impl Tool for TaskTool {
                 "prompt": prompt,
                 "mode": mode,
                 "context_strategy": context_strategy,
+                "result_schema": result_schema,
                 "status": "pending"
             }),
             warnings: vec![],

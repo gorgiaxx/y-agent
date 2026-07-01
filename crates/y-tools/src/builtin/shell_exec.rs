@@ -368,14 +368,12 @@ impl Tool for ShellExecTool {
             });
         }
 
-        // Fallback: direct local execution (no runtime manager).
-        let (shell, shell_flag): (&str, &str) = if cfg!(windows) {
-            ("cmd.exe", "/C")
-        } else {
-            ("sh", "-c")
-        };
-        let mut cmd = tokio::process::Command::new(shell);
-        cmd.arg(shell_flag).arg(command);
+        // Fallback: direct local execution (no runtime manager). Use the shared
+        // platform helper so this path agrees with the runtime-backed path on
+        // which shell and flags are used (login shell honoring $SHELL).
+        let (shell, shell_flag) = y_core::platform::shell_command();
+        let mut cmd = tokio::process::Command::new(&shell);
+        cmd.arg(&shell_flag).arg(command);
 
         if let Some(wd) = working_dir {
             cmd.current_dir(wd);

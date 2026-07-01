@@ -20,9 +20,37 @@ use crate::index::ToolIndex;
 /// and supports category/keyword search for lazy loading.
 ///
 /// Uses interior mutability (`RwLock`) so the trait's `&self` methods work.
+/// Type alias for a tool availability check function.
+pub type ToolCheckFn = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Cached result of a tool availability check.
+#[derive(Clone)]
+struct CachedCheck {
+    result: bool,
+    /// Whether the `check_fn` panicked. Panic results use a shorter TTL
+    /// (`CHECK_GRACE`) to retry sooner.
+    panicked: bool,
+    checked_at: std::time::Instant,
+}
+/// TTL for cached `check_fn` results (30 seconds).
+const CHECK_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+/// Grace period after a `check_fn` panic (60 seconds).
+const CHECK_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Main implementation of the [`ToolRegistry`] trait.
+///
+/// Stores tool instances and their definitions, maintains a compact index,
+/// and supports category/keyword search for lazy loading.
+///
+/// Tools may declare a `check_fn` (via [`ToolRegistryImpl::set_check_fn`])
+/// that gates whether the tool is exposed to the LLM. When `check_fn`
+/// returns `false`, the tool's schema is omitted from `get_all_definitions()`,
+/// saving context tokens. Results are cached for 30s with a 60s grace period
+/// on failure.
 pub struct ToolRegistryImpl {
     inner: RwLock<RegistryInner>,
     config: StdRwLock<ToolRegistryConfig>,
+    check_cache: StdRwLock<HashMap<ToolName, CachedCheck>>,
 }
 
 struct RegistryInner {
@@ -32,18 +60,22 @@ struct RegistryInner {
     definitions: HashMap<ToolName, ToolDefinition>,
     /// Compact index for LLM context injection.
     index: ToolIndex,
+    /// Optional availability check functions keyed by tool name.
+    /// When present, the tool is only exposed to the LLM if the check
+    /// returns `true`. See [`ToolRegistryImpl::set_check_fn`].
+    check_fns: HashMap<ToolName, ToolCheckFn>,
 }
-
 impl ToolRegistryImpl {
-    /// Create a new tool registry with the given configuration.
     pub fn new(config: ToolRegistryConfig) -> Self {
         Self {
             inner: RwLock::new(RegistryInner {
                 tools: HashMap::new(),
                 definitions: HashMap::new(),
                 index: ToolIndex::new(),
+                check_fns: HashMap::new(),
             }),
             config: StdRwLock::new(config),
+            check_cache: StdRwLock::new(HashMap::new()),
         }
     }
 
@@ -103,7 +135,79 @@ impl ToolRegistryImpl {
         let had = inner.definitions.remove(name).is_some();
         inner.tools.remove(name);
         inner.index.remove(name);
+        inner.check_fns.remove(name);
+        if let Ok(mut cache) = self.check_cache.write() {
+            cache.remove(name);
+        }
         had
+    }
+
+    /// Register an availability check function for a tool.
+    ///
+    /// When `check_fn` returns `false`, the tool's schema is omitted from
+    /// [`get_all_definitions`](Self::get_all_definitions), preventing it from
+    /// being sent to the LLM. This saves context tokens for tools whose
+    /// runtime requirements are not met (e.g., `KnowledgeSearch` when no
+    /// vector backend is configured).
+    ///
+    /// Results are cached for 30 seconds. If the check panics, the tool is
+    /// treated as available (fail-open) for a 60-second grace period.
+    pub async fn set_check_fn(&self, name: &ToolName, check_fn: ToolCheckFn) {
+        let mut inner = self.inner.write().await;
+        inner.check_fns.insert(name.clone(), check_fn);
+        // Invalidate cache for this tool so the next get_all_definitions
+        // call re-evaluates.
+        if let Ok(mut cache) = self.check_cache.write() {
+            cache.remove(name);
+        }
+        tracing::debug!(tool = %name, "check_fn registered for tool");
+    }
+
+    /// Check if a tool is currently available according to its `check_fn`.
+    ///
+    /// Returns `true` if:
+    /// - The tool has no `check_fn` (always available).
+    /// - The cached result is still fresh (within TTL).
+    /// - The `check_fn` returns `true`.
+    ///
+    /// Returns `false` only when the `check_fn` returns `false` and the
+    /// result is fresh. On panic, returns `true` (fail-open).
+    fn check_tool_available(&self, name: &ToolName, check_fn: &ToolCheckFn) -> bool {
+        // Check cache first. Use the appropriate TTL: normal results use
+        // CHECK_TTL (30s); panic-fail-open results use CHECK_GRACE (60s).
+        if let Ok(cache) = self.check_cache.read() {
+            if let Some(cached) = cache.get(name) {
+                let ttl = if cached.panicked {
+                    CHECK_GRACE
+                } else {
+                    CHECK_TTL
+                };
+                if cached.checked_at.elapsed() < ttl {
+                    return cached.result;
+                }
+            }
+        }
+
+        // Evaluate check_fn, catching panics (fail-open).
+        let panic_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check_fn()));
+        let panicked = panic_result.is_err();
+        // On panic, treat as available (fail-open) so a flaky check doesn't
+        // hide a tool that might actually work.
+        let result = panic_result.unwrap_or(true);
+
+        // Cache the result.
+        if let Ok(mut cache) = self.check_cache.write() {
+            cache.insert(
+                name.clone(),
+                CachedCheck {
+                    result,
+                    panicked,
+                    checked_at: std::time::Instant::now(),
+                },
+            );
+        }
+
+        result
     }
 
     /// Search for tools by keywords in name/description and optional category.
@@ -162,13 +266,23 @@ impl ToolRegistryImpl {
         self.inner.read().await.tools.is_empty()
     }
 
-    /// Get all registered tool definitions.
+    /// Get all registered tool definitions, filtered by `check_fn`.
+    ///
+    /// Tools with a `check_fn` that returns `false` are excluded — their
+    /// schema is not sent to the LLM, saving context tokens. Results are
+    /// cached for 30s (see `check_tool_available`).
     pub async fn get_all_definitions(&self) -> Vec<ToolDefinition> {
-        self.inner
-            .read()
-            .await
+        let inner = self.inner.read().await;
+        inner
             .definitions
             .values()
+            .filter(|def| {
+                // No check_fn = always available.
+                let Some(check_fn) = inner.check_fns.get(&def.name) else {
+                    return true;
+                };
+                self.check_tool_available(&def.name, check_fn)
+            })
             .cloned()
             .collect()
     }
@@ -364,5 +478,114 @@ mod tests {
         let index = ToolRegistry::tool_index(&reg).await;
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].name.as_str(), "FileRead");
+    }
+
+    // --- check_fn tests ---
+
+    #[tokio::test]
+    async fn test_check_fn_filters_tool_from_definitions() {
+        let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
+        let (tool1, def1) = make_tool("AlwaysAvailable");
+        let (tool2, def2) = make_tool("GatedTool");
+        reg.register_tool(tool1, def1).await.unwrap();
+        reg.register_tool(tool2, def2).await.unwrap();
+
+        // Set check_fn that returns false.
+        reg.set_check_fn(&ToolName::from_string("GatedTool"), Arc::new(|| false))
+            .await;
+
+        let defs = reg.get_all_definitions().await;
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name.as_str(), "AlwaysAvailable");
+    }
+
+    #[tokio::test]
+    async fn test_check_fn_pass_includes_tool() {
+        let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
+        let (tool, def) = make_tool("GatedTool");
+        reg.register_tool(tool, def).await.unwrap();
+
+        reg.set_check_fn(&ToolName::from_string("GatedTool"), Arc::new(|| true))
+            .await;
+
+        let defs = reg.get_all_definitions().await;
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name.as_str(), "GatedTool");
+    }
+
+    #[tokio::test]
+    async fn test_no_check_fn_means_always_available() {
+        let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
+        let (tool, def) = make_tool("PlainTool");
+        reg.register_tool(tool, def).await.unwrap();
+
+        let defs = reg.get_all_definitions().await;
+        assert_eq!(defs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_check_fn_caches_result() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
+        let (tool, def) = make_tool("CountedTool");
+        reg.register_tool(tool, def).await.unwrap();
+
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_clone = Arc::clone(&counter);
+        reg.set_check_fn(
+            &ToolName::from_string("CountedTool"),
+            Arc::new(move || {
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+        )
+        .await;
+
+        // First call evaluates check_fn.
+        let _ = reg.get_all_definitions().await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+
+        // Second call uses cache (no new evaluation).
+        let _ = reg.get_all_definitions().await;
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_check_fn_panic_fails_open() {
+        let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
+        let (tool, def) = make_tool("PanicTool");
+        reg.register_tool(tool, def).await.unwrap();
+
+        reg.set_check_fn(
+            &ToolName::from_string("PanicTool"),
+            Arc::new(|| panic!("`check_fn` panicked")),
+        )
+        .await;
+
+        // On panic, tool should still be available (fail-open).
+        let defs = reg.get_all_definitions().await;
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name.as_str(), "PanicTool");
+    }
+
+    #[tokio::test]
+    async fn test_unregister_removes_check_fn() {
+        let reg = ToolRegistryImpl::new(ToolRegistryConfig::default());
+        let (tool, def) = make_tool("GatedTool");
+        reg.register_tool(tool, def).await.unwrap();
+        reg.set_check_fn(&ToolName::from_string("GatedTool"), Arc::new(|| false))
+            .await;
+
+        // Tool is filtered out.
+        assert_eq!(reg.get_all_definitions().await.len(), 0);
+
+        // Unregister and re-register without check_fn.
+        reg.unregister_tool(&ToolName::from_string("GatedTool"))
+            .await;
+        let (tool2, def2) = make_tool("GatedTool");
+        reg.register_tool(tool2, def2).await.unwrap();
+
+        // Now it should be available (no check_fn).
+        assert_eq!(reg.get_all_definitions().await.len(), 1);
     }
 }
