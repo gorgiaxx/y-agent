@@ -25,7 +25,8 @@ use y_service::event_sink::EventSink;
 use y_service::plan_orchestrator::PlanOrchestrator;
 use y_service::{
     decode_session_prompt_config, ChatService, PermissionPromptResponse, PrepareTurnError,
-    PrepareTurnRequest, PreparedTurn, ResendTurnRequest, TurnEvent, WorkspaceService,
+    PrepareTurnRequest, PreparedTurn, ResendTurnRequest, TurnEvent, TurnEventSender,
+    WorkspaceService,
 };
 
 use crate::error::ApiError;
@@ -190,11 +191,12 @@ impl EventSink for SseEventSink {
         });
     }
 
-    fn emit_progress(&self, run_id: &str, event: &TurnEvent) {
+    fn emit_progress(&self, run_id: &str, event: &TurnEvent, child_session_id: Option<&str>) {
         if let Ok(json) = serde_json::to_value(event) {
             let _ = self.0.send(SseEvent::ChatProgress {
                 run_id: run_id.to_owned(),
                 event: json,
+                session_id: child_session_id.map(str::to_owned),
             });
         }
     }
@@ -451,12 +453,18 @@ async fn resume_plan(
 
     tokio::spawn(async move {
         let sink = SseEventSink(event_tx);
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        let (tx, mut rx) = TurnEventSender::channel();
         let progress_sink = sink.0.clone();
         let progress_run_id = run_id_clone.clone();
         let progress_task = tokio::spawn(async move {
-            while let Some(event) = rx.recv().await {
-                SseEventSink(progress_sink.clone()).emit_progress(&progress_run_id, &event);
+            while let Some((event, child_session_id)) = rx.recv().await {
+                SseEventSink(progress_sink.clone()).emit_progress(
+                    &progress_run_id,
+                    &event,
+                    child_session_id
+                        .as_ref()
+                        .map(y_core::types::SessionId::as_str),
+                );
             }
         });
 
@@ -1082,6 +1090,71 @@ async fn steer_list(
 }
 
 // ---------------------------------------------------------------------------
+// Follow-up queue routes
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /api/v1/chat/follow-up`.
+#[derive(Debug, Deserialize)]
+pub struct FollowUpAddRequest {
+    pub session_id: String,
+    pub text: String,
+}
+
+/// Request body for `DELETE /api/v1/chat/follow-up`.
+#[derive(Debug, Deserialize)]
+pub struct FollowUpDeleteRequest {
+    pub session_id: String,
+    pub follow_up_id: String,
+}
+
+/// Broadcast a session's current follow-up queue over SSE so all clients sync.
+async fn broadcast_follow_up_queue(state: &AppState, session_id: &SessionId) {
+    let queue = ChatService::list_follow_ups(&state.container, session_id).await;
+    let _ = state.event_tx.send(SseEvent::FollowUpQueueUpdated {
+        session_id: session_id.0.clone(),
+        queue: serde_json::to_value(&queue).unwrap_or_else(|_| serde_json::Value::Array(vec![])),
+    });
+}
+
+/// `POST /api/v1/chat/follow-up` -- enqueue a follow-up message for a session.
+async fn follow_up_add(
+    State(state): State<AppState>,
+    Json(body): Json<FollowUpAddRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let text = body.text.trim();
+    if text.is_empty() {
+        return Err(ApiError::BadRequest(
+            "follow-up text must not be empty".into(),
+        ));
+    }
+    let sid = SessionId(body.session_id);
+    let msg = ChatService::add_follow_up(&state.container, &sid, text.to_string()).await;
+    broadcast_follow_up_queue(&state, &sid).await;
+    Ok(Json(msg))
+}
+
+/// `DELETE /api/v1/chat/follow-up` -- remove a pending follow-up message by id.
+async fn follow_up_delete(
+    State(state): State<AppState>,
+    Json(body): Json<FollowUpDeleteRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(body.session_id);
+    let deleted = ChatService::delete_follow_up(&state.container, &sid, &body.follow_up_id).await;
+    broadcast_follow_up_queue(&state, &sid).await;
+    Ok(Json(serde_json::json!({ "deleted": deleted })))
+}
+
+/// `GET /api/v1/chat/follow-up/{session_id}` -- list pending follow-up messages.
+async fn follow_up_list(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(session_id);
+    let follow_ups = ChatService::list_follow_ups(&state.container, &sid).await;
+    Ok(Json(follow_ups))
+}
+
+// ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
 
@@ -1119,6 +1192,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/chat/plan-runs/{session_id}", get(list_plan_runs))
         .route("/api/v1/chat/steer", post(steer_add).delete(steer_delete))
         .route("/api/v1/chat/steer/{session_id}", get(steer_list))
+        .route(
+            "/api/v1/chat/follow-up",
+            post(follow_up_add).delete(follow_up_delete),
+        )
+        .route("/api/v1/chat/follow-up/{session_id}", get(follow_up_list))
 }
 
 #[cfg(test)]

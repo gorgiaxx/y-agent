@@ -52,6 +52,17 @@ pub struct SessionInfo {
     pub has_custom_prompt: bool,
 }
 
+/// Child (sub-agent) session summary for drill-in.
+#[derive(Debug, Serialize)]
+pub struct ChildSessionInfo {
+    pub id: String,
+    pub title: Option<String>,
+    pub session_type: String,
+    pub agent_id: Option<String>,
+    pub message_count: usize,
+    pub created_at: String,
+}
+
 /// A message in the session transcript.
 #[derive(Debug, Serialize)]
 pub struct MessageInfo {
@@ -248,6 +259,50 @@ async fn get_session(
         .is_some_and(|config| session_prompt_config_has_content(&config));
 
     Ok(Json(session_to_info(&session, has_custom)))
+}
+
+/// `GET /api/v1/sessions/:id/children`
+///
+/// Direct child (sub-agent) sessions, oldest first — powers drill-in into
+/// plan phase / loop round / delegated-task transcripts.
+async fn list_child_sessions(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(session_id.clone());
+    let children = state
+        .container
+        .session_manager
+        .children(&sid)
+        .await
+        .map_err(|_| ApiError::NotFound(format!("session {session_id} not found")))?;
+
+    let mapped: Vec<ChildSessionInfo> = children
+        .into_iter()
+        .filter(|c| c.state == SessionState::Active)
+        .map(|c| ChildSessionInfo {
+            id: c.id.0,
+            title: c.title,
+            session_type: session_type_slug(c.session_type),
+            agent_id: c.agent_id.map(|a| a.0),
+            message_count: c.message_count as usize,
+            created_at: c.created_at.to_rfc3339(),
+        })
+        .collect();
+
+    Ok(Json(mapped))
+}
+
+fn session_type_slug(t: SessionType) -> String {
+    match t {
+        SessionType::Main => "main",
+        SessionType::Child => "child",
+        SessionType::Branch => "branch",
+        SessionType::Ephemeral => "ephemeral",
+        SessionType::SubAgent => "sub_agent",
+        SessionType::Canonical => "canonical",
+    }
+    .to_string()
 }
 
 /// `GET /api/v1/sessions/:id/messages`
@@ -561,6 +616,10 @@ pub fn router() -> Router<AppState> {
             get(get_session).delete(delete_session),
         )
         .route("/api/v1/sessions/{session_id}/messages", get(list_messages))
+        .route(
+            "/api/v1/sessions/{session_id}/children",
+            get(list_child_sessions),
+        )
         .route(
             "/api/v1/sessions/{session_id}/archive",
             post(archive_session),

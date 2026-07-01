@@ -32,6 +32,10 @@ pub enum SseEvent {
     ChatProgress {
         run_id: String,
         event: serde_json::Value,
+        /// Originating sub-agent (child) session id, when the event came from a
+        /// plan phase / loop round / plan-writer running under a child session.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     /// `chat:complete` -- full response on success.
     ChatComplete(serde_json::Value),
@@ -72,6 +76,11 @@ pub enum SseEvent {
         session_id: String,
         queue: serde_json::Value,
     },
+    /// `chat:follow_up_queue` -- a session's follow-up queue changed.
+    FollowUpQueueUpdated {
+        session_id: String,
+        queue: serde_json::Value,
+    },
     /// `diagnostics:event` -- provider/tool/agent gateway event.
     DiagnosticsEvent(serde_json::Value),
     /// `kb:batch_progress` -- before each file in a batch ingest.
@@ -92,6 +101,7 @@ impl SseEvent {
             SseEvent::ChatProgress { .. } => "chat:progress",
             SseEvent::ChatComplete(_) => "chat:complete",
             SseEvent::ChatError { .. } => "chat:error",
+            SseEvent::FollowUpQueueUpdated { .. } => "chat:follow_up_queue",
             SseEvent::AskUser { .. } => "chat:AskUser",
             SseEvent::PermissionRequest { .. } => "chat:PermissionRequest",
             SseEvent::PlanReviewRequest { .. } => "chat:PlanReview",
@@ -112,7 +122,8 @@ impl SseEvent {
             | SseEvent::PermissionRequest { session_id, .. }
             | SseEvent::PlanReviewRequest { session_id, .. }
             | SseEvent::TitleUpdated { session_id, .. }
-            | SseEvent::SteerQueueUpdated { session_id, .. } => Some(session_id),
+            | SseEvent::SteerQueueUpdated { session_id, .. }
+            | SseEvent::FollowUpQueueUpdated { session_id, .. } => Some(session_id),
             _ => None,
         }
     }
