@@ -179,12 +179,12 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
             }
 
             // Set up progress channel -- forward TurnEvents via the EventSink.
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, mut rx) = crate::chat::TurnEventSender::channel();
             let sink_progress = Arc::clone(&sink_inner);
             let run_id_progress = run_id_clone.clone();
             let session_id_progress = sid_clone.0.clone();
             let progress_task = tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
+                while let Some((event, child_session_id)) = rx.recv().await {
                     // Intercept AskUser events.
                     if let TurnEvent::UserInteractionRequest {
                         ref interaction_id,
@@ -252,8 +252,15 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                         );
                     }
 
-                    // Forward as generic progress event.
-                    sink_progress.emit_progress(&run_id_progress, &event);
+                    // Forward as generic progress event, attributed to the
+                    // originating sub-agent session when present.
+                    sink_progress.emit_progress(
+                        &run_id_progress,
+                        &event,
+                        child_session_id
+                            .as_ref()
+                            .map(y_core::types::SessionId::as_str),
+                    );
                 }
             });
 
