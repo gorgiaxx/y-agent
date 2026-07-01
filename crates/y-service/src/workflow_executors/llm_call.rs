@@ -70,6 +70,7 @@ impl TaskExecutor for LlmCallExecutor {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,

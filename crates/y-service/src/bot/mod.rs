@@ -143,6 +143,7 @@ impl BotService {
             max_tool_calls: usize::MAX,
             tool_definitions: tool_defs,
             tool_calling_mode,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages: prepared.history.clone(),
             provider_id: None,
             preferred_models: vec![],

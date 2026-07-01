@@ -450,6 +450,29 @@ impl AgentDelegator for AgentPool {
                 ),
             })?;
 
+        // Extract `_result_schema` from the delegation input (set by
+        // `TaskDelegationOrchestrator` when the caller provides a
+        // `result_schema`). When present, it overrides the agent's
+        // `response_format` to enforce JSON Schema output at the API level
+        // (for providers that support it). The orchestrator also validates
+        // the result post-hoc as a fallback.
+        let schema_override = input.get("_result_schema").map(|schema| {
+            y_core::provider::ResponseFormat::JsonSchema {
+                name: "task_result".to_string(),
+                schema: schema.clone(),
+            }
+        });
+
+        // Resolve the agent's configured response_format (if any). When a
+        // schema override is present (from `_result_schema` in the input), it
+        // takes precedence.
+        let base_response_format = definition.resolved_response_format().map_err(|e| {
+            DelegationError::DelegationFailed {
+                message: format!("invalid response_format for agent '{agent_name}': {e}"),
+            }
+        })?;
+        let response_format = schema_override.or(base_response_format);
+
         let config = AgentRunConfig {
             agent_name: definition.id.clone(),
             system_prompt: definition.system_prompt.clone(),
@@ -468,11 +491,7 @@ impl AgentDelegator for AgentPool {
             trust_tier: Some(definition.trust_tier),
             trace_id: None,
             prune_tool_history: definition.prune_tool_history,
-            response_format: definition.resolved_response_format().map_err(|e| {
-                DelegationError::DelegationFailed {
-                    message: format!("invalid response_format for agent '{agent_name}': {e}"),
-                }
-            })?,
+            response_format,
         };
 
         // Register for observability before execution.

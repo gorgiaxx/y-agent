@@ -496,6 +496,7 @@ impl PlanOrchestrator {
             max_tool_calls: settings.max_tool_calls,
             tool_definitions: tool_defs,
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages,
             provider_id: None,
             preferred_models: settings.preferred_models.clone(),
@@ -527,6 +528,15 @@ impl PlanOrchestrator {
                 .map_err(|e| map_plan_agent_error("plan-writer", e))?;
 
         emit_subagent_completed(container, child_uuid, "plan-writer", true);
+
+        // Persist the plan-writer's transcript to its child session for drill-in.
+        crate::chat::ChatService::persist_subagent_turn(
+            container,
+            &child_session.id,
+            &exec_config.user_query,
+            &result,
+        )
+        .await;
 
         // Parse the JSON output from the plan-writer response.
         let json_text = extract_json_from_response(&result.content);
@@ -1883,6 +1893,17 @@ impl PlanOrchestrator {
                 .await
                 .map_err(|e| map_plan_agent_error(&phase_name, e))?;
 
+        // Persist the phase's own transcript to its child session so it can be
+        // opened as a drill-in sub-chat, rendered by the same pipeline as the
+        // main chat.
+        crate::chat::ChatService::persist_subagent_turn(
+            container,
+            &child_session.id,
+            &exec_config.user_query,
+            &result,
+        )
+        .await;
+
         emit_subagent_completed(container, child_uuid, PHASE_EXECUTOR_AGENT_ID, true);
 
         Ok(result.content)
@@ -1989,8 +2010,9 @@ fn emit_subagent_completed(
 /// Best-effort repair of malformed JSON from LLM output.
 ///
 /// Handles common issues: trailing commas before `]`/`}`, single-line
-/// `// ...` comments, unescaped control characters in strings, and
-/// truncated output (unclosed brackets/braces).
+/// `// ...` comments, unescaped control characters in strings, invalid
+/// escape sequences inside strings (e.g. a regex `\d` or a Windows path
+/// `C:\Users`), and truncated output (unclosed brackets/braces).
 fn repair_json(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut in_string = false;
@@ -2003,6 +2025,38 @@ fn repair_json(input: &str) -> String {
         let ch = chars[i];
 
         if in_string {
+            if ch == '\\' {
+                // A backslash begins an escape sequence. Consume it atomically:
+                // preserve valid escapes, and repair invalid ones (e.g. a regex
+                // `\d` or a Windows path `C:\Users`) by escaping the lone
+                // backslash. This keeps the output lexically valid JSON and
+                // ensures escaped quotes below are never seen as terminators.
+                match chars.get(i + 1).copied() {
+                    Some(esc @ ('"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't')) => {
+                        out.push('\\');
+                        out.push(esc);
+                        prev_char = '\0';
+                        i += 2;
+                        continue;
+                    }
+                    Some('u')
+                        if i + 6 <= len
+                            && chars[i + 2..i + 6].iter().all(char::is_ascii_hexdigit) =>
+                    {
+                        out.extend(&chars[i..i + 6]);
+                        prev_char = '\0';
+                        i += 6;
+                        continue;
+                    }
+                    _ => {
+                        out.push('\\');
+                        out.push('\\');
+                        prev_char = '\0';
+                        i += 1;
+                        continue;
+                    }
+                }
+            }
             if ch == '"' && prev_char != '\\' {
                 // Heuristic: look ahead past whitespace. If the next
                 // non-whitespace character is a JSON structural token
@@ -2089,14 +2143,22 @@ fn repair_json(input: &str) -> String {
         i += 1;
     }
 
-    // Close unclosed brackets/braces for truncated output.
+    // Close unclosed brackets/braces for truncated output. Strings are now
+    // fully escaped, so skip escape sequences atomically to avoid mistaking an
+    // escaped quote (`\"`) or backslash (`\\`) for a string boundary.
     let mut open_braces: i32 = 0;
     let mut open_brackets: i32 = 0;
     let mut scan_in_string = false;
-    let mut scan_prev = '\0';
-    for c in out.chars() {
+    let scan_chars: Vec<char> = out.chars().collect();
+    let mut k = 0;
+    while k < scan_chars.len() {
+        let c = scan_chars[k];
         if scan_in_string {
-            if c == '"' && scan_prev != '\\' {
+            if c == '\\' {
+                k += 2;
+                continue;
+            }
+            if c == '"' {
                 scan_in_string = false;
             }
         } else {
@@ -2109,7 +2171,7 @@ fn repair_json(input: &str) -> String {
                 _ => {}
             }
         }
-        scan_prev = c;
+        k += 1;
     }
     for _ in 0..open_brackets {
         out.push(']');
@@ -2587,6 +2649,7 @@ fn build_phase_execution_config(
         max_tool_calls: settings.max_tool_calls,
         tool_definitions,
         tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+        tool_dialect: y_core::provider::ToolDialect::default(),
         messages,
         provider_id: None,
         preferred_models: settings.preferred_models.clone(),
@@ -3235,6 +3298,7 @@ pub async fn assess_complexity(
         max_tool_calls: usize::MAX,
         tool_definitions: vec![],
         tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+        tool_dialect: y_core::provider::ToolDialect::default(),
         messages,
         provider_id: provider_id.map(String::from),
         preferred_models: vec![],
@@ -4409,6 +4473,104 @@ mod tests {
         let repaired = repair_json(input);
         let parsed: serde_json::Result<serde_json::Value> = serde_json::from_str(&repaired);
         assert!(parsed.is_ok(), "repaired JSON should parse: {repaired}");
+    }
+
+    #[test]
+    fn test_repair_json_escapes_invalid_escape_in_regex() {
+        // Reproduces the reported failure: the plan-writer emits a regex
+        // containing `\d`, `\s`, `\w` -- invalid JSON escapes that make
+        // serde_json fail with "invalid escape".
+        let input = r#"{"overview": "match \d+\s*\w tokens"}"#;
+        assert!(
+            serde_json::from_str::<serde_json::Value>(input).is_err(),
+            "precondition: raw input must be invalid JSON"
+        );
+        let repaired = repair_json(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(
+            parsed["overview"].as_str().unwrap(),
+            r#"match \d+\s*\w tokens"#
+        );
+    }
+
+    #[test]
+    fn test_repair_json_escapes_windows_path() {
+        // Backslashes before non-escape chars in a path are repaired. (Segments
+        // starting with b/f/n/r/t/u would be valid escapes and thus transformed,
+        // which is unavoidable without semantic knowledge.)
+        let input = r#"{"path": "C:\Users\Admin\Data"}"#;
+        let repaired = repair_json(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(parsed["path"].as_str().unwrap(), r#"C:\Users\Admin\Data"#);
+    }
+
+    #[test]
+    fn test_repair_json_preserves_valid_escapes() {
+        let input = r#"{"s": "a\nb\tc\"d\\e\/fé"}"#;
+        let repaired = repair_json(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(parsed["s"].as_str().unwrap(), "a\nb\tc\"d\\e/f\u{00e9}");
+    }
+
+    #[test]
+    fn test_repair_json_preserves_escaped_backslash_before_terminator() {
+        // A string ending in an escaped backslash must not swallow the
+        // closing quote.
+        let input = r#"{"a": "path\\", "b": 1}"#;
+        let repaired = repair_json(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(parsed["a"].as_str().unwrap(), r"path\");
+        assert_eq!(parsed["b"].as_i64().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_repair_json_escapes_invalid_unicode_escape() {
+        // `\u` not followed by four hex digits is an invalid escape.
+        let input = r#"{"s": "bad \u12 escape"}"#;
+        let repaired = repair_json(input);
+        let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(parsed["s"].as_str().unwrap(), r#"bad \u12 escape"#);
+    }
+
+    #[test]
+    fn test_repair_json_then_parse_plan_with_regex_in_description() {
+        let raw = concat!(
+            "```json\n",
+            "{\n",
+            r#"  "plan_title": "Add validation","#,
+            "\n",
+            r#"  "plan_file": "","#,
+            "\n",
+            r#"  "tasks": [{"#,
+            "\n",
+            r#"    "task_id": "p1","#,
+            "\n",
+            r#"    "title": "Regex","#,
+            "\n",
+            r#"    "objective": "Validate with pattern \d{3}-\d{4} and \w+","#,
+            "\n",
+            r#"    "depends_on": [],"#,
+            "\n",
+            r#"    "status": "pending","#,
+            "\n",
+            r#"    "estimated_iterations": 10,"#,
+            "\n",
+            r#"    "key_files": [],"#,
+            "\n",
+            r#"    "acceptance_criteria": []"#,
+            "\n",
+            "  }]\n",
+            "}\n",
+            "```",
+        );
+        let extracted = extract_json_from_response(raw);
+        let repaired = repair_json(&extracted);
+        let plan = parse_structured_plan(&repaired).unwrap();
+        assert_eq!(plan.tasks.len(), 1);
+        assert_eq!(
+            plan.tasks[0].description,
+            r#"Validate with pattern \d{3}-\d{4} and \w+"#
+        );
     }
 
     #[test]

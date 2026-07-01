@@ -2,7 +2,7 @@
 
 use y_core::provider::ToolCallingMode;
 use y_core::types::{Message, Role, ToolCallRequest};
-use y_tools::{format_tool_result, strip_tool_call_blocks, ParseResult};
+use y_tools::{format_tool_result_dialect, strip_tool_call_blocks, ParseResult};
 
 use crate::container::ServiceContainer;
 
@@ -222,7 +222,12 @@ pub(crate) async fn handle_prompt_based_tool_calls(
 
             let result_value: serde_json::Value = serde_json::from_str(&result_content)
                 .unwrap_or(serde_json::Value::String(result_content));
-            result_blocks.push(format_tool_result(&tc.name, tool_success, &result_value));
+            result_blocks.push(format_tool_result_dialect(
+                &tc.name,
+                tool_success,
+                &result_value,
+                config.tool_dialect,
+            ));
         }
 
         let results_text = result_blocks.join("\n");

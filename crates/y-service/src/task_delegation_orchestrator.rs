@@ -5,8 +5,110 @@
 //! routes them through the `AgentDelegator` (same pattern as `ToolSearch`
 //! / `ToolSearchOrchestrator`).
 
+use tokio::sync::Mutex;
+use y_agent::AgentRegistry;
 use y_core::agent::{ContextStrategyHint, DelegationError};
 use y_core::tool::{ToolError, ToolOutput};
+
+/// Agent that receives task delegations whose requested agent is not
+/// registered. Seeded as a user-tier built-in, so it is always resolvable.
+const FALLBACK_AGENT: &str = "general-purpose";
+
+// ---------------------------------------------------------------------------
+// Schema-validated yield helpers
+// ---------------------------------------------------------------------------
+
+/// Result of validating an agent's text output against a JSON Schema.
+struct ValidatedJson {
+    /// The extracted JSON value (validated or fallback).
+    json: serde_json::Value,
+    /// Whether the JSON passed schema validation.
+    is_valid: bool,
+    /// Optional warning message when validation failed.
+    warning: Option<String>,
+}
+
+/// Parse the agent's text output as JSON and validate it against `schema`.
+///
+/// Tries three strategies in order:
+/// 1. Direct `serde_json::from_str` — model returned pure JSON.
+/// 2. Extract JSON from a markdown code block (```json ... ```).
+/// 3. Fallback: wrap the raw text in a JSON object with a `_warning` field.
+///
+/// Schema validation uses the `jsonschema` crate. A schema that fails to
+/// compile is treated as "no validation" (the JSON is returned as-is).
+fn validate_and_extract_json(text: &str, schema: &serde_json::Value) -> ValidatedJson {
+    let compiled = jsonschema::validator_for(schema).ok();
+
+    // Strategy 1: direct parse.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+        let is_valid = compiled.as_ref().is_none_or(|v| v.is_valid(&value));
+        if is_valid {
+            return ValidatedJson {
+                json: value,
+                is_valid: true,
+                warning: None,
+            };
+        }
+    }
+
+    // Strategy 2: extract from markdown code block.
+    if let Some(json_str) = extract_json_from_codeblock(text) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+            let is_valid = compiled.as_ref().is_none_or(|v| v.is_valid(&value));
+            if is_valid {
+                return ValidatedJson {
+                    json: value,
+                    is_valid: true,
+                    warning: None,
+                };
+            }
+        }
+    }
+
+    // Strategy 3: fallback — wrap raw text with a warning.
+    ValidatedJson {
+        json: serde_json::json!({
+            "_warning": "agent response did not match the requested schema",
+            "raw_text": text,
+        }),
+        is_valid: false,
+        warning: Some(
+            "agent response did not match the requested result_schema; \
+             raw text wrapped in fallback JSON"
+                .into(),
+        ),
+    }
+}
+
+/// Extract the first JSON code block from a markdown string.
+///
+/// Handles ` ```json ` and bare ` ``` ` fenced blocks.
+fn extract_json_from_codeblock(text: &str) -> Option<String> {
+    let json_fence = "```json";
+    let generic_fence = "```";
+
+    // Try ```json fence first.
+    if let Some(start) = text.find(json_fence) {
+        let after_fence = start + json_fence.len();
+        if let Some(end) = text[after_fence..].find(generic_fence) {
+            return Some(text[after_fence..after_fence + end].trim().to_string());
+        }
+    }
+
+    // Try generic ``` fence (only if the content looks like JSON).
+    if let Some(start) = text.find(generic_fence) {
+        let after_fence = start + generic_fence.len();
+        if let Some(end) = text[after_fence..].find(generic_fence) {
+            let inner = text[after_fence..after_fence + end].trim();
+            if inner.starts_with('{') || inner.starts_with('[') {
+                return Some(inner.to_string());
+            }
+        }
+    }
+
+    None
+}
 
 /// Orchestrates task delegation: parses the LLM's `task` tool arguments
 /// and delegates to the appropriate agent via `AgentDelegator`.
@@ -16,14 +118,17 @@ impl TaskDelegationOrchestrator {
     /// Handle a `task` tool call by delegating to the named agent.
     ///
     /// Parses `arguments` for `agent_name` (required), `prompt` (required),
-    /// and optional `mode` / `context_strategy`. Delegates via the provided
-    /// `AgentDelegator` and maps the result to a `ToolOutput`.
+    /// and optional `mode` / `context_strategy`. When the requested agent is
+    /// not present in `agent_registry`, the delegation is routed to the
+    /// `general-purpose` agent instead of failing the tool call. Delegates via
+    /// the provided `AgentDelegator` and maps the result to a `ToolOutput`.
     pub async fn handle(
         arguments: &serde_json::Value,
         delegator: &dyn y_core::agent::AgentDelegator,
+        agent_registry: &Mutex<AgentRegistry>,
         session_id: Option<uuid::Uuid>,
     ) -> Result<ToolOutput, ToolError> {
-        let agent_name = arguments
+        let requested_agent = arguments
             .get("agent_name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::ValidationError {
@@ -53,41 +158,104 @@ impl TaskDelegationOrchestrator {
             })?
             .unwrap_or_default();
 
-        // Build structured input for the agent.
-        let input = serde_json::json!({
-            "task": prompt,
-            "mode": mode,
-        });
+        // Resolve the effective agent. When the LLM requests an agent that is
+        // not registered, route the delegation to the general-purpose agent
+        // rather than failing the tool call. The registry is shared with the
+        // delegator's pool, so a hit here guarantees the pool resolves the same
+        // definition -- and the reroute produces a single clean subagent trace
+        // instead of a spurious failed one.
+        let effective_agent = {
+            let registry = agent_registry.lock().await;
+            if registry.get(requested_agent).is_some() {
+                requested_agent.to_string()
+            } else {
+                FALLBACK_AGENT.to_string()
+            }
+        };
+
+        let mut warnings = Vec::new();
+        if effective_agent != requested_agent {
+            tracing::warn!(
+                requested_agent,
+                fallback_agent = FALLBACK_AGENT,
+                "requested agent is not registered; routing task to the general-purpose agent",
+            );
+            warnings.push(format!(
+                "requested agent '{requested_agent}' is not registered; \
+                 routed to '{FALLBACK_AGENT}'"
+            ));
+        }
+
+        // Extract optional result_schema for structured output validation.
+        let result_schema = arguments.get("result_schema").cloned();
+
+        // Build structured input for the agent. When a result_schema is
+        // provided, it is passed as `_result_schema` so the AgentPool can
+        // set `response_format` on the agent's run config, enabling
+        // API-level structured output enforcement for providers that
+        // support it (OpenAI, Anthropic).
+        let input = if let Some(ref schema) = result_schema {
+            serde_json::json!({
+                "task": prompt,
+                "mode": mode,
+                "_result_schema": schema,
+            })
+        } else {
+            serde_json::json!({
+                "task": prompt,
+                "mode": mode,
+            })
+        };
 
         let result = delegator
-            .delegate(agent_name, input, context_strategy, session_id)
+            .delegate(&effective_agent, input, context_strategy, session_id)
             .await
-            .map_err(|e| match e {
-                DelegationError::AgentNotFound { name } => ToolError::NotFound { name },
+            .map_err(|e| match &e {
+                DelegationError::AgentNotFound { name } => {
+                    ToolError::NotFound { name: name.clone() }
+                }
                 DelegationError::Timeout { duration_ms } => ToolError::Timeout {
                     timeout_secs: duration_ms / 1000,
                 },
                 DelegationError::DelegationFailed { message } => ToolError::RuntimeError {
-                    name: agent_name.to_string(),
-                    message,
+                    name: effective_agent.clone(),
+                    message: message.clone(),
                 },
                 DelegationError::DepthExhausted { depth } => ToolError::RuntimeError {
-                    name: agent_name.to_string(),
+                    name: effective_agent.clone(),
                     message: format!("delegation depth exhausted at depth {depth}"),
                 },
             })?;
 
-        // The content returned to the LLM is the delegated agent's output only.
-        // Diagnostics fields (model, tokens, duration) are recorded separately
-        // via the trace pipeline in `DiagnosticsAgentDelegator`; surfacing them
-        // here would pollute the conversation context with non-semantic noise.
+        // When a result_schema was requested, validate the agent's output
+        // as JSON against the schema. This lets the parent agent consume
+        // typed JSON directly instead of parsing prose.
+        let content = if let Some(ref schema) = result_schema {
+            let validated = validate_and_extract_json(&result.text, schema);
+            if let Some(warning) = validated.warning {
+                warnings.push(warning);
+            }
+            serde_json::json!({
+                "agent_name": effective_agent,
+                "output": validated.json,
+                "schema_validated": validated.is_valid,
+            })
+        } else {
+            // The content returned to the LLM is the delegated agent's
+            // output only. Diagnostics fields (model, tokens, duration) are
+            // recorded separately via the trace pipeline in
+            // `DiagnosticsAgentDelegator`; surfacing them here would pollute
+            // the conversation context with non-semantic noise.
+            serde_json::json!({
+                "agent_name": effective_agent,
+                "output": result.text,
+            })
+        };
+
         Ok(ToolOutput {
             success: true,
-            content: serde_json::json!({
-                "agent_name": agent_name,
-                "output": result.text,
-            }),
-            warnings: vec![],
+            content,
+            warnings,
             metadata: serde_json::json!({
                 "action": "delegate",
                 "model_used": result.model_used,
@@ -105,6 +273,17 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use y_core::agent::{AgentDelegator, ContextStrategyHint, DelegationError, DelegationOutput};
+
+    /// Registry seeded with the built-in agents (includes `agent-architect`,
+    /// `tool-engineer`, and the `general-purpose` fallback).
+    fn test_registry() -> Mutex<AgentRegistry> {
+        Mutex::new(AgentRegistry::new())
+    }
+
+    /// Registry with no agents at all -- not even the fallback is resolvable.
+    fn empty_registry() -> Mutex<AgentRegistry> {
+        Mutex::new(AgentRegistry::empty())
+    }
 
     /// Mock delegator that returns a fixed successful response.
     #[derive(Debug)]
@@ -201,7 +380,8 @@ mod tests {
             "prompt": "Design a disk info agent"
         });
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None)
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None)
             .await
             .unwrap();
 
@@ -238,7 +418,8 @@ mod tests {
             "context_strategy": "summary"
         });
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None)
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None)
             .await
             .unwrap();
 
@@ -253,7 +434,8 @@ mod tests {
         };
         let args = serde_json::json!({"prompt": "do something"});
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None).await;
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -269,7 +451,8 @@ mod tests {
         };
         let args = serde_json::json!({"agent_name": "agent-architect"});
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None).await;
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -279,7 +462,61 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_agent_not_found() {
+    async fn test_handle_unknown_agent_falls_back_to_general_purpose() {
+        // The delegator only accepts the fallback agent, proving the
+        // orchestrator rerouted the unregistered request to general-purpose.
+        let delegator = MockDelegator {
+            expected_agent: FALLBACK_AGENT.to_string(),
+        };
+        let args = serde_json::json!({
+            "agent_name": "nonexistent-agent",
+            "prompt": "do something"
+        });
+
+        // Built-in registry: "nonexistent-agent" is absent, general-purpose present.
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None)
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.content["agent_name"], FALLBACK_AGENT);
+        // The reroute is surfaced to the LLM as a warning so it can adjust.
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("nonexistent-agent") && w.contains(FALLBACK_AGENT)),
+            "expected a warning naming the requested and fallback agents, got {:?}",
+            result.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_registered_agent_no_fallback_warning() {
+        let delegator = MockDelegator {
+            expected_agent: "agent-architect".to_string(),
+        };
+        let args = serde_json::json!({
+            "agent_name": "agent-architect",
+            "prompt": "do something"
+        });
+
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None)
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert_eq!(result.content["agent_name"], "agent-architect");
+        assert!(result.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_agent_not_found_when_fallback_unresolvable() {
+        // With an empty registry neither the requested agent nor the
+        // general-purpose fallback resolves; the delegator then rejects the
+        // fallback, so the tool call surfaces NotFound rather than succeeding.
         let delegator = MockDelegator {
             expected_agent: "agent-architect".to_string(),
         };
@@ -288,7 +525,8 @@ mod tests {
             "prompt": "do something"
         });
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None).await;
+        let registry = empty_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ToolError::NotFound { .. }));
@@ -302,7 +540,8 @@ mod tests {
             "prompt": "do something"
         });
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None).await;
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -319,7 +558,8 @@ mod tests {
             "prompt": "do something"
         });
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None).await;
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ToolError::Timeout { .. }));
@@ -333,7 +573,8 @@ mod tests {
             "prompt": "do something"
         });
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None).await;
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
 
         assert!(result.is_err());
         assert!(matches!(
@@ -353,12 +594,234 @@ mod tests {
             "context_strategy": "invalid_value"
         });
 
-        let result = TaskDelegationOrchestrator::handle(&args, &delegator, None).await;
+        let registry = test_registry();
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
 
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
             ToolError::ValidationError { .. }
         ));
+    }
+
+    // --- Schema-validated yield tests ---
+
+    #[test]
+    fn test_validate_and_extract_json_direct_parse() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" },
+                "count": { "type": "integer" }
+            },
+            "required": ["name"]
+        });
+        let text = r#"{"name": "test", "count": 42}"#;
+        let result = validate_and_extract_json(text, &schema);
+        assert!(result.is_valid);
+        assert!(result.warning.is_none());
+        assert_eq!(result.json["name"], "test");
+        assert_eq!(result.json["count"], 42);
+    }
+
+    #[test]
+    fn test_validate_and_extract_json_codeblock() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "result": { "type": "string" }
+            },
+            "required": ["result"]
+        });
+        let text = "Here is the result:\n```json\n{\"result\": \"success\"}\n```\nDone.";
+        let result = validate_and_extract_json(text, &schema);
+        assert!(result.is_valid);
+        assert!(result.warning.is_none());
+        assert_eq!(result.json["result"], "success");
+    }
+
+    #[test]
+    fn test_validate_and_extract_json_generic_codeblock() {
+        let schema = serde_json::json!({
+            "type": "array",
+            "items": { "type": "string" }
+        });
+        let text = "```\n[\"a\", \"b\", \"c\"]\n```";
+        let result = validate_and_extract_json(text, &schema);
+        assert!(result.is_valid);
+        assert_eq!(result.json.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_validate_and_extract_json_schema_mismatch() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string" }
+            },
+            "required": ["name"]
+        });
+        let text = r#"{"wrong_field": 123}"#;
+        let result = validate_and_extract_json(text, &schema);
+        assert!(!result.is_valid);
+        assert!(result.warning.is_some());
+        assert!(result.json["_warning"].is_string());
+        assert!(result.json["raw_text"].is_string());
+    }
+
+    #[test]
+    fn test_validate_and_extract_json_not_json() {
+        let schema = serde_json::json!({"type": "object"});
+        let text = "This is just plain text, no JSON here.";
+        let result = validate_and_extract_json(text, &schema);
+        assert!(!result.is_valid);
+        assert!(result.warning.is_some());
+        assert!(result.json["raw_text"]
+            .as_str()
+            .unwrap()
+            .contains("plain text"));
+    }
+
+    #[test]
+    fn test_validate_and_extract_json_uncompilable_schema() {
+        // A malformed schema that fails to compile -- validation is skipped,
+        // and any valid JSON is accepted as-is.
+        let bad_schema = serde_json::json!("not an object");
+        let text = r#"{"any": "value"}"#;
+        let result = validate_and_extract_json(text, &bad_schema);
+        // Schema compilation fails, so is_valid is true (no validation applied).
+        assert!(result.is_valid);
+        assert_eq!(result.json["any"], "value");
+    }
+
+    #[test]
+    fn test_extract_json_from_codeblock_json_fence() {
+        let text = "```json\n{\"key\": \"value\"}\n```";
+        let extracted = extract_json_from_codeblock(text);
+        assert!(extracted.is_some());
+        assert_eq!(extracted.unwrap(), r#"{"key": "value"}"#);
+    }
+
+    #[test]
+    fn test_extract_json_from_codeblock_generic_fence() {
+        let text = "```\n[1, 2, 3]\n```";
+        let extracted = extract_json_from_codeblock(text);
+        assert!(extracted.is_some());
+        assert_eq!(extracted.unwrap(), "[1, 2, 3]");
+    }
+
+    #[test]
+    fn test_extract_json_from_codeblock_no_fence() {
+        let text = "just text";
+        let extracted = extract_json_from_codeblock(text);
+        assert!(extracted.is_none());
+    }
+
+    #[test]
+    fn test_extract_json_from_codeblock_non_json_content() {
+        let text = "```\nplain text\n```";
+        let extracted = extract_json_from_codeblock(text);
+        assert!(extracted.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_handle_with_result_schema_valid() {
+        let delegator = SchemaMockDelegator {
+            response: r#"{"name": "test", "value": 42}"#.to_string(),
+        };
+        let registry = test_registry();
+        let args = serde_json::json!({
+            "agent_name": "agent-architect",
+            "prompt": "return structured data",
+            "result_schema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "value": { "type": "integer" }
+                },
+                "required": ["name", "value"]
+            }
+        });
+
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.success);
+        assert!(output.content["schema_validated"].as_bool().unwrap());
+        assert_eq!(output.content["output"]["name"], "test");
+        assert_eq!(output.content["output"]["value"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_handle_with_result_schema_invalid() {
+        let delegator = SchemaMockDelegator {
+            response: "This is not JSON at all.".to_string(),
+        };
+        let registry = test_registry();
+        let args = serde_json::json!({
+            "agent_name": "agent-architect",
+            "prompt": "return structured data",
+            "result_schema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                },
+                "required": ["name"]
+            }
+        });
+
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.success);
+        assert!(!output.content["schema_validated"].as_bool().unwrap());
+        assert!(output.content["output"]["_warning"].is_string());
+        assert!(!output.warnings.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_without_result_schema() {
+        let delegator = SchemaMockDelegator {
+            response: "Plain text response".to_string(),
+        };
+        let registry = test_registry();
+        let args = serde_json::json!({
+            "agent_name": "agent-architect",
+            "prompt": "do something"
+        });
+
+        let result = TaskDelegationOrchestrator::handle(&args, &delegator, &registry, None).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.success);
+        // Without schema, output is raw text string, not validated.
+        assert_eq!(output.content["output"], "Plain text response");
+        assert!(output.content.get("schema_validated").is_none());
+    }
+
+    /// Mock delegator that returns a configurable text response.
+    #[derive(Debug)]
+    struct SchemaMockDelegator {
+        response: String,
+    }
+
+    #[async_trait]
+    impl AgentDelegator for SchemaMockDelegator {
+        async fn delegate(
+            &self,
+            _agent_name: &str,
+            _input: serde_json::Value,
+            _context_strategy: ContextStrategyHint,
+            _session_id: Option<uuid::Uuid>,
+        ) -> Result<DelegationOutput, DelegationError> {
+            Ok(DelegationOutput {
+                text: self.response.clone(),
+                tokens_used: 10,
+                input_tokens: 5,
+                output_tokens: 5,
+                model_used: "test-model".to_string(),
+                duration_ms: 1,
+            })
+        }
     }
 }

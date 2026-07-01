@@ -19,8 +19,8 @@ use crate::container::ServiceContainer;
 
 use super::{
     llm, pruning, result, tool_handling, AgentExecutionConfig, AgentExecutionError,
-    AgentExecutionResult, AgentService, FinalResultParams, InjectedSteer, ToolExecContext,
-    TurnEventSender,
+    AgentExecutionResult, AgentService, FinalResultParams, InjectedSteer, LlmIterationData,
+    ToolExecContext, TurnEvent, TurnEventSender,
 };
 
 pub(crate) struct ParentSubagentObservation {
@@ -233,6 +233,49 @@ fn execution_input_snapshot(config: &AgentExecutionConfig) -> serde_json::Value 
         .map_or(serde_json::Value::Null, |m| {
             serde_json::Value::String(m.content.clone())
         })
+}
+
+/// Materialize partial streaming content captured before an LLM failure into an
+/// assistant message so it flows through `handle_llm_error` →
+/// `persist_llm_error_partial_state` and survives on the display transcript.
+///
+/// Without this, text streamed before a mid-stream 504 is silently lost --
+/// the display shows only the user message, and a retry wipes the entire turn.
+fn materialize_partial_streaming(
+    ctx: &mut ToolExecContext,
+    partial_streaming: &mut llm::PartialStreamingContent,
+) {
+    if !partial_streaming.content.is_empty() {
+        let partial_text = std::mem::take(&mut partial_streaming.content);
+        ctx.accumulated_content.push_str(&partial_text);
+        ctx.iteration_texts.push(partial_text.clone());
+
+        let mut partial_meta = serde_json::json!({});
+        if !partial_streaming.reasoning.is_empty() {
+            let reasoning = std::mem::take(&mut partial_streaming.reasoning);
+            partial_meta["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+            ctx.iteration_reasonings.push(Some(reasoning));
+            ctx.iteration_reasoning_durations_ms.push(Some(0));
+        }
+
+        let partial_msg = y_core::types::Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: partial_text,
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: partial_meta,
+        };
+        ctx.working_history.push(partial_msg.clone());
+        ctx.new_messages.push(partial_msg);
+    } else if !partial_streaming.reasoning.is_empty() {
+        // Reasoning without content -- still record per-iteration state so
+        // iteration_reasonings stays parallel with iteration_texts.
+        ctx.iteration_reasonings
+            .push(Some(std::mem::take(&mut partial_streaming.reasoning)));
+        ctx.iteration_reasoning_durations_ms.push(Some(0));
+    }
 }
 
 /// Inner execution loop, optionally running inside a `DIAGNOSTICS_CTX` scope.
@@ -494,44 +537,21 @@ pub(crate) async fn execute_inner(
 
                 // Fallback: even when tool_calling_mode is Native, some
                 // models/providers may embed tool calls in text output
-                // instead of using the native API (e.g. model doesn't
-                // support function calling, or the provider strips tool
-                // definitions). Always attempt prompt-based parsing as
-                // a safety net.
-                if let Some(ref text) = response.content {
-                    tracing::debug!(
-                        agent = %config.agent_name,
-                        content_len = text.len(),
-                        has_tool_call_tag = text.contains("<tool_call>"),
-                        "fallback: attempting prompt-based tool call parsing"
-                    );
-                    let parse_result = parse_tool_calls(text);
-                    tracing::debug!(
-                        agent = %config.agent_name,
-                        parsed_tool_calls = parse_result.tool_calls.len(),
-                        warnings = ?parse_result.warnings,
-                        "fallback: parse_tool_calls result"
-                    );
-                    if !parse_result.tool_calls.is_empty() {
-                        // Track per-iteration reasoning before delegating to tool handling.
-                        ctx.iteration_reasonings
-                            .push(response.reasoning_content.clone());
-                        ctx.iteration_reasoning_durations_ms
-                            .push(iter_reasoning_duration_ms);
-                        tool_handling::handle_prompt_based_tool_calls(
-                            container,
-                            config,
-                            &response,
-                            &parse_result,
-                            text,
-                            progress.as_ref(),
-                            &iter_data,
-                            &mut ctx,
-                            iter_ctx_window,
-                        )
-                        .await;
-                        continue;
-                    }
+                // instead of using the native API. Always attempt
+                // prompt-based parsing as a safety net.
+                if try_fallback_prompt_based_tool_calls(
+                    container,
+                    config,
+                    &response,
+                    progress.as_ref(),
+                    &iter_data,
+                    &mut ctx,
+                    iter_ctx_window,
+                    iter_reasoning_duration_ms,
+                )
+                .await
+                {
+                    continue;
                 }
 
                 // No tool calls. If steers are queued, fold this response into
@@ -558,6 +578,25 @@ pub(crate) async fn execute_inner(
                     continue;
                 }
 
+                // No tool calls, no steers. Check follow-up queue: if the
+                // user enqueued messages while the run was streaming (but
+                // intended for after the run stops), inject them and continue
+                // the loop for another LLM call.
+                if drain_and_inject_follow_ups(
+                    container,
+                    progress.as_ref(),
+                    &response,
+                    &iter_data,
+                    iter_ctx_window,
+                    iter_reasoning_duration_ms,
+                    &mut ctx,
+                    &config.agent_name,
+                )
+                .await
+                {
+                    continue;
+                }
+
                 // No tool calls -- final text response.
                 return result::build_final_result(
                     container,
@@ -577,16 +616,7 @@ pub(crate) async fn execute_inner(
                 .await;
             }
             Err(e) => {
-                if !partial_streaming.content.is_empty() {
-                    ctx.accumulated_content.push_str(&partial_streaming.content);
-                    ctx.iteration_texts
-                        .push(std::mem::take(&mut partial_streaming.content));
-                }
-                if !partial_streaming.reasoning.is_empty() {
-                    ctx.iteration_reasonings
-                        .push(Some(std::mem::take(&mut partial_streaming.reasoning)));
-                    ctx.iteration_reasoning_durations_ms.push(Some(0));
-                }
+                materialize_partial_streaming(&mut ctx, &mut partial_streaming);
                 let elapsed_ms = u64::try_from(llm_start.elapsed().as_millis()).unwrap_or(0);
                 let model_name = config.preferred_models.first().cloned().unwrap_or_default();
                 return result::handle_llm_error(
@@ -664,6 +694,61 @@ fn inject_steers(
     }
 }
 
+/// Try to parse prompt-based tool calls from the LLM response text as a
+/// fallback when native tool calls are absent. Returns `true` if tool calls
+/// were found and handled (the loop should continue), `false` otherwise.
+///
+/// Even in `Native` mode, some models/providers embed tool calls in text
+/// output. This function attempts `parse_tool_calls` on the response content
+/// and, if tool calls are found, delegates to `handle_prompt_based_tool_calls`.
+async fn try_fallback_prompt_based_tool_calls(
+    container: &ServiceContainer,
+    config: &AgentExecutionConfig,
+    response: &y_core::provider::ChatResponse,
+    progress: Option<&TurnEventSender>,
+    data: &LlmIterationData,
+    ctx: &mut ToolExecContext,
+    context_window: usize,
+    reasoning_duration_ms: Option<u64>,
+) -> bool {
+    let Some(text) = &response.content else {
+        return false;
+    };
+    tracing::debug!(
+        agent = %config.agent_name,
+        content_len = text.len(),
+        has_tool_call_tag = text.contains("<tool_call>"),
+        "fallback: attempting prompt-based tool call parsing"
+    );
+    let parse_result = parse_tool_calls(text);
+    tracing::debug!(
+        agent = %config.agent_name,
+        parsed_tool_calls = parse_result.tool_calls.len(),
+        warnings = ?parse_result.warnings,
+        "fallback: parse_tool_calls result"
+    );
+    if parse_result.tool_calls.is_empty() {
+        return false;
+    }
+    ctx.iteration_reasonings
+        .push(response.reasoning_content.clone());
+    ctx.iteration_reasoning_durations_ms
+        .push(reasoning_duration_ms);
+    tool_handling::handle_prompt_based_tool_calls(
+        container,
+        config,
+        response,
+        &parse_result,
+        text,
+        progress,
+        data,
+        ctx,
+        context_window,
+    )
+    .await;
+    true
+}
+
 /// Fold a no-tool-call response into history as an intermediate assistant turn,
 /// then inject the given (already-drained) steers. Used at the final boundary so
 /// the loop can continue and the model incorporates the steers (mirrors codex's
@@ -700,6 +785,90 @@ fn fold_response_and_inject_steers(
     ctx.working_history.push(assistant_msg.clone());
     ctx.new_messages.push(assistant_msg);
     inject_steers(progress, ctx, steers);
+}
+
+/// Drain the session's follow-up queue and inject each entry into the
+/// running conversation as a user message after the agent's natural stop.
+///
+/// Returns `true` if follow-ups were injected (the loop should continue),
+/// `false` if the queue was empty (the loop should finalize).
+///
+/// The current LLM response is folded into history as an intermediate
+/// assistant turn before injecting the follow-up user messages.
+async fn drain_and_inject_follow_ups(
+    container: &ServiceContainer,
+    progress: Option<&TurnEventSender>,
+    response: &y_core::provider::ChatResponse,
+    data: &LlmIterationData,
+    context_window: usize,
+    reasoning_duration_ms: Option<u64>,
+    ctx: &mut ToolExecContext,
+    agent_name: &str,
+) -> bool {
+    let follow_ups = crate::ChatService::drain_follow_ups(container, &ctx.session_id).await;
+    if follow_ups.is_empty() {
+        return false;
+    }
+
+    // Emit the current response as an intermediate turn.
+    result::emit_llm_response(
+        progress,
+        response,
+        data,
+        ctx.iteration,
+        vec![],
+        context_window,
+        agent_name,
+    );
+
+    // Fold the response into history as an intermediate turn.
+    let out_content = response.content.as_deref().unwrap_or("").trim();
+    let out_content = if out_content.is_empty() {
+        String::new()
+    } else {
+        format!("{out_content}\n")
+    };
+    ctx.accumulated_content.push_str(&out_content);
+    ctx.iteration_texts.push(out_content.clone());
+    ctx.iteration_tool_counts.push(0);
+    ctx.iteration_reasonings
+        .push(response.reasoning_content.clone());
+    ctx.iteration_reasoning_durations_ms
+        .push(reasoning_duration_ms);
+
+    let assistant_msg = result::build_assistant_msg(response, out_content, vec![]);
+    ctx.working_history.push(assistant_msg.clone());
+    ctx.new_messages.push(assistant_msg);
+
+    // Inject each follow-up as a user message.
+    for fu in &follow_ups {
+        let msg = y_core::types::Message {
+            message_id: y_core::types::generate_message_id(),
+            role: y_core::types::Role::User,
+            content: fu.text.clone(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({
+                "kind": "follow_up",
+                "follow_up_id": fu.id,
+            }),
+        };
+        ctx.working_history.push(msg.clone());
+        ctx.new_messages.push(msg);
+    }
+
+    // Emit a follow-up injected event for each message.
+    if let Some(progress) = progress {
+        for fu in &follow_ups {
+            let _ = progress.send(TurnEvent::FollowUpInjected {
+                follow_up_id: fu.id.clone(),
+                text: fu.text.clone(),
+            });
+        }
+    }
+
+    true
 }
 
 #[cfg(test)]
@@ -764,7 +933,7 @@ mod tests {
     fn inject_steers_appends_user_messages_and_records_boundary() {
         // Two completed iterations already, so the injection boundary is 2.
         let mut ctx = make_test_ctx(SessionId("s".into()), vec!["a\n".into(), "b\n".into()]);
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::chat::TurnEventSender::channel();
         let s1 = crate::chat::SteerMessage::new("steer one".into());
         let s2 = crate::chat::SteerMessage::new("steer two".into());
         let (id1, id2) = (s1.id.clone(), s2.id.clone());
@@ -788,7 +957,7 @@ mod tests {
         assert_eq!(ctx.injected_steers[1].steer_id, id2);
 
         let mut events = Vec::new();
-        while let Ok(ev) = rx.try_recv() {
+        while let Ok((ev, _session_id)) = rx.try_recv() {
             events.push(ev);
         }
         assert_eq!(events.len(), 2);
@@ -830,6 +999,7 @@ mod tests {
             max_tool_calls: usize::MAX,
             tool_definitions: vec![],
             tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages: vec![],
             provider_id: None,
             preferred_models: vec![],
@@ -879,6 +1049,7 @@ mod tests {
             max_tool_calls: 1,
             tool_definitions: vec![],
             tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages: vec![],
             provider_id: None,
             preferred_models: vec![],
@@ -928,6 +1099,7 @@ mod tests {
             max_tool_calls: 1,
             tool_definitions: vec![],
             tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages: vec![],
             provider_id: None,
             preferred_models: vec![],

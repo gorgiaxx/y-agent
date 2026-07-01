@@ -35,6 +35,7 @@ pub(crate) fn build_subagent_system_prompt(
     base_prompt: &str,
     filtered_defs: &[y_core::tool::ToolDefinition],
     tool_calling_mode: ToolCallingMode,
+    tool_dialect: y_core::provider::ToolDialect,
     runtime_backend: RuntimeBackend,
     template_vars: &RuntimeTemplateVars,
 ) -> String {
@@ -56,7 +57,7 @@ pub(crate) fn build_subagent_system_prompt(
         }
         ToolCallingMode::PromptBased => {
             let tools_summary = crate::container::build_agent_tools_summary(filtered_defs);
-            let syntax = y_tools::parser::PROMPT_TOOL_CALL_SYNTAX;
+            let syntax = y_tools::prompt_tool_call_syntax_for(tool_dialect);
             format!("{base}\n\n{tool_protocol}\n\n{syntax}\n\n{tools_summary}")
         }
     }
@@ -135,6 +136,7 @@ impl AgentRunner for ServiceAgentRunner {
             &config.system_prompt,
             &filtered_defs,
             tool_calling_mode,
+            y_core::provider::ToolDialect::default(),
             runtime_backend,
             &template_vars,
         );
@@ -195,6 +197,7 @@ impl AgentRunner for ServiceAgentRunner {
             max_tool_calls: usize::MAX,
             tool_definitions,
             tool_calling_mode,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages,
             provider_id: None,
             preferred_models: config.preferred_models.clone(),

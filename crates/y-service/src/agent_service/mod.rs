@@ -66,6 +66,8 @@ pub struct AgentExecutionConfig {
     pub tool_definitions: Vec<serde_json::Value>,
     /// Tool calling mode (Native or `PromptBased`).
     pub tool_calling_mode: ToolCallingMode,
+    /// Per-model-family tool-call dialect for encoding/decoding.
+    pub tool_dialect: y_core::provider::ToolDialect,
     /// Conversation messages (system prompt prepended by caller if needed).
     pub messages: Vec<Message>,
     /// Provider routing preference.
@@ -402,6 +404,16 @@ impl AgentService {
         progress: Option<TurnEventSender>,
         cancel: Option<tokio_util::sync::CancellationToken>,
     ) -> Result<AgentExecutionResult, AgentExecutionError> {
+        // Attribute every event this agent emits to its own session so that
+        // sub-agent output (plan phase, loop round, plan-writer, Task delegate)
+        // routes to that child session's sub-chat rather than the parent's main
+        // chat. `with_session` replaces the tag, so a nested sub-agent re-stamps
+        // with its own (child) session id.
+        let progress = match (progress, &config.session_id) {
+            (Some(tx), Some(session_id)) => Some(tx.with_session(session_id.clone())),
+            (other, _) => other,
+        };
+
         // 1. Context assembly + diagnostics trace (extracted to keep execute() under 200 lines).
         let (assembled, trace_id, owns_trace) =
             executor::init_context_and_trace(container, config).await;
@@ -657,6 +669,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::PromptBased,
+            y_core::provider::ToolDialect::default(),
             y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
@@ -671,6 +684,7 @@ mod tests {
             base,
             &defs,
             ToolCallingMode::PromptBased,
+            y_core::provider::ToolDialect::default(),
             y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
@@ -689,6 +703,7 @@ mod tests {
             base,
             &defs,
             ToolCallingMode::Native,
+            y_core::provider::ToolDialect::default(),
             y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
@@ -708,6 +723,7 @@ mod tests {
             base,
             &defs,
             ToolCallingMode::PromptBased,
+            y_core::provider::ToolDialect::default(),
             y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
@@ -723,6 +739,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::Native,
+            y_core::provider::ToolDialect::default(),
             y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );
@@ -739,6 +756,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::Native,
+            y_core::provider::ToolDialect::default(),
             y_core::runtime::RuntimeBackend::Native,
             &vars,
         );
@@ -755,6 +773,7 @@ mod tests {
             base,
             &[],
             ToolCallingMode::Native,
+            y_core::provider::ToolDialect::default(),
             y_core::runtime::RuntimeBackend::Native,
             &default_template_vars(),
         );

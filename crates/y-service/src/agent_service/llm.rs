@@ -15,6 +15,38 @@ use crate::cost::CostService;
 
 use super::{AgentExecutionConfig, LlmIterationData, ToolExecContext, TurnEvent, TurnEventSender};
 
+/// Normalize messages for optimal prompt cache prefix stability.
+///
+/// Trims trailing whitespace from message content and sorts JSON keys in
+/// `tool_calls` arguments. This ensures the message prefix remains
+/// bit-identical across turns, maximizing KV cache hits on providers that
+/// support prompt caching (e.g., Anthropic `cache_control: ephemeral`).
+///
+/// The normalization is shallow: it only processes top-level message content
+/// and `tool_call` arguments. Deep normalization of nested structures is not
+/// needed because the LLM API serializes them deterministically.
+fn normalize_messages(messages: &[y_core::types::Message]) -> Vec<y_core::types::Message> {
+    messages
+        .iter()
+        .map(|msg| {
+            let mut normalized = msg.clone();
+            // Trim trailing whitespace from content (common source of
+            // cache-busting differences from streaming reconstruction).
+            normalized.content = normalized.content.trim_end().to_string();
+            // Canonicalize tool_call arguments: re-serialize JSON Value
+            // to get sorted keys, ensuring deterministic bytes across turns.
+            for tc in &mut normalized.tool_calls {
+                if let Ok(canonical) = serde_json::to_string(&tc.arguments) {
+                    if let Ok(parsed) = serde_json::from_str(&canonical) {
+                        tc.arguments = parsed;
+                    }
+                }
+            }
+            normalized
+        })
+        .collect()
+}
+
 pub(crate) fn build_chat_request(
     config: &AgentExecutionConfig,
     ctx: &ToolExecContext,
@@ -47,7 +79,7 @@ pub(crate) fn build_chat_request(
     };
 
     ChatRequest {
-        messages: ctx.working_history.clone(),
+        messages: normalize_messages(&ctx.working_history),
         model: None,
         request_mode: config.request_mode,
         max_tokens: config.max_tokens,
@@ -55,6 +87,7 @@ pub(crate) fn build_chat_request(
         top_p: None,
         tools,
         tool_calling_mode: config.tool_calling_mode,
+        tool_dialect: config.tool_dialect,
         stop: vec![],
         extra: serde_json::Value::Null,
         thinking: config.thinking.clone(),
@@ -511,7 +544,6 @@ async fn call_llm_streaming(
 mod tests {
     use async_trait::async_trait;
     use futures::stream;
-    use tokio::sync::mpsc;
     use y_core::provider::{
         ChatRequest, ChatResponse, ChatStreamChunk, ChatStreamResponse, GeneratedImage,
         ImageContentDelta, ProviderCapability, ProviderError, ProviderMetadata, ProviderPool,
@@ -549,6 +581,7 @@ mod tests {
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     tool_calling_mode: ToolCallingMode::Native,
+                    tool_dialect: y_core::provider::ToolDialect::default(),
                 },
             }
         }
@@ -698,6 +731,7 @@ mod tests {
             top_p: None,
             tools: vec![],
             tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             stop: vec![],
             extra: serde_json::Value::Null,
             thinking: None,
@@ -714,6 +748,7 @@ mod tests {
             max_tool_calls: 0,
             tool_definitions: vec![],
             tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages: test_request().messages,
             provider_id: None,
             preferred_models: vec![],
@@ -835,7 +870,7 @@ mod tests {
             priority: RoutePriority::Normal,
             ..Default::default()
         };
-        let (tx, _rx) = mpsc::unbounded_channel::<TurnEvent>();
+        let (tx, _rx) = crate::chat::TurnEventSender::channel();
 
         let (response, reasoning_duration_ms) = call_llm(
             &pool,
@@ -884,6 +919,7 @@ mod tests {
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     tool_calling_mode: ToolCallingMode::Native,
+                    tool_dialect: y_core::provider::ToolDialect::default(),
                 },
             }
         }
@@ -982,7 +1018,7 @@ mod tests {
             priority: RoutePriority::Normal,
             ..Default::default()
         };
-        let (tx, mut rx) = mpsc::unbounded_channel::<TurnEvent>();
+        let (tx, mut rx) = crate::chat::TurnEventSender::channel();
 
         let (response, _reasoning_duration_ms) = call_llm(
             &pool,
@@ -1011,7 +1047,7 @@ mod tests {
 
         let mut saw_partial = false;
         let mut saw_complete = false;
-        while let Ok(event) = rx.try_recv() {
+        while let Ok((event, _session_id)) = rx.try_recv() {
             match event {
                 TurnEvent::StreamImageDelta {
                     index,
@@ -1048,6 +1084,7 @@ mod tests {
                 | TurnEvent::PermissionRequest { .. }
                 | TurnEvent::PlanReviewRequest { .. }
                 | TurnEvent::SteerInjected { .. }
+                | TurnEvent::FollowUpInjected { .. }
                 | TurnEvent::Heartbeat { .. } => {}
             }
         }

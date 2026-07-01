@@ -708,6 +708,7 @@ async fn execute_tool_call(
                 crate::task_delegation_orchestrator::TaskDelegationOrchestrator::handle(
                     &tc.arguments,
                     container.agent_delegator.as_ref(),
+                    &container.agent_registry,
                     Some(session_uuid),
                 ),
             )
@@ -1092,6 +1093,7 @@ mod tests {
             max_tool_calls: 1,
             tool_definitions: Vec::new(),
             tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
             messages: Vec::new(),
             provider_id: None,
             preferred_models: Vec::new(),
@@ -1116,7 +1118,7 @@ mod tests {
             image_generation_options: None,
             inherited_constraints: None,
         };
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = crate::chat::TurnEventSender::channel();
 
         let answer = tokio::time::timeout(
             std::time::Duration::from_secs(181),
