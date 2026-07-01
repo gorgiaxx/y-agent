@@ -444,7 +444,7 @@ function ChatPanelInner({
     );
   }
 
-  if (messages.length === 0 && !isStreaming) {
+  if (messages.length === 0 && !isStreaming && !error) {
     return (
       <div className="chat-panel">
         <div className="chat-empty">

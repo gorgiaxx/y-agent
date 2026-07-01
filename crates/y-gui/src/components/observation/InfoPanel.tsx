@@ -10,10 +10,11 @@ import {
   FilePlus2,
   ClipboardList,
   Repeat,
+  Boxes,
 } from 'lucide-react';
 import { Button } from '../ui';
 
-import type { ModifiedFileEntry } from '../../hooks/useInfoPanel';
+import type { ModifiedFileEntry, ChildSessionSummary } from '../../hooks/useInfoPanel';
 import { buildFileContextMenuItems } from '../chat-panel/chat-box/fileContextMenu';
 import { useContextMenu } from '../chat-panel/chat-box/useContextMenu';
 import { FileDiffView } from '../chat-panel/chat-box/tool-renderers/shared';
@@ -226,6 +227,8 @@ interface InfoPanelProps {
   modifiedFiles: ModifiedFileEntry[];
   plans: PlanDisplayMeta[];
   loopStatus: LoopDisplayMeta | null;
+  childSessions: ChildSessionSummary[];
+  onOpenChildSession?: (childSessionId: string, title: string) => void;
   expanded: boolean;
   onToggleExpand: () => void;
   onClose: () => void;
@@ -235,6 +238,8 @@ export function InfoPanel({
   modifiedFiles,
   plans,
   loopStatus,
+  childSessions,
+  onOpenChildSession,
   expanded,
   onToggleExpand,
   onClose,
@@ -242,8 +247,12 @@ export function InfoPanel({
   const [filesOpen, setFilesOpen] = useState(true);
   const [planOpen, setPlanOpen] = useState(true);
   const [loopOpen, setLoopOpen] = useState(true);
+  const [subOpen, setSubOpen] = useState(true);
 
-  const hasAny = modifiedFiles.length > 0 || plans.length > 0 || loopStatus !== null;
+  const hasAny = modifiedFiles.length > 0
+    || plans.length > 0
+    || loopStatus !== null
+    || childSessions.length > 0;
 
   const panelContent = (
     <div className={`info-panel ${expanded ? 'info-expanded' : ''}`}>
@@ -331,6 +340,42 @@ export function InfoPanel({
                   <span className="info-section-title">Loop</span>
                 </div>
                 {loopOpen && <LoopCard loop={loopStatus} />}
+              </div>
+            )}
+
+            {childSessions.length > 0 && (
+              <div className="info-section">
+                <div
+                  className="info-section-header"
+                  onClick={() => setSubOpen(!subOpen)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSubOpen(!subOpen); }}
+                >
+                  <span className="info-section-chevron">
+                    {subOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </span>
+                  <span className="info-section-title">Sub-agents ({childSessions.length})</span>
+                </div>
+                {subOpen && (
+                  <div className="info-subagent-list">
+                    {childSessions.map((child) => (
+                      <button
+                        key={child.id}
+                        type="button"
+                        className="info-subagent-item"
+                        title={child.title ?? child.id}
+                        onClick={() => onOpenChildSession?.(child.id, child.title ?? 'Sub-agent')}
+                      >
+                        <Boxes size={12} className="info-subagent-icon" />
+                        <span className="info-subagent-title">
+                          {child.title ?? child.agentId ?? 'Sub-agent'}
+                        </span>
+                        <ChevronRight size={12} className="info-subagent-chevron" />
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </>

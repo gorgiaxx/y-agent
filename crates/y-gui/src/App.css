@@ -113,3 +113,24 @@ html.custom-decorations .main-header [role="button"] {
   border-radius: 50%;
   background: var(--success);
 }
+
+/* Borderless back button in the main header (sub-agent drill-in) */
+.header-back-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: color 0.15s ease, background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.header-back-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}

@@ -1,6 +1,6 @@
 // Custom hook for session management.
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { transport } from '../lib';
 import { STORAGE_KEYS } from '../constants/storageKeys';
 
@@ -25,16 +25,29 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Session ids seen in the most recent `session_list`. Used to distinguish a
+  // genuinely-deleted session (present before, gone now) from one that is
+  // simply not listed — sub-agent (drill-in) sessions are never in the list, so
+  // they must NOT be treated as deleted, or a poll would eject the drilled-in
+  // view back to blank.
+  const knownSessionIdsRef = useRef<Set<string>>(new Set());
 
   const refreshSessions = useCallback(async () => {
     try {
       const list = await transport.invoke<SessionInfo[]>('session_list', {
         agentId: agentId ?? null,
       });
+      const previouslyKnown = knownSessionIdsRef.current;
+      knownSessionIdsRef.current = new Set(list.map((session) => session.id));
       setSessions(list);
-      setActiveSessionId((current) => (
-        current && !list.some((session) => session.id === current) ? null : current
-      ));
+      setActiveSessionId((current) => {
+        if (!current) return current;
+        if (list.some((session) => session.id === current)) return current;
+        // Not in the list. Only clear if it WAS a listed session that has since
+        // been removed (external delete). Preserve sub-agent drill-in sessions,
+        // which are intentionally excluded from `session_list`.
+        return previouslyKnown.has(current) ? null : current;
+      });
     } catch (e) {
       console.error('Failed to load sessions:', e);
     } finally {

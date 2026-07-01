@@ -212,7 +212,7 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
         </div>
         <div className="diag-entry-badges">
           <span className="diag-badge diag-badge-tokens">
-            {(event.input_tokens + event.output_tokens).toLocaleString()} tok
+            {((event.context_tokens_used ?? event.input_tokens) + event.output_tokens).toLocaleString()} tok
           </span>
           <span className="diag-badge diag-badge-time">{event.duration_ms}ms</span>
           {hasToolCalls && (
@@ -229,9 +229,27 @@ function LlmEntry({ event, timestamp }: { event: LlmResponseEvent; timestamp: st
         <div className="diag-entry-detail">
           <div className="diag-detail-grid">
             <div className="diag-detail-item">
-              <span className="diag-detail-label">Input tokens</span>
+              <span className="diag-detail-label">Input (fresh)</span>
               <span className="diag-detail-value">{event.input_tokens.toLocaleString()}</span>
             </div>
+            {event.cache_read_tokens != null && event.cache_read_tokens > 0 && (
+              <div className="diag-detail-item">
+                <span className="diag-detail-label">Cache read</span>
+                <span className="diag-detail-value">{event.cache_read_tokens.toLocaleString()}</span>
+              </div>
+            )}
+            {event.cache_write_tokens != null && event.cache_write_tokens > 0 && (
+              <div className="diag-detail-item">
+                <span className="diag-detail-label">Cache write</span>
+                <span className="diag-detail-value">{event.cache_write_tokens.toLocaleString()}</span>
+              </div>
+            )}
+            {event.context_tokens_used != null && event.context_tokens_used > event.input_tokens && (
+              <div className="diag-detail-item">
+                <span className="diag-detail-label">Context total</span>
+                <span className="diag-detail-value">{event.context_tokens_used.toLocaleString()}</span>
+              </div>
+            )}
             <div className="diag-detail-item">
               <span className="diag-detail-label">Output tokens</span>
               <span className="diag-detail-value">{event.output_tokens.toLocaleString()}</span>
@@ -912,7 +930,7 @@ export function DiagnosticsPanel({ entries, isActive, isGlobal, sessionId, expan
           </div>
           <div className="diag-summary-item">
             <span className="diag-summary-value">
-              {(summary.totalInputTokens + summary.totalOutputTokens).toLocaleString()}
+              {(summary.totalContextTokens + summary.totalOutputTokens).toLocaleString()}
             </span>
             <span className="diag-summary-label">tokens</span>
           </div>

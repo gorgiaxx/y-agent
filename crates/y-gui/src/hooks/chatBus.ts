@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { transport, type UnlistenFn } from '../lib';
+import { isSubSessionEvent } from './chatStreamTypes';
 import type {
   ChatCompletePayload,
   ChatErrorPayload,
@@ -43,12 +44,12 @@ export type ChatBusEvent =
   | { type: 'interaction_resolved'; run_id: string; session_id: string }
   | { type: 'complete'; payload: ChatCompletePayload }
   | { type: 'error'; payload: ChatErrorPayload }
-  | { type: 'stream_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
-  | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string; agent_name?: string }
-  | { type: 'stream_image_delta'; run_id: string; session_id: string; index: number; mime_type: string; partial_data: string; agent_name?: string }
-  | { type: 'stream_image_complete'; run_id: string; session_id: string; index: number; mime_type: string; data: string; agent_name?: string }
-  | { type: 'tool_start'; session_id: string; name: string; input_preview: string; agent_name?: string }
-  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown> }
+  | { type: 'stream_delta'; run_id: string; session_id: string; content: string; agent_name?: string; sub_session?: boolean }
+  | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string; agent_name?: string; sub_session?: boolean }
+  | { type: 'stream_image_delta'; run_id: string; session_id: string; index: number; mime_type: string; partial_data: string; agent_name?: string; sub_session?: boolean }
+  | { type: 'stream_image_complete'; run_id: string; session_id: string; index: number; mime_type: string; data: string; agent_name?: string; sub_session?: boolean }
+  | { type: 'tool_start'; session_id: string; name: string; input_preview: string; agent_name?: string; sub_session?: boolean }
+  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown>; agent_name?: string; sub_session?: boolean }
   | { type: 'steer_injected'; run_id: string; session_id: string; steer_id: string; text: string }
   | { type: 'steer_queue'; session_id: string; queue: SteerMessage[] }
   | { type: 'heartbeat'; run_id: string; session_id: string };
@@ -145,7 +146,18 @@ async function initialiseChatBus() {
   chatUnlistenFns.push(u2);
 
   const u3 = await transport.listen<ProgressPayload>('chat:progress', (e) => {
-    const { run_id, event } = e.payload;
+    const { run_id, event, session_id: childSession } = e.payload;
+    // Content/tool events are attributed to their originating (possibly
+    // sub-agent child) session so they render in that session's sub-chat.
+    // HITL/interaction prompts stay on the run's parent session so they always
+    // surface where the user is looking.
+    const parentSession = chatBusState.runToSession[run_id];
+    const contentSession = childSession || parentSession;
+    // A genuine sub-session (plan phase / loop round) is one whose events are
+    // attributed to a DIFFERENT session than the run's parent. Task-delegated
+    // sub-agents reuse the parent session id, so they are NOT sub-sessions and
+    // remain subject to the main-chat agent filter.
+    const subSession = isSubSessionEvent(childSession, parentSession);
     if (
       event.type === 'user_interaction_request'
       || event.type === 'permission_request'
@@ -158,7 +170,7 @@ async function initialiseChatBus() {
     }
 
     if (event.type === 'stream_delta') {
-      const session_id = chatBusState.runToSession[run_id];
+      const session_id = contentSession;
       if (session_id) {
         notifyChatSubscribers({
           type: 'stream_delta',
@@ -166,10 +178,11 @@ async function initialiseChatBus() {
           session_id,
           content: event.content,
           agent_name: event.agent_name,
+          sub_session: subSession,
         });
       }
     } else if (event.type === 'stream_reasoning_delta') {
-      const session_id = chatBusState.runToSession[run_id];
+      const session_id = contentSession;
       if (session_id) {
         notifyChatSubscribers({
           type: 'stream_reasoning_delta',
@@ -177,10 +190,11 @@ async function initialiseChatBus() {
           session_id,
           content: event.content,
           agent_name: event.agent_name,
+          sub_session: subSession,
         });
       }
     } else if (event.type === 'stream_image_delta') {
-      const session_id = chatBusState.runToSession[run_id];
+      const session_id = contentSession;
       if (session_id) {
         notifyChatSubscribers({
           type: 'stream_image_delta',
@@ -190,10 +204,11 @@ async function initialiseChatBus() {
           mime_type: event.mime_type,
           partial_data: event.partial_data,
           agent_name: event.agent_name,
+          sub_session: subSession,
         });
       }
     } else if (event.type === 'stream_image_complete') {
-      const session_id = chatBusState.runToSession[run_id];
+      const session_id = contentSession;
       if (session_id) {
         notifyChatSubscribers({
           type: 'stream_image_complete',
@@ -203,10 +218,11 @@ async function initialiseChatBus() {
           mime_type: event.mime_type,
           data: event.data,
           agent_name: event.agent_name,
+          sub_session: subSession,
         });
       }
     } else if (event.type === 'tool_start') {
-      const session_id = chatBusState.runToSession[run_id];
+      const session_id = contentSession;
       if (session_id) {
         notifyChatSubscribers({
           type: 'tool_start',
@@ -214,10 +230,11 @@ async function initialiseChatBus() {
           name: event.name,
           input_preview: event.input_preview ?? '',
           agent_name: event.agent_name,
+          sub_session: subSession,
         });
       }
     } else if (event.type === 'tool_result') {
-      const session_id = chatBusState.runToSession[run_id];
+      const session_id = contentSession;
       if (session_id) {
         notifyChatSubscribers({
           type: 'tool_result',
@@ -229,6 +246,8 @@ async function initialiseChatBus() {
           result_preview: event.result_preview,
           url_meta: event.url_meta ?? undefined,
           metadata: event.metadata ?? undefined,
+          agent_name: event.agent_name,
+          sub_session: subSession,
         });
       }
     } else if (event.type === 'heartbeat') {

@@ -205,6 +205,96 @@ export function buildHistorySegments(
   return segments;
 }
 
+/** Iteration metadata mirroring the backend's persisted assistant-message shape. */
+export interface StreamHistoryMetadata {
+  iteration_texts: string[];
+  iteration_reasonings: (string | null)[];
+  iteration_reasoning_durations_ms: (number | null)[];
+  iteration_tool_counts: number[];
+  injected_steers: Array<{ after_iteration: number; text: string; steer_id?: string }>;
+  /** True when at least one reasoning segment was captured into iteration_reasonings. */
+  hasReasoning: boolean;
+}
+
+/**
+ * Convert an ordered `InterleavedSegment[]` (from live streaming) into the
+ * per-iteration metadata the backend persists for a consolidated assistant
+ * message. This is the inverse of `buildHistorySegments`: feeding the output
+ * back through `buildHistorySegments` reproduces the original segment order.
+ *
+ * Used when finalizing a streaming message into a terminal (error/cancelled)
+ * message so `StaticBubble` renders text + reasoning + tool cards faithfully,
+ * instead of dropping everything but the tool cards.
+ *
+ * Grouping: each iteration is `[reasoning?] [text?] [tools*]`. A new iteration
+ * starts when a reasoning/text segment would collide with content already
+ * accumulated in the current iteration. A steer segment closes the current
+ * iteration and anchors at that boundary.
+ */
+export function streamSegmentsToHistoryMetadata(
+  segments: InterleavedSegment[],
+): StreamHistoryMetadata {
+  const iterationTexts: string[] = [];
+  const iterationReasonings: (string | null)[] = [];
+  const iterationDurations: (number | null)[] = [];
+  const iterationToolCounts: number[] = [];
+  const steers: Array<{ after_iteration: number; text: string; steer_id?: string }> = [];
+  let hasReasoning = false;
+
+  let curReasoning: string | null = null;
+  let curDuration: number | null = null;
+  let curText = '';
+  let curToolCount = 0;
+  let curActive = false;
+
+  const flush = () => {
+    if (!curActive) return;
+    iterationTexts.push(curText);
+    iterationReasonings.push(curReasoning);
+    iterationDurations.push(curDuration);
+    iterationToolCounts.push(curToolCount);
+    curReasoning = null;
+    curDuration = null;
+    curText = '';
+    curToolCount = 0;
+    curActive = false;
+  };
+
+  for (const seg of segments) {
+    if (seg.type === 'reasoning') {
+      if (curActive && (curReasoning !== null || curText !== '' || curToolCount > 0)) flush();
+      curActive = true;
+      curReasoning = seg.content;
+      curDuration = seg.durationMs ?? null;
+      hasReasoning = true;
+    } else if (seg.type === 'text') {
+      if (curActive && (curText !== '' || curToolCount > 0)) flush();
+      curActive = true;
+      curText += seg.text;
+    } else if (seg.type === 'tool_result') {
+      curActive = true;
+      curToolCount += 1;
+    } else if (seg.type === 'steer') {
+      flush();
+      steers.push({
+        after_iteration: iterationTexts.length,
+        text: seg.text,
+        ...(seg.steerId !== undefined ? { steer_id: seg.steerId } : {}),
+      });
+    }
+  }
+  flush();
+
+  return {
+    iteration_texts: iterationTexts,
+    iteration_reasonings: iterationReasonings,
+    iteration_reasoning_durations_ms: iterationDurations,
+    iteration_tool_counts: iterationToolCounts,
+    injected_steers: steers,
+    hasReasoning,
+  };
+}
+
 /**
  * Extract the final answer text from interleaved segments.
  *

@@ -4,7 +4,7 @@ import { Sidebar } from '../components/Sidebar';
 import { DiagnosticsPanel } from '../components/observation/DiagnosticsPanel';
 import { ObservabilityPanel } from '../components/observation/ObservabilityPanel';
 import { InfoPanel } from '../components/observation/InfoPanel';
-import { Activity, Eye, Info } from 'lucide-react';
+import { Activity, Eye, Info, ChevronLeft } from 'lucide-react';
 
 import { WindowControls } from '../components/ui/WindowControls';
 
@@ -56,6 +56,36 @@ export function MainLayout() {
 
   const infoData = useInfoPanel();
 
+  // Drill-in breadcrumb stack for sub-agent (plan phase / loop round) sessions.
+  // Each entry is a session we drilled INTO, remembering the parent to return to.
+  const [drillStack, setDrillStack] = useState<Array<{ parentId: string; childId: string; title: string }>>([]);
+
+  const openChildSession = (childId: string, title: string) => {
+    const parentId = sessionHooks.activeSessionId;
+    if (!parentId || childId === parentId) return;
+    setDrillStack((prev) => [...prev, { parentId, childId, title }]);
+    sessionHooks.selectSession(childId);
+  };
+
+  const drillBack = () => {
+    setDrillStack((prev) => {
+      if (prev.length === 0) return prev;
+      const target = prev[prev.length - 1];
+      sessionHooks.selectSession(target.parentId);
+      return prev.slice(0, -1);
+    });
+  };
+
+  // If the user navigates elsewhere (active session no longer the drilled child),
+  // clear the stack so a stale breadcrumb never lingers.
+  useEffect(() => {
+    if (drillStack.length === 0) return;
+    const top = drillStack[drillStack.length - 1];
+    if (sessionHooks.activeSessionId !== top.childId) {
+      setDrillStack([]);
+    }
+  }, [sessionHooks.activeSessionId, drillStack]);
+
   // Re-fetch skills whenever the skills view becomes active so newly
   // imported skills appear immediately (the import runs asynchronously
   // and the user may switch views during the long agent execution).
@@ -69,6 +99,10 @@ export function MainLayout() {
   const selectedAgentName = agentEditor.activeAgentId
     ? agentHooks.agents.find((agent) => agent.id === agentEditor.activeAgentId)?.name ?? agentEditor.activeAgentId
     : null;
+  const drilledInto = viewRouting.activeView === 'chat' && drillStack.length > 0
+    ? drillStack[drillStack.length - 1]
+    : null;
+
   const headerTitle = viewRouting.backgroundTasksSidebarOpen
     ? 'Tasks'
     : viewRouting.activeView === 'skills'
@@ -79,7 +113,9 @@ export function MainLayout() {
           ? selectedAgentName ?? 'Agents'
           : viewRouting.activeView === 'automation'
             ? 'Automation'
-            : sessionHooks.activeSessionId
+            : drilledInto
+              ? drilledInto.title
+              : sessionHooks.activeSessionId
                 ? sessionHooks.sessions.find((s) => s.id === sessionHooks.activeSessionId)?.title || 'Untitled'
                 : 'y-agent';
 
@@ -187,6 +223,17 @@ export function MainLayout() {
         )) && (
         <header className="main-header" data-tauri-drag-region>
           <div className="main-header-start" data-tauri-drag-region>
+            {drilledInto && (
+              <button
+                type="button"
+                className="header-back-btn"
+                onClick={drillBack}
+                title="Back"
+                aria-label="Back"
+              >
+                <ChevronLeft size={18} />
+              </button>
+            )}
             <h1 className="app-title">{headerTitle}</h1>
           </div>
           <div className="header-actions">
@@ -278,6 +325,8 @@ export function MainLayout() {
           modifiedFiles={infoData.modifiedFiles}
           plans={infoData.plans}
           loopStatus={infoData.loopStatus}
+          childSessions={infoData.childSessions}
+          onOpenChildSession={openChildSession}
           expanded={panelCtx.infoExpanded}
           onToggleExpand={() => panelCtx.setInfoExpanded(!panelCtx.infoExpanded)}
           onClose={() => panelCtx.setInfoOpen(false)}

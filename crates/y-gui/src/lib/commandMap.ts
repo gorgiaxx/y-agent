@@ -276,6 +276,7 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   // -- Sessions --
   session_list:        { method: 'GET',  path: '/api/v1/sessions',
                          query: (a) => a.agentId ? { agent_id: String(a.agentId) } : {} },
+  session_list_children: { method: 'GET', path: pathWith('/api/v1/sessions/{sessionId}/children', 'sessionId') },
   session_create:      { method: 'POST', path: '/api/v1/sessions', body: sessionCreateBody },
   session_get_messages: { method: 'GET', path: pathWith('/api/v1/sessions/{sessionId}/messages', 'sessionId'),
                          query: (a) => a.last ? { last: String(a.last) } : {} },

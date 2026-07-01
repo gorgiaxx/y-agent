@@ -15,6 +15,8 @@ import { transport, type UnlistenFn } from '../lib';
 import type {
   DiagnosticsEntry,
   DiagnosticsGatewayEvent,
+  DiagLlmCallCompleted,
+  LlmResponseEvent,
   ProgressPayload,
   ChatCompletePayload,
   ChatErrorPayload,
@@ -27,6 +29,12 @@ export interface DiagnosticsSummary {
   totalIterations: number;
   totalInputTokens: number;
   totalOutputTokens: number;
+  /** Prompt tokens served from cache across all calls. */
+  totalCacheReadTokens: number;
+  /** Prompt tokens written to cache across all calls. */
+  totalCacheWriteTokens: number;
+  /** Total prompt tokens processed (fresh + cache) across all calls. */
+  totalContextTokens: number;
   totalCost: number;
   totalDurationMs: number;
   toolCallCount: number;
@@ -46,6 +54,9 @@ const emptySummary: DiagnosticsSummary = {
   totalIterations: 0,
   totalInputTokens: 0,
   totalOutputTokens: 0,
+  totalCacheReadTokens: 0,
+  totalCacheWriteTokens: 0,
+  totalContextTokens: 0,
   totalCost: 0,
   totalDurationMs: 0,
   toolCallCount: 0,
@@ -61,6 +72,11 @@ export function computeSummary(entries: DiagnosticsEntry[]): DiagnosticsSummary 
       s.totalIterations = Math.max(s.totalIterations, ev.iteration);
       s.totalInputTokens += ev.input_tokens;
       s.totalOutputTokens += ev.output_tokens;
+      s.totalCacheReadTokens += ev.cache_read_tokens ?? 0;
+      s.totalCacheWriteTokens += ev.cache_write_tokens ?? 0;
+      s.totalContextTokens +=
+        ev.context_tokens_used ??
+        ev.input_tokens + (ev.cache_read_tokens ?? 0) + (ev.cache_write_tokens ?? 0);
       s.totalCost += ev.cost_usd;
       s.totalDurationMs += ev.duration_ms;
     } else if (ev.type === 'tool_result') {
@@ -127,7 +143,7 @@ const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 const MAX_DIAG_ENTRIES_PER_SESSION = 1000;
 const DIAG_TRIM_TARGET = 800;
 
-interface RawDiagnosticsRecord {
+export interface RawDiagnosticsRecord {
   type: string;
   timestamp?: string;
   content?: string;
@@ -135,6 +151,9 @@ interface RawDiagnosticsRecord {
   model?: string;
   input_tokens?: number;
   output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  context_tokens_used?: number;
   duration_ms?: number;
   cost_usd?: number;
   tool_calls_requested?: string[];
@@ -148,7 +167,29 @@ interface RawDiagnosticsRecord {
   result_preview?: string;
 }
 
-function mapRawToEntry(item: RawDiagnosticsRecord, idPrefix: string, idx: number): DiagnosticsEntry {
+/** Build an `llm_response` turn event from a broadcast `llm_call_completed`
+ *  gateway event, preserving cache/context token accounting. */
+export function llmResponseFromBroadcast(ev: DiagLlmCallCompleted): LlmResponseEvent {
+  return {
+    type: 'llm_response',
+    iteration: ev.iteration,
+    model: ev.model,
+    input_tokens: ev.input_tokens,
+    output_tokens: ev.output_tokens,
+    cache_read_tokens: ev.cache_read_tokens,
+    cache_write_tokens: ev.cache_write_tokens,
+    context_tokens_used: ev.context_tokens_used,
+    duration_ms: ev.duration_ms,
+    cost_usd: ev.cost_usd,
+    tool_calls_requested: ev.tool_calls_requested,
+    prompt_preview: ev.prompt_preview,
+    response_text: ev.response_text,
+    context_window: ev.context_window,
+    agent_name: ev.agent_name,
+  };
+}
+
+export function mapRawToEntry(item: RawDiagnosticsRecord, idPrefix: string, idx: number): DiagnosticsEntry {
   let event: TurnEvent;
   const timestamp = item.timestamp || new Date().toISOString();
   switch (item.type) {
@@ -162,6 +203,9 @@ function mapRawToEntry(item: RawDiagnosticsRecord, idPrefix: string, idx: number
         model: item.model ?? '',
         input_tokens: item.input_tokens ?? 0,
         output_tokens: item.output_tokens ?? 0,
+        cache_read_tokens: item.cache_read_tokens ?? 0,
+        cache_write_tokens: item.cache_write_tokens ?? 0,
+        context_tokens_used: item.context_tokens_used ?? item.input_tokens ?? 0,
         duration_ms: item.duration_ms ?? 0,
         cost_usd: item.cost_usd ?? 0,
         tool_calls_requested: item.tool_calls_requested ?? [],
@@ -414,20 +458,7 @@ async function initialiseBus() {
       diagEntry = {
         id: `broadcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         timestamp: new Date().toISOString(),
-        event: {
-          type: 'llm_response',
-          iteration: ev.iteration,
-          model: ev.model,
-          input_tokens: ev.input_tokens,
-          output_tokens: ev.output_tokens,
-          duration_ms: ev.duration_ms,
-          cost_usd: ev.cost_usd,
-          tool_calls_requested: ev.tool_calls_requested,
-          prompt_preview: ev.prompt_preview,
-          response_text: ev.response_text,
-          context_window: ev.context_window,
-          agent_name: ev.agent_name,
-        },
+        event: llmResponseFromBroadcast(ev),
       };
     } else if (ev.type === 'llm_call_failed') {
       diagEntry = {

@@ -298,6 +298,9 @@ export type TurnEvent =
 export interface ProgressPayload {
   run_id: string;
   event: TurnEvent;
+  /** Originating sub-agent (child) session id, when the event came from a plan
+   *  phase / loop round / plan-writer running under a child session. */
+  session_id?: string;
 }
 
 /** A single entry in the diagnostics timeline. */
@@ -324,6 +327,12 @@ export interface DiagLlmCallCompleted {
   model: string;
   input_tokens: number;
   output_tokens: number;
+  /** Prompt tokens served from cache (subset of context_tokens_used). */
+  cache_read_tokens: number;
+  /** Prompt tokens written to cache (subset of context_tokens_used). */
+  cache_write_tokens: number;
+  /** Total prompt tokens processed (fresh + cache) -- context occupancy. */
+  context_tokens_used: number;
   duration_ms: number;
   cost_usd: number;
   tool_calls_requested: string[];

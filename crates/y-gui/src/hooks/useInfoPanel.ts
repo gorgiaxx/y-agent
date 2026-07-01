@@ -22,10 +22,20 @@ export interface ModifiedFileEntry {
   diffs: Array<{ oldString: string; newString: string }>;
 }
 
+export interface ChildSessionSummary {
+  id: string;
+  title: string | null;
+  sessionType: string;
+  agentId: string | null;
+  messageCount: number;
+  createdAt: string;
+}
+
 export interface UseInfoPanelReturn {
   modifiedFiles: ModifiedFileEntry[];
   plans: PlanDisplayMeta[];
   loopStatus: LoopDisplayMeta | null;
+  childSessions: ChildSessionSummary[];
   hasActivity: boolean;
 }
 
@@ -177,6 +187,38 @@ export function useInfoPanel(): UseInfoPanelReturn {
     };
   }, [activeSessionId, activeStreaming]);
 
+  // Load the active session's sub-agent child sessions (plan phases, loop
+  // rounds, delegated tasks) so they can be opened as drill-in sub-chats.
+  const [childSessions, setChildSessions] = useState<ChildSessionSummary[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async (): Promise<ChildSessionSummary[]> => {
+      if (!activeSessionId) return [];
+      try {
+        const rows = await transport.invoke<Array<Record<string, unknown>>>(
+          'session_list_children',
+          { sessionId: activeSessionId },
+        );
+        return (Array.isArray(rows) ? rows : []).map((r) => ({
+          id: String(r.id ?? ''),
+          title: typeof r.title === 'string' ? r.title : null,
+          sessionType: String(r.session_type ?? ''),
+          agentId: typeof r.agent_id === 'string' ? r.agent_id : null,
+          messageCount: Number(r.message_count ?? 0),
+          createdAt: String(r.created_at ?? ''),
+        })).filter((c) => c.id !== '');
+      } catch {
+        return [];
+      }
+    };
+    load().then((rows) => {
+      if (!cancelled) setChildSessions(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId, activeStreaming]);
+
   return useMemo(() => {
     const historical = parseMetaToolResults(messages);
     const allRecords = [...historical, ...toolResults];
@@ -190,7 +232,12 @@ export function useInfoPanel(): UseInfoPanelReturn {
       modifiedFiles,
       plans,
       loopStatus,
-      hasActivity: modifiedFiles.length > 0 || plans.length > 0 || loopStatus !== null,
+      childSessions,
+      hasActivity:
+        modifiedFiles.length > 0
+        || plans.length > 0
+        || loopStatus !== null
+        || childSessions.length > 0,
     };
-  }, [messages, toolResults, persistedPlans]);
+  }, [messages, toolResults, persistedPlans, childSessions]);
 }

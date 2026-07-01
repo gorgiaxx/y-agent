@@ -1,6 +1,10 @@
 import type { Message } from '../types';
 import type { ToolResultRecord } from './chatStreamTypes';
 import { mergeToolResultMetadata } from './toolResultMetadata';
+import {
+  streamSegmentsToHistoryMetadata,
+  type InterleavedSegment,
+} from './useInterleavedSegments';
 
 export function streamingAssistantMessageId(sessionId: string): string {
   return `streaming-${sessionId}`;
@@ -138,6 +142,7 @@ export function finalizeStreamingAssistantMessage(
   terminalMessageId: string,
   toolResults?: ToolResultRecord[],
   terminalError?: string,
+  segments?: InterleavedSegment[],
 ): Message[] {
   const streamingId = streamingAssistantMessageId(sessionId);
 
@@ -161,6 +166,27 @@ export function finalizeStreamingAssistantMessage(
       );
       if (terminalToolResults) {
         metadata.tool_results = terminalToolResults;
+      }
+
+      // Preserve the live text/reasoning/steer ordering by projecting the
+      // event-ordered segments into the same per-iteration metadata the
+      // backend persists. Without this, StaticBubble rebuilds history from
+      // empty iteration_texts and drops everything but the tool cards.
+      if (segments && segments.length > 0) {
+        const hist = streamSegmentsToHistoryMetadata(segments);
+        metadata.iteration_texts = hist.iteration_texts;
+        metadata.iteration_reasonings = hist.iteration_reasonings;
+        metadata.iteration_reasoning_durations_ms =
+          hist.iteration_reasoning_durations_ms;
+        metadata.iteration_tool_counts = hist.iteration_tool_counts;
+        if (hist.injected_steers.length > 0) {
+          metadata.injected_steers = hist.injected_steers;
+        }
+        // Per-iteration reasoning already carries the full reasoning trace, so
+        // drop the flat copy to avoid rendering it twice in StaticBubble.
+        if (hist.hasReasoning) {
+          delete metadata.reasoning_content;
+        }
       }
 
       const shouldPreserve = message.content.length > 0

@@ -15,10 +15,14 @@ export interface ToolResultRecord {
   metadata?: Record<string, unknown>;
 }
 
-const PLAN_AGENT_PREFIX = 'plan-';
-const PLAN_ORCHESTRATOR_AGENT_NAME = 'plan-orchestrator';
-const PLAN_WRITER_AGENT_NAME = 'plan-writer';
+const ORCHESTRATOR_AGENT_SUFFIX = '-orchestrator';
 
+// The main chat shows only the GLOBAL view: root-agent output and orchestrator
+// summary cards (the `Plan` / `Loop` tool cards, emitted by `plan-orchestrator`
+// / `loop-orchestrator`). Sub-agents run under their own child sessions
+// (e.g. `plan-writer`, `plan-phase-executor:phase-N`, `loop-executor`, or
+// Task-delegated agents) and are surfaced in their own sub-chat, NOT flooded
+// into the main chat.
 export function shouldDisplayStreamingAgent(
   agentName?: string,
   rootAgentNames: Iterable<string> = [DEFAULT_ROOT_AGENT_NAME],
@@ -27,7 +31,7 @@ export function shouldDisplayStreamingAgent(
     return true;
   }
 
-  if (agentName.startsWith(PLAN_AGENT_PREFIX)) {
+  if (agentName.endsWith(ORCHESTRATOR_AGENT_SUFFIX)) {
     return true;
   }
 
@@ -44,13 +48,16 @@ export function shouldDisplayStreamingContentAgent(
   agentName?: string,
   rootAgentNames: Iterable<string> = [DEFAULT_ROOT_AGENT_NAME],
 ): boolean {
-  if (agentName === PLAN_WRITER_AGENT_NAME) {
-    return false;
-  }
-
-  if (agentName === PLAN_ORCHESTRATOR_AGENT_NAME) {
-    return true;
-  }
-
   return shouldDisplayStreamingAgent(agentName, rootAgentNames);
+}
+
+/// Decide whether a progress event belongs to a genuine sub-session (a plan
+/// phase or loop round running under its own child session) versus the run's
+/// parent session. Task-delegated sub-agents reuse the parent session id, so
+/// they are NOT sub-sessions and remain subject to the main-chat agent filter.
+export function isSubSessionEvent(
+  childSessionId: string | undefined | null,
+  parentSessionId: string | undefined | null,
+): boolean {
+  return !!childSessionId && childSessionId !== parentSessionId;
 }

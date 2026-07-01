@@ -523,3 +523,47 @@
   color: var(--text-muted);
   text-align: center;
 }
+
+/* Sub-agent (drill-in) list */
+.info-subagent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.info-subagent-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.info-subagent-item:hover {
+  background: var(--surface-secondary);
+  border-color: var(--accent);
+}
+
+.info-subagent-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.info-subagent-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info-subagent-chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}

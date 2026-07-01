@@ -133,6 +133,8 @@ export function useChatStreaming(
               event.session_id,
               `orphaned-${prevRunId || Date.now()}`,
               refs.toolResultsRef.current.get(event.session_id),
+              undefined,
+              refs.streamSegsRef.current.get(event.session_id),
             ),
           );
           syncVisible(event.session_id);
@@ -154,7 +156,8 @@ export function useChatStreaming(
         markSessionActivity(event.session_id);
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
       } else if (event.type === 'stream_delta') {
-        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!event.sub_session
+          && !shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -211,7 +214,8 @@ export function useChatStreaming(
         });
         syncVisible(sid);
       } else if (event.type === 'stream_reasoning_delta') {
-        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!event.sub_session
+          && !shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -264,7 +268,8 @@ export function useChatStreaming(
         });
         syncVisible(sid);
       } else if (event.type === 'stream_image_delta') {
-        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!event.sub_session
+          && !shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -277,7 +282,8 @@ export function useChatStreaming(
           }),
         );
       } else if (event.type === 'stream_image_complete') {
-        if (!shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!event.sub_session
+          && !shouldDisplayStreamingContentAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -290,7 +296,8 @@ export function useChatStreaming(
           }),
         );
       } else if (event.type === 'tool_start') {
-        if (!shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+        if (!event.sub_session
+          && !shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
           return;
         }
         const sid = event.session_id;
@@ -546,6 +553,8 @@ export function useChatStreaming(
                 sessionId,
                 cancelledMessageId,
                 snapToolResults,
+                undefined,
+                refs.streamSegsRef.current.get(sessionId),
               );
             });
             syncVisible(sessionId);
@@ -590,6 +599,7 @@ export function useChatStreaming(
                 errorMessageId,
                 snapToolResultsErr,
                 payload.error,
+                refs.streamSegsRef.current.get(sessionId),
               );
             });
             syncVisible(sessionId);
@@ -650,6 +660,10 @@ export function useChatStreaming(
           setOp('idle');
         }
       } else if (event.type === 'tool_result') {
+        if (!event.sub_session
+          && !shouldDisplayStreamingAgent(event.agent_name, refs.rootAgentNamesRef.current)) {
+          return;
+        }
         // Accumulate tool results for inline card rendering.
         const sid = event.session_id;
         markSessionActivity(sid);
