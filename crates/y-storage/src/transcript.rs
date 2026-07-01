@@ -194,6 +194,11 @@ impl TranscriptStore for JsonlTranscriptStore {
 }
 
 /// Read all messages from a JSONL file.
+///
+/// Malformed lines (e.g. a truncated final line left by a crash mid-append)
+/// are skipped with a warning rather than aborting the whole read. Aborting
+/// would make a single bad line hide the entire session, which the GUI then
+/// renders as an empty chat.
 pub(crate) async fn read_messages_from_file(path: &Path) -> Result<Vec<Message>, SessionError> {
     let file = tokio::fs::File::open(path)
         .await
@@ -204,6 +209,7 @@ pub(crate) async fn read_messages_from_file(path: &Path) -> Result<Vec<Message>,
     let reader = tokio::io::BufReader::new(file);
     let mut lines = reader.lines();
     let mut messages = Vec::new();
+    let mut skipped = 0usize;
 
     while let Some(line) = lines
         .next_line()
@@ -216,11 +222,26 @@ pub(crate) async fn read_messages_from_file(path: &Path) -> Result<Vec<Message>,
         if trimmed.is_empty() {
             continue;
         }
-        let msg: Message =
-            serde_json::from_str(trimmed).map_err(|e| SessionError::TranscriptError {
-                message: format!("parse message: {e}"),
-            })?;
-        messages.push(msg);
+        match serde_json::from_str::<Message>(trimmed) {
+            Ok(msg) => messages.push(msg),
+            Err(e) => {
+                skipped += 1;
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping unparseable transcript line",
+                );
+            }
+        }
+    }
+
+    if skipped > 0 {
+        tracing::warn!(
+            path = %path.display(),
+            skipped,
+            recovered = messages.len(),
+            "recovered transcript with skipped malformed lines",
+        );
     }
 
     Ok(messages)
@@ -261,13 +282,32 @@ async fn read_last_messages_from_file(
         ring.push_back(line);
     }
 
-    ring.into_iter()
-        .map(|line| {
-            serde_json::from_str(line.trim()).map_err(|e| SessionError::TranscriptError {
-                message: format!("parse message: {e}"),
-            })
-        })
-        .collect()
+    let mut messages = Vec::with_capacity(ring.len());
+    let mut skipped = 0usize;
+    for line in ring {
+        match serde_json::from_str::<Message>(line.trim()) {
+            Ok(msg) => messages.push(msg),
+            Err(e) => {
+                skipped += 1;
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping unparseable transcript line (tail read)",
+                );
+            }
+        }
+    }
+
+    if skipped > 0 {
+        tracing::warn!(
+            path = %path.display(),
+            skipped,
+            recovered = messages.len(),
+            "recovered tail transcript with skipped malformed lines",
+        );
+    }
+
+    Ok(messages)
 }
 
 #[cfg(test)]
@@ -313,6 +353,35 @@ mod tests {
         assert_eq!(messages[0].content, "hello");
         assert_eq!(messages[1].content, "world");
         assert_eq!(messages[2].content, "!");
+    }
+
+    #[tokio::test]
+    async fn test_read_all_skips_corrupt_lines() {
+        // A crash mid-append can leave a truncated/garbled JSONL line. A single
+        // bad line must NOT abort the whole read (which the GUI would render as
+        // an empty session) -- valid lines around it must still be recovered.
+        let (_dir, store) = temp_store();
+        let session_id = SessionId::new();
+
+        let path = store.transcript_path(&session_id);
+        let first = serde_json::to_string(&test_message("first")).unwrap();
+        tokio::fs::write(
+            &path,
+            format!("{first}\n{{\"role\":\"assistant\",\"content\": <-- truncated\n"),
+        )
+        .await
+        .unwrap();
+
+        // A valid trailing message appended after the corrupt line.
+        store
+            .append(&session_id, &test_message("third"))
+            .await
+            .unwrap();
+
+        let messages = store.read_all(&session_id).await.unwrap();
+        assert_eq!(messages.len(), 2, "corrupt middle line should be skipped");
+        assert_eq!(messages[0].content, "first");
+        assert_eq!(messages[1].content, "third");
     }
 
     #[tokio::test]
