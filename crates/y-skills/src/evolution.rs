@@ -1,10 +1,10 @@
-//! Skill evolution: proposals, approval gates, and metrics.
+//! Skill evolution: proposals and metrics.
 //!
 //! Design reference: skill-versioning-evolution-design.md §Evolution Pipeline
 //!
 //! After accumulating enough experience, the system can propose changes
-//! to skill documents. Proposals go through an approval gate that
-//! checks the configured policy before applying changes.
+//! to skill documents. This module defines the proposal and metrics types
+//! consumed by the regression detector.
 
 use serde::{Deserialize, Serialize};
 
@@ -188,174 +188,9 @@ pub struct EvolutionProposal {
     pub deferred_until: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Approval gate
-// ---------------------------------------------------------------------------
-
-/// Approval policy for a skill.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApprovalPolicy {
-    /// All changes require human approval.
-    Supervised,
-    /// Minor changes (`BetterPhrasing`, `ObsoleteRule`) auto-approve.
-    AutoMinor,
-    /// Auto-approve if evaluation passes.
-    AutoEvaluated,
-    /// Fully autonomous — all proposals auto-approve.
-    Autonomous,
-    /// No changes allowed.
-    Frozen,
-}
-
-/// Approval gate: decides whether a proposal should be auto-approved.
-#[derive(Debug)]
-pub struct ApprovalGate {
-    policy: ApprovalPolicy,
-}
-
-impl ApprovalGate {
-    /// Create a new approval gate with the given policy.
-    pub fn new(policy: ApprovalPolicy) -> Self {
-        Self { policy }
-    }
-
-    /// Check a proposal against the policy.
-    ///
-    /// Returns `true` if the proposal should be auto-approved.
-    pub fn check(&self, proposal: &EvolutionProposal) -> bool {
-        match &self.policy {
-            ApprovalPolicy::Frozen | ApprovalPolicy::Supervised | ApprovalPolicy::AutoEvaluated => {
-                // AutoEvaluated stub: in production, would run an LLM evaluation.
-                false
-            }
-            ApprovalPolicy::Autonomous => true,
-            ApprovalPolicy::AutoMinor => {
-                // Auto-approve if all patterns are minor.
-                proposal
-                    .patterns
-                    .iter()
-                    .all(|p| matches!(p, PatternType::BetterPhrasing | PatternType::ObsoleteRule))
-            }
-        }
-    }
-
-    /// Get the current policy.
-    pub fn policy(&self) -> &ApprovalPolicy {
-        &self.policy
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Skill refiner
-// ---------------------------------------------------------------------------
-
-use crate::extractor::ExtractedPattern;
-
-/// Generates evolution proposals from extracted patterns.
-#[derive(Debug)]
-pub struct SkillRefiner;
-
-impl SkillRefiner {
-    /// Create a new refiner.
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Generate a proposal from a set of extracted patterns for a skill.
-    pub fn propose(
-        &self,
-        skill_name: &str,
-        current_version: &str,
-        patterns: &[ExtractedPattern],
-    ) -> Option<EvolutionProposal> {
-        if patterns.is_empty() {
-            return None;
-        }
-
-        let change_type = Self::determine_change_type(patterns);
-        let pattern_types: Vec<PatternType> =
-            patterns.iter().map(|p| p.pattern_type.clone()).collect();
-        let pattern_ids: Vec<String> = patterns.iter().map(|p| p.id.clone()).collect();
-
-        let description = patterns
-            .iter()
-            .map(|p| p.description.as_str())
-            .collect::<Vec<_>>()
-            .join("; ");
-
-        Some(EvolutionProposal {
-            id: format!("prop-{}", uuid::Uuid::new_v4()),
-            skill_name: skill_name.to_string(),
-            current_version: current_version.to_string(),
-            proposed_changes: description,
-            patterns: pattern_types,
-            status: ProposalStatus::PendingApproval,
-            proposed_version: None,
-            change_type: Some(change_type),
-            patterns_referenced: pattern_ids,
-            diff_preview: String::new(),
-            deferred_until: None,
-        })
-    }
-
-    fn determine_change_type(patterns: &[ExtractedPattern]) -> ChangeType {
-        // Use the most significant pattern type to determine change type.
-        for p in patterns {
-            match p.pattern_type {
-                PatternType::EdgeCase => return ChangeType::EdgeCaseAddition,
-                PatternType::CommonError => return ChangeType::ErrorWarning,
-                PatternType::NewCapability => return ChangeType::CapabilitySplit,
-                PatternType::WorkflowDiscovery => return ChangeType::WorkflowDiscovery,
-                PatternType::ObsoleteRule => return ChangeType::RuleRemoval,
-                PatternType::BetterPhrasing => {}
-            }
-        }
-        ChangeType::PhrasingUpdate
-    }
-}
-
-impl Default for SkillRefiner {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn minor_proposal() -> EvolutionProposal {
-        EvolutionProposal {
-            id: "prop-1".to_string(),
-            skill_name: "code-review".to_string(),
-            current_version: "abc123".to_string(),
-            proposed_changes: "Improve phrasing of review instructions".to_string(),
-            patterns: vec![PatternType::BetterPhrasing],
-            status: ProposalStatus::PendingApproval,
-            proposed_version: None,
-            change_type: Some(ChangeType::PhrasingUpdate),
-            patterns_referenced: vec![],
-            diff_preview: String::new(),
-            deferred_until: None,
-        }
-    }
-
-    fn major_proposal() -> EvolutionProposal {
-        EvolutionProposal {
-            id: "prop-2".to_string(),
-            skill_name: "code-review".to_string(),
-            current_version: "abc123".to_string(),
-            proposed_changes: "Add new security analysis capability".to_string(),
-            patterns: vec![PatternType::NewCapability],
-            status: ProposalStatus::PendingApproval,
-            proposed_version: None,
-            change_type: Some(ChangeType::CapabilitySplit),
-            patterns_referenced: vec![],
-            diff_preview: String::new(),
-            deferred_until: None,
-        }
-    }
 
     /// T-P3-39-04: Skill metrics track success/failure rates.
     #[test]
@@ -403,64 +238,5 @@ mod tests {
         metrics.record(true, false, 100, 3000);
         // avg = (1000 + 3000) / 2 = 2000
         assert!((metrics.avg_token_usage - 2000.0).abs() < 1.0);
-    }
-
-    /// T-SK-S6-05: SkillRefiner generates proposal from patterns.
-    #[test]
-    fn test_skill_refiner_generates_proposal() {
-        let refiner = SkillRefiner::new();
-        let patterns = vec![ExtractedPattern {
-            id: "pat-1".to_string(),
-            skill_id: "code-review".to_string(),
-            pattern_type: PatternType::EdgeCase,
-            description: "Edge case: large files".to_string(),
-            frequency: 5,
-            evidence_ids: vec!["exp-1".to_string()],
-        }];
-
-        let proposal = refiner.propose("code-review", "v1", &patterns);
-        assert!(proposal.is_some());
-        let p = proposal.unwrap();
-        assert_eq!(p.skill_name, "code-review");
-        assert_eq!(p.change_type, Some(ChangeType::EdgeCaseAddition));
-        assert!(!p.patterns_referenced.is_empty());
-    }
-
-    /// T-SK-S6-06: Empty patterns produce no proposal.
-    #[test]
-    fn test_skill_refiner_no_patterns() {
-        let refiner = SkillRefiner::new();
-        assert!(refiner.propose("test", "v1", &[]).is_none());
-    }
-
-    /// T-P3-39-06: Supervised gate rejects all proposals.
-    #[test]
-    fn test_approval_gate_supervised() {
-        let gate = ApprovalGate::new(ApprovalPolicy::Supervised);
-        assert!(!gate.check(&minor_proposal()));
-        assert!(!gate.check(&major_proposal()));
-    }
-
-    /// T-P3-39-07: Autonomous gate approves all proposals.
-    #[test]
-    fn test_approval_gate_autonomous() {
-        let gate = ApprovalGate::new(ApprovalPolicy::Autonomous);
-        assert!(gate.check(&minor_proposal()));
-        assert!(gate.check(&major_proposal()));
-    }
-
-    /// T-P3-39-08: AutoMinor gate approves minor but rejects major.
-    #[test]
-    fn test_approval_gate_auto_minor() {
-        let gate = ApprovalGate::new(ApprovalPolicy::AutoMinor);
-        assert!(gate.check(&minor_proposal()));
-        assert!(!gate.check(&major_proposal()));
-    }
-
-    /// T-P3-39-09: Frozen gate rejects everything.
-    #[test]
-    fn test_approval_gate_frozen() {
-        let gate = ApprovalGate::new(ApprovalPolicy::Frozen);
-        assert!(!gate.check(&minor_proposal()));
     }
 }

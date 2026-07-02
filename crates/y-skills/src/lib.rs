@@ -28,10 +28,6 @@ pub mod analyzer;
 #[cfg(feature = "skill_ingestion")]
 pub mod classifier;
 #[cfg(feature = "skill_ingestion")]
-pub mod converter;
-#[cfg(feature = "skill_ingestion")]
-pub mod decomposer;
-#[cfg(feature = "skill_ingestion")]
 pub mod filter;
 #[cfg(feature = "skill_ingestion")]
 pub mod ingestion;
@@ -99,10 +95,6 @@ pub use analyzer::{AnalysisReport, ContentAnalyzer};
 #[cfg(feature = "skill_ingestion")]
 pub use classifier::{SkillClassificationType, SkillClassifier};
 #[cfg(feature = "skill_ingestion")]
-pub use converter::FormatConverter;
-#[cfg(feature = "skill_ingestion")]
-pub use decomposer::{DecomposedSkill, DocumentDecomposer};
-#[cfg(feature = "skill_ingestion")]
 pub use filter::{FilterDecision, FilterGate};
 #[cfg(feature = "skill_ingestion")]
 pub use ingestion::{FormatDetector, IngestionFormat, IngestionPipeline};
@@ -121,7 +113,7 @@ pub use validator::SkillValidator;
 
 // Security
 #[cfg(feature = "skill_security_screening")]
-pub use security::{SecurityScreener, SecurityVerdict};
+pub use security::SecurityVerdict;
 
 // Linkage
 #[cfg(feature = "skill_linkage")]
@@ -129,9 +121,11 @@ pub use linker::ResourceLinker;
 
 // Evolution
 #[cfg(feature = "evolution_refinement")]
-pub use evolution::{ChangeType, SkillMetrics, SkillRefiner};
+pub use evolution::{ChangeType, SkillMetrics};
 #[cfg(feature = "evolution_capture")]
-pub use experience::{ExperienceRecord, ExperienceStore, TokenUsage, ToolCallRecord};
+pub use experience::{
+    ExperienceOutcome, ExperienceRecord, ExperienceStore, TokenUsage, ToolCallRecord,
+};
 #[cfg(feature = "evolution_extraction")]
 pub use extractor::{ExtractedPattern, PatternExtractor, PatternRegistry};
 #[cfg(feature = "evolution_fast_path")]
@@ -141,7 +135,7 @@ pub use regression::RegressionDetector;
 
 // Usage audit
 #[cfg(feature = "skill_usage_audit")]
-pub use usage_audit::SkillUsageAudit;
+pub use usage_audit::{InjectedSkill, SkillUsageAudit, SkillUsageResult, UsageJudgment};
 
 // GC
 pub use gc::SkillGarbageCollector;

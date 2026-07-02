@@ -11,14 +11,14 @@ use tracing::{info, warn};
 use tempfile::TempDir;
 
 use y_core::agent::{AgentDelegator, ContextStrategyHint};
-use y_core::skill::{
-    SkillClassification, SkillClassificationType, SkillConstraints, SkillManifest, SkillRegistry,
-    SkillState, SkillVersion, SubDocumentRef,
-};
-use y_core::types::SkillId;
+use y_core::skill::{SkillManifest, SkillRegistry};
 use y_skills::{
     FilesystemSkillStore, FormatDetector, IngestionFormat, ManifestParser, SkillConfig,
     SkillRegistryImpl,
+};
+
+use crate::skill_manifest_helper::{
+    build_skill_manifest_from_agent_output, store_sub_documents, SkillManifestInput,
 };
 
 // ---------------------------------------------------------------------------
@@ -132,42 +132,44 @@ struct AgentManifestOutput {
     constraints: Option<AgentConstraintsOutput>,
 }
 
-fn default_version() -> String {
+pub fn default_version() -> String {
     "1.0.0".to_string()
 }
 
 #[derive(Debug, Deserialize)]
-struct AgentClassificationOutput {
+pub struct AgentClassificationOutput {
     #[serde(rename = "type", default)]
-    skill_type: String,
+    pub skill_type: String,
     #[serde(default)]
-    domain: Vec<String>,
+    pub domain: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     #[serde(default = "default_atomic")]
-    atomic: bool,
+    pub atomic: bool,
 }
 
-fn default_atomic() -> bool {
+pub fn default_atomic() -> bool {
     true
 }
 
 #[derive(Debug, Deserialize)]
-struct AgentConstraintsOutput {
+pub struct AgentConstraintsOutput {
     #[serde(default)]
-    max_input_tokens: Option<u32>,
+    pub max_input_tokens: Option<u32>,
     #[serde(default)]
-    max_output_tokens: Option<u32>,
+    pub max_output_tokens: Option<u32>,
     #[serde(default)]
-    requires_language: Option<String>,
+    pub requires_language: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AgentSubDocOutput {
-    path: String,
-    title: String,
+pub struct AgentSubDocOutput {
+    pub path: String,
+    pub title: String,
     #[serde(default)]
-    token_count: u32,
+    pub token_count: u32,
     #[serde(default)]
-    load_condition: Option<String>,
+    pub load_condition: Option<String>,
 }
 
 /// A tool that the agent extracted from a hybrid skill.
@@ -177,9 +179,20 @@ struct AgentSubDocOutput {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentExtractedTool {
     pub name: String,
+    #[allow(dead_code)]
     pub description: String,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     pub tool_type: String,
+    /// Absolute path to an existing artifact the agent wants bundled with the
+    /// skill (e.g. a companion script the user already supplied). Rust copies
+    /// it verbatim -- the agent does not regenerate its content.
+    #[serde(default)]
+    pub source_path: Option<String>,
+    /// Skill-relative destination (e.g. `tools/analyze.py`). Defaults to
+    /// `tools/<file-name-of-source>` when omitted.
+    #[serde(default)]
+    pub dest_path: Option<String>,
 }
 
 /// Agent's decision on how to handle a companion file.
@@ -580,32 +593,13 @@ impl SkillIngestionService {
         );
 
         // 10. Store sub-document content (read from temp dir)
-        for sub_doc in &agent_output.sub_documents {
-            let sub_doc_path = output_dir.path().join(&sub_doc.path);
-            match tokio::fs::read_to_string(&sub_doc_path).await {
-                Ok(content) => {
-                    if let Err(e) = reg
-                        .store_sub_document(&skill_id_str, &sub_doc.path, &content)
-                        .await
-                    {
-                        warn!(
-                            skill_id = %skill_id_str,
-                            path = %sub_doc.path,
-                            error = %e,
-                            "Failed to store sub-document"
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        skill_id = %skill_id_str,
-                        path = %sub_doc.path,
-                        error = %e,
-                        "Agent declared sub-document but file not found in output dir"
-                    );
-                }
-            }
-        }
+        store_sub_documents(
+            &reg,
+            &skill_id_str,
+            &agent_output.sub_documents,
+            output_dir.path(),
+        )
+        .await;
 
         // 11. Log extracted tools (future: register in ToolRegistry)
         if !agent_output.extracted_tools.is_empty() {
@@ -649,73 +643,28 @@ impl SkillIngestionService {
             ImportError::InvalidAgentOutput("accepted skill missing manifest".to_string())
         })?;
 
-        let token_estimate = u32::try_from(root_content.chars().count() / 4).unwrap_or(0);
-        let now = chrono::Utc::now();
-
-        let sub_doc_refs: Vec<SubDocumentRef> = agent_output
-            .sub_documents
-            .iter()
-            .map(|sd| SubDocumentRef {
-                id: sd.path.clone(),
-                path: sd.path.clone(),
-                title: sd.title.clone(),
-                load_condition: sd
-                    .load_condition
-                    .clone()
-                    .unwrap_or_else(|| "on_demand".to_string()),
-                token_estimate: sd.token_count,
-            })
-            .collect();
-
+        // Ingestion derives tags from the classification domain only; it does
+        // not carry references, knowledge bases, or an explicit author.
         let tags = manifest_data
             .classification
             .as_ref()
             .map(|c| c.domain.clone())
             .unwrap_or_default();
 
-        Ok(SkillManifest {
-            id: SkillId::from_string(&manifest_data.name),
-            name: manifest_data.name.clone(),
-            description: manifest_data.description.clone(),
-            version: SkillVersion(manifest_data.version.clone()),
+        Ok(build_skill_manifest_from_agent_output(SkillManifestInput {
+            name: &manifest_data.name,
+            version: &manifest_data.version,
+            description: &manifest_data.description,
+            classification: manifest_data.classification.as_ref(),
+            constraints: manifest_data.constraints.as_ref(),
+            sub_documents: &agent_output.sub_documents,
+            root_content,
             tags,
-            trigger_patterns: vec![],
-            knowledge_bases: vec![],
-            root_content: root_content.to_string(),
-            sub_documents: sub_doc_refs,
-            token_estimate,
-            created_at: now,
-            updated_at: now,
-            classification: manifest_data.classification.as_ref().map(|c| {
-                let skill_type = match c.skill_type.as_str() {
-                    "api_call" => SkillClassificationType::ApiCall,
-                    "tool_wrapper" => SkillClassificationType::ToolWrapper,
-                    "agent_behavior" => SkillClassificationType::AgentBehavior,
-                    "hybrid" => SkillClassificationType::Hybrid,
-                    _ => SkillClassificationType::LlmReasoning,
-                };
-                SkillClassification {
-                    skill_type,
-                    domain: c.domain.clone(),
-                    atomic: c.atomic,
-                }
-            }),
-            constraints: manifest_data
-                .constraints
-                .as_ref()
-                .map(|c| SkillConstraints {
-                    max_input_tokens: c.max_input_tokens,
-                    max_output_tokens: c.max_output_tokens,
-                    requires_language: c.requires_language.clone(),
-                }),
-            security: None,
             references: None,
+            knowledge_bases: vec![],
             author: Some("skill-ingestion-agent".to_string()),
             source_format: Some(format_str.to_string()),
-            source_hash: None,
-            state: Some(SkillState::Registered),
-            root_path: Some("root.md".to_string()),
-        })
+        }))
     }
 
     /// Process companion file decisions from the agent output.

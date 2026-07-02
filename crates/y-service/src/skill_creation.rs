@@ -10,15 +10,17 @@ use tracing::{info, warn};
 use tempfile::TempDir;
 
 use y_core::agent::{AgentDelegator, ContextStrategyHint};
-use y_core::skill::{
-    SkillClassification, SkillClassificationType, SkillConstraints, SkillManifest, SkillReferences,
-    SkillRegistry, SkillState, SkillVersion, SubDocumentRef,
-};
-use y_core::types::SkillId;
+use y_core::skill::{SkillManifest, SkillReferences, SkillRegistry};
 use y_skills::SkillRegistryImpl;
 
 use crate::skill_files::resolve_skill_write_path;
-use crate::skill_ingestion::extract_json_from_response;
+use crate::skill_ingestion::{
+    extract_json_from_response, AgentClassificationOutput, AgentConstraintsOutput,
+    AgentExtractedTool, AgentSubDocOutput,
+};
+use crate::skill_manifest_helper::{
+    build_skill_manifest_from_agent_output, store_sub_documents, SkillManifestInput,
+};
 
 /// Maximum size of a single companion artifact copied into a skill directory.
 const MAX_ARTIFACT_BYTES: u64 = 5 * 1024 * 1024;
@@ -88,7 +90,7 @@ struct AgentCreatorOutput {
 #[derive(Debug, Deserialize)]
 struct AgentCreatorManifest {
     name: String,
-    #[serde(default = "default_version")]
+    #[serde(default = "crate::skill_ingestion::default_version")]
     version: String,
     description: String,
     #[serde(default)]
@@ -102,36 +104,6 @@ struct AgentCreatorManifest {
     root: Option<AgentRootOutput>,
     #[serde(default)]
     references: Option<AgentReferencesOutput>,
-}
-
-fn default_version() -> String {
-    "1.0.0".to_string()
-}
-
-#[derive(Debug, Deserialize)]
-struct AgentClassificationOutput {
-    #[serde(rename = "type", default)]
-    skill_type: String,
-    #[serde(default)]
-    domain: Vec<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default = "default_atomic")]
-    atomic: bool,
-}
-
-fn default_atomic() -> bool {
-    true
-}
-
-#[derive(Debug, Deserialize)]
-struct AgentConstraintsOutput {
-    #[serde(default)]
-    max_input_tokens: Option<u32>,
-    #[serde(default)]
-    max_output_tokens: Option<u32>,
-    #[serde(default)]
-    requires_language: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,35 +124,6 @@ struct AgentReferencesOutput {
     skills: Vec<String>,
     #[serde(default)]
     knowledge_bases: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AgentSubDocOutput {
-    path: String,
-    title: String,
-    #[serde(default)]
-    token_count: u32,
-    #[serde(default)]
-    load_condition: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct AgentExtractedTool {
-    name: String,
-    #[allow(dead_code)]
-    description: String,
-    #[serde(rename = "type")]
-    #[allow(dead_code)]
-    tool_type: String,
-    /// Absolute path to an existing artifact the agent wants bundled with the
-    /// skill (e.g. a companion script the user already supplied). Rust copies
-    /// it verbatim -- the agent does not regenerate its content.
-    #[serde(default)]
-    source_path: Option<String>,
-    /// Skill-relative destination (e.g. `tools/analyze.py`). Defaults to
-    /// `tools/<file-name-of-source>` when omitted.
-    #[serde(default)]
-    dest_path: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -388,32 +331,13 @@ impl SkillCreationService {
             "Skill successfully created and registered"
         );
 
-        for sub_doc in &agent_output.sub_documents {
-            let sub_doc_path = output_dir.path().join(&sub_doc.path);
-            match tokio::fs::read_to_string(&sub_doc_path).await {
-                Ok(content) => {
-                    if let Err(e) = reg
-                        .store_sub_document(&skill_id_str, &sub_doc.path, &content)
-                        .await
-                    {
-                        warn!(
-                            skill_id = %skill_id_str,
-                            path = %sub_doc.path,
-                            error = %e,
-                            "Failed to store sub-document"
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        skill_id = %skill_id_str,
-                        path = %sub_doc.path,
-                        error = %e,
-                        "Agent declared sub-document but file not found in output dir"
-                    );
-                }
-            }
-        }
+        store_sub_documents(
+            &reg,
+            &skill_id_str,
+            &agent_output.sub_documents,
+            output_dir.path(),
+        )
+        .await;
 
         if !agent_output.extracted_tools.is_empty() {
             if let Some(store_base) = reg.store_base_path() {
@@ -578,24 +502,8 @@ impl SkillCreationService {
             CreationError::InvalidAgentOutput("created skill missing manifest".to_string())
         })?;
 
-        let token_estimate = u32::try_from(root_content.chars().count() / 4).unwrap_or(0);
-        let now = chrono::Utc::now();
-
-        let sub_doc_refs: Vec<SubDocumentRef> = agent_output
-            .sub_documents
-            .iter()
-            .map(|sd| SubDocumentRef {
-                id: sd.path.clone(),
-                path: sd.path.clone(),
-                title: sd.title.clone(),
-                load_condition: sd
-                    .load_condition
-                    .clone()
-                    .unwrap_or_else(|| "on_demand".to_string()),
-                token_estimate: sd.token_count,
-            })
-            .collect();
-
+        // Creation merges classification domain and tags (sorted, de-duped)
+        // and carries references plus their knowledge bases.
         let tags = manifest_data
             .classification
             .as_ref()
@@ -614,58 +522,33 @@ impl SkillCreationService {
             knowledge_bases: r.knowledge_bases.clone(),
         });
 
-        Ok(SkillManifest {
-            id: SkillId::from_string(&manifest_data.name),
-            name: manifest_data.name.clone(),
-            description: manifest_data.description.clone(),
-            version: SkillVersion(manifest_data.version.clone()),
+        let knowledge_bases = manifest_data
+            .references
+            .as_ref()
+            .map(|r| r.knowledge_bases.clone())
+            .unwrap_or_default();
+
+        let author = Some(
+            manifest_data
+                .author
+                .clone()
+                .unwrap_or_else(|| "skill-creator-agent".to_string()),
+        );
+
+        Ok(build_skill_manifest_from_agent_output(SkillManifestInput {
+            name: &manifest_data.name,
+            version: &manifest_data.version,
+            description: &manifest_data.description,
+            classification: manifest_data.classification.as_ref(),
+            constraints: manifest_data.constraints.as_ref(),
+            sub_documents: &agent_output.sub_documents,
+            root_content,
             tags,
-            trigger_patterns: vec![],
-            knowledge_bases: manifest_data
-                .references
-                .as_ref()
-                .map(|r| r.knowledge_bases.clone())
-                .unwrap_or_default(),
-            root_content: root_content.to_string(),
-            sub_documents: sub_doc_refs,
-            token_estimate,
-            created_at: now,
-            updated_at: now,
-            classification: manifest_data.classification.as_ref().map(|c| {
-                let skill_type = match c.skill_type.as_str() {
-                    "api_call" => SkillClassificationType::ApiCall,
-                    "tool_wrapper" => SkillClassificationType::ToolWrapper,
-                    "agent_behavior" => SkillClassificationType::AgentBehavior,
-                    "hybrid" => SkillClassificationType::Hybrid,
-                    _ => SkillClassificationType::LlmReasoning,
-                };
-                SkillClassification {
-                    skill_type,
-                    domain: c.domain.clone(),
-                    atomic: c.atomic,
-                }
-            }),
-            constraints: manifest_data
-                .constraints
-                .as_ref()
-                .map(|c| SkillConstraints {
-                    max_input_tokens: c.max_input_tokens,
-                    max_output_tokens: c.max_output_tokens,
-                    requires_language: c.requires_language.clone(),
-                }),
-            security: None,
             references,
-            author: Some(
-                manifest_data
-                    .author
-                    .clone()
-                    .unwrap_or_else(|| "skill-creator-agent".to_string()),
-            ),
+            knowledge_bases,
+            author,
             source_format: Some("generated".to_string()),
-            source_hash: None,
-            state: Some(SkillState::Registered),
-            root_path: Some("root.md".to_string()),
-        })
+        }))
     }
 }
 

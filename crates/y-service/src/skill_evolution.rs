@@ -1,13 +1,18 @@
-//! Skill evolution event subscribers — wires `SkillUsageAudit` and
-//! `ExperienceStore` into the async event bus for automatic invocation.
+//! Skill evolution event subscribers.
 //!
-//! Design reference: skills-knowledge-design.md §Evolution Pipeline
+//! Provides two `EventSubscriber` implementations that feed the
+//! self-evolution pipeline from the async event bus:
 //!
-//! B1: `SkillUsageAuditSubscriber` — listens for `LlmCallCompleted` and
-//!     audits which injected skills were actually used based on output.
+//! B1: `SkillUsageAuditSubscriber` — listens for `LlmCallCompleted` events
+//!     and updates per-skill `SkillMetrics` (injection/actual-usage counts)
+//!     for the skills tracked as injected into the current context. The
+//!     overlap heuristic is a placeholder pending a richer output-text event
+//!     payload (see `y_skills::usage_audit::SkillUsageAudit` for the real
+//!     keyword-overlap audit used in production).
 //!
-//! B2: `ExperienceCaptureSubscriber` — listens for custom `skill_execution`
-//!     events and builds `ExperienceRecord` entries.
+//! B2: `ExperienceCaptureSubscriber` — listens for custom
+//!     `skill_execution_completed` events and appends `ExperienceRecord`
+//!     entries to an in-memory ring buffer for later pattern extraction.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,36 +22,30 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use y_core::hook::{Event, EventCategory, EventFilter, EventSubscriber, LlmEvent};
+use y_skills::{
+    evolution::SkillMetrics, experience::ExperienceOutcome, ExperienceRecord, InjectedSkill,
+    TokenUsage,
+};
 
 // ---------------------------------------------------------------------------
 // B1: Skill Usage Audit Subscriber
 // ---------------------------------------------------------------------------
 
 /// Shared state for tracking injected skills across LLM calls.
+///
+/// This holds `InjectedSkill` records (the canonical y-skills type) for the
+/// active context. It is session-level accumulation state — distinct from a
+/// single `InjectedSkill` — and therefore not a shadow of any y-skills type.
 #[derive(Debug, Default)]
 pub struct SkillInjectionTracker {
-    /// Skills currently injected in the active context, keyed by skill name.
-    pub injected_skills: Vec<TrackedSkill>,
-}
-
-/// A skill that was injected into the current context.
-#[derive(Debug, Clone)]
-pub struct TrackedSkill {
-    pub name: String,
-    pub content_hash: u64,
-    /// Excerpt of the skill content for overlap analysis.
-    pub content_excerpt: String,
+    /// Skills currently injected in the active context.
+    pub injected_skills: Vec<InjectedSkill>,
 }
 
 impl SkillInjectionTracker {
     /// Record that a skill was injected into the context.
-    pub fn record_injection(&mut self, name: String, content_excerpt: String) {
-        let content_hash = simple_hash(&content_excerpt);
-        self.injected_skills.push(TrackedSkill {
-            name,
-            content_hash,
-            content_excerpt,
-        });
+    pub fn record_injection(&mut self, name: String, content: String) {
+        self.injected_skills.push(InjectedSkill { name, content });
     }
 
     /// Clear tracked injections (e.g., after audit).
@@ -55,55 +54,12 @@ impl SkillInjectionTracker {
     }
 }
 
-fn simple_hash(s: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    s.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Usage audit metrics accumulated over the session.
-#[derive(Debug, Default)]
-pub struct UsageMetrics {
-    /// Per-skill injection and usage counts.
-    pub counts: HashMap<String, SkillUsageCounts>,
-}
-
-/// Individual skill usage counts.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SkillUsageCounts {
-    pub injection_count: u32,
-    pub usage_count: u32,
-}
-
-impl UsageMetrics {
-    /// Record an injection for a skill.
-    pub fn record_injection(&mut self, skill_name: &str) {
-        self.counts
-            .entry(skill_name.to_string())
-            .or_default()
-            .injection_count += 1;
-    }
-
-    /// Record that a skill was actually used.
-    pub fn record_usage(&mut self, skill_name: &str) {
-        self.counts
-            .entry(skill_name.to_string())
-            .or_default()
-            .usage_count += 1;
-    }
-
-    /// Get usage rate for a skill (0.0–1.0).
-    pub fn usage_rate(&self, skill_name: &str) -> Option<f64> {
-        self.counts.get(skill_name).map(|c| {
-            if c.injection_count == 0 {
-                0.0
-            } else {
-                f64::from(c.usage_count) / f64::from(c.injection_count)
-            }
-        })
-    }
-}
+/// Per-skill usage metrics accumulated over the session.
+///
+/// This is the same aggregation shape `y_skills::usage_audit::SkillUsageAudit`
+/// uses (`HashMap<String, SkillMetrics>`); the subscriber updates
+/// `SkillMetrics` directly rather than a parallel `SkillUsageCounts` struct.
+pub type UsageMetrics = HashMap<String, SkillMetrics>;
 
 /// Subscribes to `LlmCallCompleted` events and performs keyword-overlap-based
 /// usage auditing against the tracked injected skills.
@@ -158,19 +114,17 @@ impl EventSubscriber for SkillUsageAuditSubscriber {
 
             let mut metrics = self.metrics.write().await;
             for skill in &tracker.injected_skills {
-                metrics.record_injection(&skill.name);
-                // Simple heuristic: if the LLM used significant output tokens
-                // relative to the skill content, consider it "used".
-                // In production, this would use the actual LLM output text for
-                // keyword overlap analysis via SkillUsageAudit.audit().
-                if *output_tokens > 0 && !skill.content_excerpt.is_empty() {
-                    // Placeholder: mark as used if output_tokens > threshold
-                    // Real implementation will receive the actual output text
-                    // via a richer event payload.
+                let m = metrics.entry(skill.name.clone()).or_default();
+                m.record_injection();
+                // Placeholder heuristic: estimate skill usage from token ratios.
+                // The real keyword-overlap audit lives in
+                // `y_skills::usage_audit::SkillUsageAudit::audit()`, which needs
+                // the actual LLM output text — not yet carried by this event.
+                if *output_tokens > 0 && !skill.content.is_empty() {
                     let estimated_overlap =
                         f64::from(*output_tokens) / f64::from(*input_tokens).max(1.0);
                     if estimated_overlap >= self.usage_threshold {
-                        metrics.record_usage(&skill.name);
+                        m.record_actual_usage();
                     }
                 }
             }
@@ -197,25 +151,10 @@ impl EventSubscriber for SkillUsageAuditSubscriber {
 /// Integration: Register via `EventBus::subscribe_handler()`.
 pub struct ExperienceCaptureSubscriber {
     /// In-memory store for captured experiences.
-    store: Arc<RwLock<Vec<CapturedExperience>>>,
+    store: Arc<RwLock<Vec<ExperienceRecord>>>,
 }
 
 const MAX_EXPERIENCES: usize = 500;
-
-/// A simplified captured experience record (stored in-memory for now).
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CapturedExperience {
-    /// Skill ID that was executed.
-    pub skill_id: String,
-    /// Whether the execution was successful.
-    pub success: bool,
-    /// Duration in milliseconds.
-    pub duration_ms: u64,
-    /// Token usage.
-    pub tokens_used: u32,
-    /// Timestamp of capture.
-    pub timestamp: String,
-}
 
 impl ExperienceCaptureSubscriber {
     /// Create a new experience capture subscriber.
@@ -226,7 +165,7 @@ impl ExperienceCaptureSubscriber {
     }
 
     /// Get the captured experiences.
-    pub fn store(&self) -> Arc<RwLock<Vec<CapturedExperience>>> {
+    pub fn store(&self) -> Arc<RwLock<Vec<ExperienceRecord>>> {
         Arc::clone(&self.store)
     }
 }
@@ -263,12 +202,24 @@ impl EventSubscriber for ExperienceCaptureSubscriber {
                 )
                 .unwrap_or(0);
 
-                let experience = CapturedExperience {
-                    skill_id: skill_id.clone(),
-                    success,
-                    duration_ms,
-                    tokens_used,
+                let experience = ExperienceRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
+                    skill_id: Some(skill_id.clone()),
+                    skill_version: None,
+                    task_description: String::new(),
+                    outcome: if success {
+                        ExperienceOutcome::Success
+                    } else {
+                        ExperienceOutcome::Failure
+                    },
+                    trajectory_summary: String::new(),
+                    key_decisions: Vec::new(),
+                    evidence: Vec::new(),
+                    tool_calls: Vec::new(),
+                    error_messages: Vec::new(),
+                    duration_ms,
+                    token_usage: TokenUsage::new(0, tokens_used),
                 };
 
                 let mut store = self.store.write().await;
@@ -305,18 +256,30 @@ mod tests {
     #[test]
     fn test_usage_metrics_tracking() {
         let mut metrics = UsageMetrics::default();
-        metrics.record_injection("skill-a");
-        metrics.record_injection("skill-a");
-        metrics.record_injection("skill-b");
-        metrics.record_usage("skill-a");
+        metrics
+            .entry("skill-a".to_string())
+            .or_default()
+            .record_injection();
+        metrics
+            .entry("skill-a".to_string())
+            .or_default()
+            .record_injection();
+        metrics
+            .entry("skill-b".to_string())
+            .or_default()
+            .record_injection();
+        metrics
+            .entry("skill-a".to_string())
+            .or_default()
+            .record_actual_usage();
 
-        assert_eq!(metrics.counts["skill-a"].injection_count, 2);
-        assert_eq!(metrics.counts["skill-a"].usage_count, 1);
-        assert_eq!(metrics.counts["skill-b"].injection_count, 1);
-        assert_eq!(metrics.counts["skill-b"].usage_count, 0);
+        assert_eq!(metrics["skill-a"].injection_count, 2);
+        assert_eq!(metrics["skill-a"].actual_usage_count, 1);
+        assert_eq!(metrics["skill-b"].injection_count, 1);
+        assert_eq!(metrics["skill-b"].actual_usage_count, 0);
 
-        assert!((metrics.usage_rate("skill-a").unwrap() - 0.5).abs() < f64::EPSILON);
-        assert!((metrics.usage_rate("skill-b").unwrap()).abs() < f64::EPSILON);
+        assert!((metrics["skill-a"].usage_rate() - 0.5).abs() < f64::EPSILON);
+        assert!((metrics["skill-b"].usage_rate()).abs() < f64::EPSILON);
     }
 
     /// T-SK-B1-02: Injection tracker records and clears skills.
@@ -328,6 +291,7 @@ mod tests {
 
         assert_eq!(tracker.injected_skills.len(), 2);
         assert_eq!(tracker.injected_skills[0].name, "skill-1");
+        assert_eq!(tracker.injected_skills[0].content, "content 1");
 
         tracker.clear();
         assert!(tracker.injected_skills.is_empty());
@@ -364,10 +328,10 @@ mod tests {
         let store = subscriber.store();
         let experiences = store.read().await;
         assert_eq!(experiences.len(), 1);
-        assert_eq!(experiences[0].skill_id, "humanizer");
-        assert!(experiences[0].success);
+        assert_eq!(experiences[0].skill_id.as_deref(), Some("humanizer"));
+        assert_eq!(experiences[0].outcome, ExperienceOutcome::Success);
         assert_eq!(experiences[0].duration_ms, 1500);
-        assert_eq!(experiences[0].tokens_used, 800);
+        assert_eq!(experiences[0].token_usage.total, 800);
     }
 
     /// T-SK-B2-02: Experience capture ignores non-matching custom events.
