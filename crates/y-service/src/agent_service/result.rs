@@ -115,6 +115,7 @@ pub(crate) async fn handle_llm_error(
     let partial = std::mem::take(&mut ctx.new_messages);
     Err(AgentExecutionError::LlmError {
         message: format!("{error}"),
+        provider_error: Some(error),
         partial_messages: partial,
     })
 }

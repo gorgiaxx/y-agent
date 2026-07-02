@@ -229,6 +229,11 @@ pub enum AgentExecutionError {
     LlmError {
         /// Human-readable error message.
         message: String,
+        /// The original typed provider error, preserved so higher-level
+        /// callers can classify it (e.g. via `StandardError`) without
+        /// string-matching. `None` only in test fixtures or synthetic
+        /// construction paths that lack a real `ProviderError`.
+        provider_error: Option<y_core::provider::ProviderError>,
         /// Messages accumulated before the failure (assistant + tool messages
         /// from earlier successful iterations). Empty when the error occurs on
         /// the first LLM call.
@@ -608,6 +613,7 @@ mod tests {
     fn test_agent_execution_error_display() {
         assert!(AgentExecutionError::LlmError {
             message: "timeout".into(),
+            provider_error: None,
             partial_messages: vec![],
         }
         .to_string()

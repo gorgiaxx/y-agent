@@ -552,7 +552,10 @@ impl ChatService {
         let mcp_mode = request_mcp_mode
             .map(ToOwned::to_owned)
             .or_else(|| agent_config.and_then(|c| c.mcp_mode.clone()));
-        let mcp_servers = request_mcp_servers.map_or_else(|| agent_config.map_or_else(Vec::new, |c| c.mcp_servers.clone()), ToOwned::to_owned);
+        let mcp_servers = request_mcp_servers.map_or_else(
+            || agent_config.map_or_else(Vec::new, |c| c.mcp_servers.clone()),
+            ToOwned::to_owned,
+        );
         let working_directory = agent_config.and_then(|c| c.working_directory.clone());
         ResolvedTurnConfig {
             provider_id,
@@ -1164,6 +1167,7 @@ impl ChatService {
                 Ok(r) => r,
                 Err(AgentExecutionError::LlmError {
                     message,
+                    provider_error: _,
                     partial_messages,
                 }) => {
                     Self::persist_llm_error_partial_state(
