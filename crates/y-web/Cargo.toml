@@ -10,12 +10,10 @@ y-core = { workspace = true }
 y-bot = { workspace = true }
 y-service = { workspace = true, features = ["langfuse"] }
 y-session = { workspace = true }
-y-diagnostics = { workspace = true }
 y-agent = { workspace = true }
 y-knowledge = { workspace = true }
 y-skills = { workspace = true }
 y-prompt = { workspace = true }
-y-scheduler = { workspace = true }
 
 axum = { workspace = true }
 tower = { workspace = true }

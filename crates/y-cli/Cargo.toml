@@ -25,7 +25,6 @@ y-skills = { workspace = true, features = [
 ] }
 y-diagnostics = { workspace = true }
 y-tools = { workspace = true }
-y-mcp = { workspace = true }
 y-web = { workspace = true }
 axum = { workspace = true }
 anyhow = { workspace = true }

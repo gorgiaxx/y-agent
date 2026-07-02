@@ -17,12 +17,14 @@
 
 pub mod agent_management;
 pub mod agent_service;
+pub mod app_config;
 pub mod background_tasks;
 pub mod bot;
 pub mod chat;
 pub mod chat_types;
 pub mod chat_worker;
 pub mod config;
+pub mod config_service;
 pub mod container;
 pub mod context_optimization;
 pub mod cost;
@@ -43,6 +45,7 @@ pub mod skill_creation;
 pub mod skill_evolution;
 pub mod skill_files;
 pub mod skill_ingestion;
+pub mod skill_manifest_helper;
 pub mod skill_service;
 pub mod system;
 pub mod task_delegation_orchestrator;
@@ -59,6 +62,10 @@ pub use agent_service::{
     AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, AgentService,
     ServiceAgentRunner,
 };
+pub use app_config::{
+    cleanup_old_logs, dirs_log, dirs_state, dirs_user_config, home_dir, validate_config,
+    ConfigLoader, YAgentConfig,
+};
 pub use background_tasks::{
     BackgroundTaskInfo, BackgroundTaskPollRequest, BackgroundTaskService, BackgroundTaskSnapshot,
     BackgroundTaskWriteRequest,
@@ -71,6 +78,7 @@ pub use chat::{
     TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
 };
 pub use config::ServiceConfig;
+pub use config_service::{list_provider_models, ConfigService, CONFIG_SECTIONS};
 pub use container::ServiceContainer;
 pub use cost::CostService;
 pub use diagnostics::{DiagnosticsAgentDelegator, DiagnosticsService, HistoricalEntry};
@@ -95,8 +103,7 @@ pub use skill_creation::{
     SkillCreationService,
 };
 pub use skill_evolution::{
-    CapturedExperience, ExperienceCaptureSubscriber, SkillInjectionTracker,
-    SkillUsageAuditSubscriber, UsageMetrics,
+    ExperienceCaptureSubscriber, SkillInjectionTracker, SkillUsageAuditSubscriber, UsageMetrics,
 };
 pub use skill_files::{resolve_skill_read_path, resolve_skill_write_path};
 pub use skill_ingestion::{
@@ -105,7 +112,8 @@ pub use skill_ingestion::{
 };
 pub use skill_service::{SkillDetail, SkillInfo, SkillService};
 pub use system::{
-    HealthReport, HttpProtocol, ProviderInfo, ProviderTestRequest, StatusReport, SystemService,
+    HealthReport, HttpProtocol, MemoryStats, ProviderInfo, ProviderTestRequest, StatusReport,
+    SystemService,
 };
 pub use workflow_service::{
     CreateWorkflowRequest, DagEdge, DagNode, DagVisualization, UpdateWorkflowRequest,
