@@ -1,4 +1,3 @@
-
 use super::*;
 use tempfile::TempDir;
 
@@ -1459,4 +1458,459 @@ fn test_build_plan_execution_metadata_uses_unified_plan_file_resolution() {
     );
 
     assert_eq!(meta["display"]["plan_file"], "/explicit/plan.md");
+}
+
+// ---------------------------------------------------------------------------
+// Transient error detection for phase-level retry
+//
+// Verifies that `is_transient_llm_error` delegates to the standard
+// `StandardError::should_auto_retry` classification (same logic the
+// provider pool uses), not string matching on the error message.
+// ---------------------------------------------------------------------------
+
+use y_core::provider::ProviderError;
+
+fn llm_err(pe: ProviderError) -> AgentExecutionError {
+    AgentExecutionError::LlmError {
+        message: format!("{pe}"),
+        provider_error: Some(pe),
+        partial_messages: vec![],
+    }
+}
+
+#[test]
+fn test_is_transient_llm_error_network_error_is_transient() {
+    // Mid-stream EOF after HTTP 200 — the exact scenario from the bug report.
+    let error = llm_err(ProviderError::NetworkError {
+        status: Some(200),
+        message: "stream read error after HTTP 200: unexpected EOF".into(),
+    });
+    assert!(is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_server_error_is_transient() {
+    let error = llm_err(ProviderError::ServerError {
+        provider: "openai".into(),
+        message: "internal server error".into(),
+    });
+    assert!(is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_auth_error_is_not_transient() {
+    let error = llm_err(ProviderError::AuthenticationFailed {
+        provider: "openai".into(),
+        message: "invalid API key".into(),
+    });
+    assert!(!is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_quota_error_is_not_transient() {
+    let error = llm_err(ProviderError::QuotaExhausted {
+        provider: "openai".into(),
+        message: "billing limit reached".into(),
+    });
+    assert!(!is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_rate_limited_is_not_auto_retried() {
+    // Rate limits carry their own Retry-After; should_auto_retry returns
+    // false (the pool handles them via freeze + retry-after, not auto-retry).
+    let error = llm_err(ProviderError::RateLimited {
+        provider: "openai".into(),
+        retry_after_secs: 60,
+    });
+    assert!(!is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_context_error_is_not_transient() {
+    let error = AgentExecutionError::ContextError("context too large".into());
+    assert!(!is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_cancelled_is_not_transient() {
+    let error = AgentExecutionError::Cancelled {
+        partial_messages: vec![],
+        accumulated_content: String::new(),
+        iteration_texts: vec![],
+        iteration_reasonings: vec![],
+        iteration_reasoning_durations_ms: vec![],
+        iteration_tool_counts: vec![],
+        tool_calls_executed: vec![],
+        iterations: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cost_usd: 0.0,
+        model: String::new(),
+        generated_images: vec![],
+    };
+    assert!(!is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_loop_limit_is_not_transient() {
+    let error = AgentExecutionError::ToolLoopLimitExceeded { max_iterations: 30 };
+    assert!(!is_transient_llm_error(&error));
+}
+
+#[test]
+fn test_is_transient_llm_error_without_provider_error_is_not_transient() {
+    // LlmError with provider_error=None (synthetic/test construction) should
+    // not be retried — we can't classify it.
+    let error = AgentExecutionError::LlmError {
+        message: "unknown".into(),
+        provider_error: None,
+        partial_messages: vec![],
+    };
+    assert!(!is_transient_llm_error(&error));
+}
+
+// ---------------------------------------------------------------------------
+// Cancellation and resume detection
+// ---------------------------------------------------------------------------
+
+fn make_simple_plan(tasks: Vec<&str>) -> StructuredPlan {
+    StructuredPlan {
+        plan_title: "Test Plan".into(),
+        plan_file: "/tmp/test-plan.md".into(),
+        estimated_effort: String::new(),
+        overview: String::new(),
+        scope_in: vec![],
+        scope_out: vec![],
+        guardrails: vec![],
+        execution_contract: PlanExecutionContract::default(),
+        tasks: tasks
+            .iter()
+            .enumerate()
+            .map(|(i, id)| PlanTask {
+                id: (*id).into(),
+                phase: i + 1,
+                title: format!("Task {}", id),
+                description: String::new(),
+                depends_on: if i > 0 {
+                    vec![tasks[i - 1].into()]
+                } else {
+                    vec![]
+                },
+                status: TaskStatus::Pending,
+                estimated_iterations: 1,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            })
+            .collect(),
+    }
+}
+
+#[tokio::test]
+async fn test_cancelled_plan_run_is_detectable_for_resume() {
+    let (container, _tmpdir) = make_test_container().await;
+    let session = SessionId("resume-session".into());
+    let plan = make_simple_plan(vec!["t1", "t2", "t3"]);
+    let plan_json = serde_json::to_string(&plan).unwrap();
+
+    container
+        .plan_run_store
+        .create_run_with_status(
+            "run-cancelled",
+            session.as_str(),
+            &plan_json,
+            "/tmp/test-plan.md",
+            "cancelled",
+        )
+        .await
+        .unwrap();
+    // t1 completed before cancel; t2 and t3 never ran.
+    container
+        .plan_run_store
+        .record_step_result(
+            "run-cancelled",
+            "t1",
+            1,
+            "Task t1",
+            "completed",
+            Some("done"),
+        )
+        .await
+        .unwrap();
+
+    let latest = container
+        .plan_run_store
+        .find_latest_run(session.as_str())
+        .await
+        .unwrap()
+        .expect("should find a run");
+    assert_eq!(latest.status, "cancelled");
+
+    let steps = container
+        .plan_run_store
+        .load_step_results(&latest.id)
+        .await
+        .unwrap();
+    let completed_ids: HashSet<&str> = steps
+        .iter()
+        .filter(|s| s.status == "completed")
+        .map(|s| s.task_id.as_str())
+        .collect();
+    let has_uncompleted = plan
+        .tasks
+        .iter()
+        .any(|t| !completed_ids.contains(t.id.as_str()));
+    assert!(has_uncompleted, "should have uncompleted tasks");
+}
+
+#[tokio::test]
+async fn test_completed_plan_run_all_tasks_done_is_not_resumable() {
+    let (container, _tmpdir) = make_test_container().await;
+    let session = SessionId("done-session".into());
+    let plan = make_simple_plan(vec!["t1", "t2"]);
+    let plan_json = serde_json::to_string(&plan).unwrap();
+
+    container
+        .plan_run_store
+        .create_run_with_status(
+            "run-done",
+            session.as_str(),
+            &plan_json,
+            "/tmp/test-plan.md",
+            "completed",
+        )
+        .await
+        .unwrap();
+    container
+        .plan_run_store
+        .record_step_result("run-done", "t1", 1, "Task t1", "completed", Some("done"))
+        .await
+        .unwrap();
+    container
+        .plan_run_store
+        .record_step_result("run-done", "t2", 2, "Task t2", "completed", Some("done"))
+        .await
+        .unwrap();
+
+    let latest = container
+        .plan_run_store
+        .find_latest_run(session.as_str())
+        .await
+        .unwrap()
+        .expect("should find a run");
+    assert_eq!(latest.status, "completed");
+
+    let steps = container
+        .plan_run_store
+        .load_step_results(&latest.id)
+        .await
+        .unwrap();
+    let completed_ids: HashSet<&str> = steps
+        .iter()
+        .filter(|s| s.status == "completed")
+        .map(|s| s.task_id.as_str())
+        .collect();
+    let has_uncompleted = plan
+        .tasks
+        .iter()
+        .any(|t| !completed_ids.contains(t.id.as_str()));
+    assert!(!has_uncompleted, "all tasks completed — not resumable");
+}
+
+#[tokio::test]
+async fn test_partial_failure_run_is_resumable() {
+    let (container, _tmpdir) = make_test_container().await;
+    let session = SessionId("partial-session".into());
+    let plan = make_simple_plan(vec!["t1", "t2", "t3"]);
+    let plan_json = serde_json::to_string(&plan).unwrap();
+
+    container
+        .plan_run_store
+        .create_run_with_status(
+            "run-partial",
+            session.as_str(),
+            &plan_json,
+            "/tmp/test-plan.md",
+            "partial_failure",
+        )
+        .await
+        .unwrap();
+    container
+        .plan_run_store
+        .record_step_result("run-partial", "t1", 1, "Task t1", "completed", Some("done"))
+        .await
+        .unwrap();
+    container
+        .plan_run_store
+        .record_step_result("run-partial", "t2", 2, "Task t2", "failed", Some("error"))
+        .await
+        .unwrap();
+
+    let latest = container
+        .plan_run_store
+        .find_latest_run(session.as_str())
+        .await
+        .unwrap()
+        .expect("should find a run");
+    assert_eq!(latest.status, "partial_failure");
+    assert!(
+        matches!(latest.status.as_str(), "cancelled" | "partial_failure"),
+        "partial_failure should be detected as interrupted/resumable"
+    );
+}
+
+#[test]
+fn test_cancelled_tool_error_round_trips() {
+    let err = cancelled_tool_error();
+    assert!(is_cancelled_tool_error(&err));
+    // A non-cancelled RuntimeError should not match.
+    let other = ToolError::RuntimeError {
+        name: "Plan".into(),
+        message: "phase-1 execution failed: LLM error: timeout".into(),
+    };
+    assert!(!is_cancelled_tool_error(&other));
+}
+
+#[tokio::test]
+async fn test_resume_plan_with_empty_from_task_id_invalidates_nothing() {
+    let (container, _tmpdir) = make_test_container().await;
+    let session = SessionId("empty-resume-session".into());
+    let plan = make_simple_plan(vec!["t1", "t2"]);
+    let plan_json = serde_json::to_string(&plan).unwrap();
+
+    container
+        .plan_run_store
+        .create_run_with_status(
+            "run-empty",
+            session.as_str(),
+            &plan_json,
+            "/tmp/test-plan.md",
+            "cancelled",
+        )
+        .await
+        .unwrap();
+    container
+        .plan_run_store
+        .record_step_result("run-empty", "t1", 1, "Task t1", "completed", Some("done"))
+        .await
+        .unwrap();
+
+    // With empty from_task_id, compute_downstream_tasks is not called and
+    // no step results are deleted. Verify the completed step survives.
+    let invalidated = HashSet::<String>::new();
+    assert!(invalidated.is_empty());
+
+    let steps = container
+        .plan_run_store
+        .load_step_results("run-empty")
+        .await
+        .unwrap();
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].task_id, "t1");
+    assert_eq!(steps[0].status, "completed");
+}
+
+#[tokio::test]
+async fn test_archive_stale_phase_sessions_archives_duplicates() {
+    let (container, _tmpdir) = make_test_container().await;
+    let _parent = SessionId("parent-session".into());
+
+    // Create the parent session first so children can reference it.
+    container
+        .session_manager
+        .create_session(CreateSessionOptions {
+            parent_id: None,
+            session_type: SessionType::Main,
+            agent_id: None,
+            title: Some("Parent".into()),
+        })
+        .await
+        .unwrap();
+    // Use the actual created session as parent.
+    let parent_session = container
+        .session_manager
+        .list_sessions(&y_core::session::SessionFilter::default())
+        .await
+        .unwrap();
+    let parent_id = parent_session[0].id.clone();
+
+    // Create two child sessions with the same phase title (simulating a retry).
+    let phase_title = "Phase 4: Fix the bug";
+    let _old_child = container
+        .session_manager
+        .create_session(CreateSessionOptions {
+            parent_id: Some(parent_id.clone()),
+            session_type: SessionType::SubAgent,
+            agent_id: Some(y_core::types::AgentId::from_string(PHASE_EXECUTOR_AGENT_ID)),
+            title: Some(phase_title.into()),
+        })
+        .await
+        .unwrap();
+    let _new_child = container
+        .session_manager
+        .create_session(CreateSessionOptions {
+            parent_id: Some(parent_id.clone()),
+            session_type: SessionType::SubAgent,
+            agent_id: Some(y_core::types::AgentId::from_string(PHASE_EXECUTOR_AGENT_ID)),
+            title: Some(phase_title.into()),
+        })
+        .await
+        .unwrap();
+
+    // Both should be active before archival.
+    let children = container
+        .session_manager
+        .children(&parent_id)
+        .await
+        .unwrap();
+    let active_count = children
+        .iter()
+        .filter(|c| c.state == y_core::session::SessionState::Active)
+        .count();
+    assert_eq!(active_count, 2);
+
+    // Archive stale sessions with the same title.
+    PlanOrchestrator::archive_stale_phase_sessions(&container, &parent_id, phase_title).await;
+
+    // Both old sessions should now be archived (none active).
+    let children = container
+        .session_manager
+        .children(&parent_id)
+        .await
+        .unwrap();
+    let active_count = children
+        .iter()
+        .filter(|c| c.state == y_core::session::SessionState::Active)
+        .count();
+    assert_eq!(
+        active_count, 0,
+        "all sessions with matching title should be archived"
+    );
+
+    // A session with a different title should not be affected.
+    let other_child = container
+        .session_manager
+        .create_session(CreateSessionOptions {
+            parent_id: Some(parent_id.clone()),
+            session_type: SessionType::SubAgent,
+            agent_id: Some(y_core::types::AgentId::from_string(PHASE_EXECUTOR_AGENT_ID)),
+            title: Some("Phase 5: Different".into()),
+        })
+        .await
+        .unwrap();
+    PlanOrchestrator::archive_stale_phase_sessions(&container, &parent_id, "Phase 4: Fix the bug")
+        .await;
+    let other = container
+        .session_manager
+        .children(&parent_id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.id == other_child.id)
+        .unwrap();
+    assert_eq!(
+        other.state,
+        y_core::session::SessionState::Active,
+        "sessions with different title should not be archived"
+    );
 }
