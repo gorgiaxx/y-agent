@@ -462,6 +462,9 @@ export function PlanRenderer({
     title = meta.planTitle || title;
     path = meta.planFile;
     icon = <Play size={14} className="tool-call-icon-accent" />;
+    const canResumePlan = !!planRunId && !!activeSessionId
+      && (meta.planRunStatus === 'cancelled' || meta.planRunStatus === 'partial_failure')
+      && meta.completed < (meta.totalPhases || meta.tasks.length);
     detail = (
       <div className="tool-call-plan-summary">
         <div className="tool-call-plan-stats">
@@ -473,6 +476,11 @@ export function PlanRenderer({
               {meta.failed} failed
             </span>
           )}
+          {meta.planRunStatus === 'cancelled' && (
+            <span className="tool-call-plan-stat tool-call-plan-stat--warning">
+              Cancelled
+            </span>
+          )}
         </div>
         <PlanTaskList
           tasks={meta.tasks}
@@ -480,6 +488,21 @@ export function PlanRenderer({
           sessionId={activeSessionId ?? undefined}
           onRetryFromHere={handleRetryFromHere}
         />
+        {canResumePlan && (
+          <button
+            type="button"
+            className="tool-call-plan-task-retry"
+            onClick={() => planRunId && activeSessionId
+              && transport.invoke('resume_plan_execution', {
+                sessionId: activeSessionId,
+                planRunId,
+                fromTaskId: '',
+              })}
+          >
+            <RotateCcw size={12} />
+            <span>Resume plan</span>
+          </button>
+        )}
       </div>
     );
   }

@@ -250,6 +250,36 @@ impl PlanOrchestrator {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
+        let resume_requested = arguments
+            .get("resume")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+
+        // Auto-resume: if the session has a recent plan run that was cancelled
+        // or partially failed (i.e. interrupted mid-execution with uncompleted
+        // tasks), resume it instead of generating a new plan. This lets the
+        // LLM naturally continue an interrupted plan — e.g. the user sends
+        // "continue" and the LLM calls Plan again, which picks up where it
+        // left off without losing completed phase results.
+        //
+        // Explicit `resume: true` in the arguments forces a resume attempt
+        // even if the latest run completed (useful for retrying a plan the
+        // LLM considers unsatisfactory). When `resume` is false (default),
+        // only interrupted runs (cancelled / partial_failure) are resumed.
+        if !is_cancelled(cancel.as_ref()) {
+            if let Some(resumed) = Self::try_resume_interrupted_plan(
+                container,
+                parent_session_id,
+                resume_requested,
+                progress,
+                cancel.as_ref(),
+            )
+            .await?
+            {
+                return Ok(resumed);
+            }
+        }
+
         // Generate a plan file path.
         let plan_slug = slug_from_request(request);
         let plan_dir = container.data_dir.join("plan");
@@ -385,7 +415,81 @@ impl PlanOrchestrator {
             cancel.as_ref(),
             None,
         )))
-        .await?;
+        .await;
+
+        // Cancellation is not an error from the caller's perspective: the
+        // user asked to stop, so we return a partial ToolOutput with whatever
+        // phases completed before the cancel. The plan run is marked
+        // "cancelled" in the DB so it can be detected and resumed later.
+        let phase_results = match phase_results {
+            Ok(results) => results,
+            Err(e) if is_cancelled_tool_error(&e) => {
+                let _ = container
+                    .plan_run_store
+                    .update_run_status(&plan_run_id, "cancelled")
+                    .await;
+                // Load whatever step results were persisted before the cancel
+                // so the ToolOutput reflects actual progress, not an empty vec.
+                let persisted = container
+                    .plan_run_store
+                    .load_step_results(&plan_run_id)
+                    .await
+                    .unwrap_or_default();
+                let phase_results: Vec<serde_json::Value> = persisted
+                    .iter()
+                    .map(|step| {
+                        let mut entry = serde_json::json!({
+                            "task_id": step.task_id,
+                            "phase": step.phase,
+                            "title": step.title,
+                            "status": step.status,
+                        });
+                        if let Some(output) = &step.output_json {
+                            if step.status == "completed" {
+                                entry["summary"] = serde_json::Value::String(output.clone());
+                            } else {
+                                entry["error"] = serde_json::Value::String(output.clone());
+                            }
+                        }
+                        entry
+                    })
+                    .collect();
+                let completed = phase_results
+                    .iter()
+                    .filter(|r| r["status"] == "completed")
+                    .count();
+                let failed = phase_results
+                    .iter()
+                    .filter(|r| r["status"] == "failed")
+                    .count();
+                let metadata = build_plan_execution_metadata(
+                    &plan_path,
+                    &structured_plan,
+                    &plan_run_id,
+                    completed,
+                    failed,
+                    &phase_results,
+                );
+                return Ok(ToolOutput {
+                    success: false,
+                    content: build_plan_execution_tool_content(
+                        &plan_path,
+                        &structured_plan,
+                        &plan_run_id,
+                        completed,
+                        failed,
+                        &phase_results,
+                        Some(&review),
+                        None,
+                    ),
+                    warnings: vec!["Plan execution was cancelled by the user. \
+                        Completed phases are preserved; the plan can be resumed."
+                        .into()],
+                    metadata,
+                });
+            }
+            Err(e) => return Err(e),
+        };
 
         let run_status = if phase_results.iter().any(|r| r["status"] == "failed") {
             "partial_failure"
@@ -1401,18 +1505,26 @@ impl PlanOrchestrator {
         let plan_path = std::path::PathBuf::from(&run.plan_path);
 
         // Compute the set of tasks to invalidate: from_task_id + all
-        // transitive downstream dependents.
-        let invalidated = compute_downstream_tasks(&structured_plan.tasks, from_task_id);
+        // transitive downstream dependents. When from_task_id is empty,
+        // no tasks are invalidated — we simply resume from the first
+        // uncompleted task, preserving all existing step results.
+        let invalidated = if from_task_id.is_empty() {
+            HashSet::new()
+        } else {
+            compute_downstream_tasks(&structured_plan.tasks, from_task_id)
+        };
 
         // Delete invalidated step results from store.
-        let invalidated_refs: Vec<&str> = invalidated
-            .iter()
-            .map(std::string::String::as_str)
-            .collect();
-        let _ = container
-            .plan_run_store
-            .delete_step_results(plan_run_id, &invalidated_refs)
-            .await;
+        if !invalidated.is_empty() {
+            let invalidated_refs: Vec<&str> = invalidated
+                .iter()
+                .map(std::string::String::as_str)
+                .collect();
+            let _ = container
+                .plan_run_store
+                .delete_step_results(plan_run_id, &invalidated_refs)
+                .await;
+        }
 
         // Mark the run as running again.
         let _ = container
@@ -1505,6 +1617,130 @@ impl PlanOrchestrator {
         })
     }
 
+    /// Check whether the session has an interrupted plan run that can be
+    /// resumed, and if so, resume it.
+    ///
+    /// An "interrupted" run is one whose status is `cancelled` or
+    /// `partial_failure` and that has at least one task not yet completed.
+    /// When `force` is true, any non-`completed` run is considered
+    /// resumable (the LLM explicitly asked to resume).
+    ///
+    /// Returns `Ok(Some(tool_output))` when a resume was performed,
+    /// `Ok(None)` when no resumable run was found (proceed to new plan).
+    async fn try_resume_interrupted_plan(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        force: bool,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<Option<ToolOutput>, ToolError> {
+        let latest_run = container
+            .plan_run_store
+            .find_latest_run(session_id.as_str())
+            .await
+            .map_err(|e| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to find latest plan run: {e}"),
+            })?;
+
+        let Some(run) = latest_run else {
+            return Ok(None);
+        };
+
+        let is_interrupted = matches!(run.status.as_str(), "cancelled" | "partial_failure");
+        let is_resumable = if force {
+            run.status != "completed"
+        } else {
+            is_interrupted
+        };
+        if !is_resumable {
+            return Ok(None);
+        }
+
+        // Parse the stored plan to check for uncompleted tasks.
+        let plan: StructuredPlan =
+            serde_json::from_str(&run.plan_json).map_err(|e| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to parse stored plan for resume: {e}"),
+            })?;
+
+        let step_results = container
+            .plan_run_store
+            .load_step_results(&run.id)
+            .await
+            .map_err(|e| ToolError::RuntimeError {
+                name: "Plan".into(),
+                message: format!("failed to load step results for resume: {e}"),
+            })?;
+
+        let completed_ids: HashSet<&str> = step_results
+            .iter()
+            .filter(|s| s.status == "completed")
+            .map(|s| s.task_id.as_str())
+            .collect();
+
+        // If all tasks are already completed, nothing to resume.
+        let has_uncompleted = plan
+            .tasks
+            .iter()
+            .any(|t| !completed_ids.contains(t.id.as_str()));
+        if !has_uncompleted {
+            return Ok(None);
+        }
+
+        tracing::info!(
+            plan_run_id = %run.id,
+            status = %run.status,
+            completed = completed_ids.len(),
+            total = plan.tasks.len(),
+            "plan orchestrator: resuming interrupted plan"
+        );
+
+        if let Some(tx) = progress {
+            let _ = tx.send(TurnEvent::ToolResult {
+                name: "Plan".into(),
+                success: true,
+                duration_ms: 0,
+                input_preview: serde_json::json!({
+                    "resume": run.id,
+                })
+                .to_string(),
+                result_preview: format!(
+                    "Resuming interrupted plan ({} of {} phases completed)",
+                    completed_ids.len(),
+                    plan.tasks.len()
+                ),
+                agent_name: "plan-orchestrator".into(),
+                url_meta: None,
+                metadata: Some(build_plan_start_metadata(std::path::Path::new(
+                    &run.plan_path,
+                ))),
+            });
+        }
+
+        // Resume from the first uncompleted task. The resume_plan method
+        // invalidates that task and all downstream dependents, then re-enters
+        // execute_phases with the pre-seeded completed set.
+        let first_uncompleted = plan
+            .tasks
+            .iter()
+            .find(|t| !completed_ids.contains(t.id.as_str()))
+            .map_or("", |t| t.id.as_str());
+
+        let result = Self::resume_plan(
+            container,
+            session_id,
+            &run.id,
+            first_uncompleted,
+            None,
+            progress,
+            cancel.cloned(),
+        )
+        .await?;
+
+        Ok(Some(result))
+    }
+
     /// Execute a single phase in its own child session.
     async fn run_phase(
         container: &ServiceContainer,
@@ -1519,13 +1755,23 @@ impl PlanOrchestrator {
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
     ) -> Result<String, ToolError> {
+        let phase_title = format!("Phase {phase_num}: {}", task.title);
+
+        // Archive any existing active child sessions with the same title for
+        // this parent. This happens when retrying/resuming a phase: the old
+        // failed/interrupted session is archived so it disappears from the
+        // info panel, leaving only the fresh retry visible. Without this,
+        // each retry leaves a stale duplicate (e.g. an empty session from a
+        // crashed run) that clutters the sub-agent list.
+        Self::archive_stale_phase_sessions(container, parent_session_id, &phase_title).await;
+
         let child_session = container
             .session_manager
             .create_session(CreateSessionOptions {
                 parent_id: Some(parent_session_id.clone()),
                 session_type: SessionType::SubAgent,
                 agent_id: Some(y_core::types::AgentId::from_string(PHASE_EXECUTOR_AGENT_ID)),
-                title: Some(format!("Phase {phase_num}: {}", task.title)),
+                title: Some(phase_title),
             })
             .await
             .map_err(|e| ToolError::RuntimeError {
@@ -1596,10 +1842,89 @@ impl PlanOrchestrator {
         )
         .await;
 
-        let result =
-            AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
+        // Execute the phase with automatic retry for transient LLM errors.
+        //
+        // The provider pool retries connection-level failures, but mid-stream
+        // interruptions (HTTP 200 received, then EOF) are not retried there
+        // because partial content was already emitted to the consumer. At this
+        // layer we retry the full agent execution so a single dropped
+        // connection does not waste all progress in a long-running phase.
+        //
+        // Reuses the pool's `RetryConfig` (same `max_retries`, backoff
+        // strategy, and delay caps) and `StandardError::should_auto_retry`
+        // classification so the retry semantics are consistent with the
+        // provider layer.
+        let retry_config = container.provider_pool().await.retry_config().clone();
+        let mut attempt: u32 = 0;
+        let result = loop {
+            match AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
                 .await
-                .map_err(|e| map_plan_agent_error(&phase_name, e))?;
+            {
+                Ok(result) => break result,
+                Err(e) if matches!(e, AgentExecutionError::Cancelled { .. }) => {
+                    // Cancellation: persist partial transcript, emit
+                    // completed(false), then propagate as a cancelled error.
+                    persist_partial_subagent_turn(
+                        container,
+                        &child_session.id,
+                        &exec_config.user_query,
+                        &e,
+                    )
+                    .await;
+                    emit_subagent_completed(container, child_uuid, PHASE_EXECUTOR_AGENT_ID, false);
+                    return Err(map_plan_agent_error(&phase_name, e));
+                }
+                Err(e) => {
+                    if is_cancelled(cancel) {
+                        persist_partial_subagent_turn(
+                            container,
+                            &child_session.id,
+                            &exec_config.user_query,
+                            &e,
+                        )
+                        .await;
+                        emit_subagent_completed(
+                            container,
+                            child_uuid,
+                            PHASE_EXECUTOR_AGENT_ID,
+                            false,
+                        );
+                        return Err(map_plan_agent_error(&phase_name, e));
+                    }
+                    if retry_config.enabled
+                        && attempt < retry_config.max_retries
+                        && is_transient_llm_error(&e)
+                    {
+                        attempt += 1;
+                        let delay = retry_config.delay_for(attempt);
+                        tracing::warn!(
+                            task_id = %task.id,
+                            phase = phase_num,
+                            error = %e,
+                            attempt,
+                            max_retries = retry_config.max_retries,
+                            delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                            "transient LLM error in plan phase; retrying after backoff"
+                        );
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    // Non-retryable error or retries exhausted: persist the
+                    // partial transcript so the drill-in view shows what was
+                    // accomplished before the failure, emit the completion
+                    // event to unstick the UI, then propagate.
+                    persist_partial_subagent_turn(
+                        container,
+                        &child_session.id,
+                        &exec_config.user_query,
+                        &e,
+                    )
+                    .await;
+                    emit_subagent_completed(container, child_uuid, PHASE_EXECUTOR_AGENT_ID, false);
+                    return Err(map_plan_agent_error(&phase_name, e));
+                }
+            }
+        };
 
         // Persist the phase's own transcript to its child session so it can be
         // opened as a drill-in sub-chat, rendered by the same pipeline as the
@@ -1615,6 +1940,43 @@ impl PlanOrchestrator {
         emit_subagent_completed(container, child_uuid, PHASE_EXECUTOR_AGENT_ID, true);
 
         Ok(result.content)
+    }
+
+    /// Archive existing active child sessions with a matching title.
+    ///
+    /// When retrying or resuming a phase, the previous run's child session
+    /// (which may be empty after a crash, or contain a failed transcript)
+    /// must be archived so it does not appear as a stale duplicate in the
+    /// info panel's sub-agent list.
+    async fn archive_stale_phase_sessions(
+        container: &ServiceContainer,
+        parent_session_id: &SessionId,
+        phase_title: &str,
+    ) {
+        let children = match container.session_manager.children(parent_session_id).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to list child sessions for archival");
+                return;
+            }
+        };
+        for child in children {
+            if child.state == y_core::session::SessionState::Active
+                && child.title.as_deref() == Some(phase_title)
+            {
+                if let Err(e) = container
+                    .session_manager
+                    .transition_state(&child.id, y_core::session::SessionState::Archived)
+                    .await
+                {
+                    tracing::warn!(
+                        session_id = %child.id,
+                        error = %e,
+                        "failed to archive stale phase session"
+                    );
+                }
+            }
+        }
     }
 
     async fn resolve_agent_config(
@@ -1713,6 +2075,82 @@ fn emit_subagent_completed(
             agent_name: agent_name.to_string(),
             success,
         });
+}
+
+/// Persist a partial transcript to a child session when the agent execution
+/// failed, so the drill-in view shows what was accomplished before the error.
+///
+/// Writes the user prompt, then any partial messages accumulated from
+/// successful iterations before the failure. Falls back to an error message
+/// when no partial messages are available (e.g. the first LLM call failed).
+async fn persist_partial_subagent_turn(
+    container: &ServiceContainer,
+    session_id: &SessionId,
+    user_input: &str,
+    error: &AgentExecutionError,
+) {
+    let user_msg = Message {
+        message_id: y_core::types::generate_message_id(),
+        role: y_core::types::Role::User,
+        content: user_input.to_string(),
+        tool_call_id: None,
+        tool_calls: vec![],
+        timestamp: y_core::types::now(),
+        metadata: serde_json::json!({}),
+    };
+    if let Err(e) = container
+        .session_manager
+        .append_message(session_id, &user_msg)
+        .await
+    {
+        tracing::warn!(error = %e, session_id = %session_id, "failed to persist sub-agent prompt on error");
+    }
+
+    let empty: Vec<Message> = Vec::new();
+    let partial_messages: &[Message] = match error {
+        AgentExecutionError::LlmError {
+            partial_messages, ..
+        }
+        | AgentExecutionError::Cancelled {
+            partial_messages, ..
+        } => partial_messages,
+        _ => &empty,
+    };
+
+    if partial_messages.is_empty() {
+        // No partial content: write a synthetic assistant message explaining
+        // the failure so the drill-in view is not blank.
+        let error_msg = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: y_core::types::Role::Assistant,
+            content: format!("[Phase execution failed before any output was produced: {error}]"),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({
+                "error": format!("{error}"),
+                "partial": true,
+            }),
+        };
+        if let Err(e) = container
+            .session_manager
+            .append_message(session_id, &error_msg)
+            .await
+        {
+            tracing::warn!(error = %e, session_id = %session_id, "failed to persist sub-agent error message");
+        }
+        return;
+    }
+
+    for msg in partial_messages {
+        if let Err(e) = container
+            .session_manager
+            .append_message(session_id, msg)
+            .await
+        {
+            tracing::warn!(error = %e, session_id = %session_id, "failed to persist partial sub-agent message");
+        }
+    }
 }
 
 /// Best-effort repair of malformed JSON from LLM output.
@@ -2928,6 +3366,24 @@ fn map_plan_agent_error(agent_name: &str, error: AgentExecutionError) -> ToolErr
             message: format!("{agent_name} execution failed: {other}"),
         },
     }
+}
+
+/// Whether an [`AgentExecutionError`] represents a transient LLM failure that
+/// is safe to retry at the phase level.
+///
+/// Delegates to the same [`StandardError::should_auto_retry`] classification
+/// the provider pool uses, so the retry decision is consistent across layers.
+/// Non-`LlmError` variants (context, loop limits, cancelled) and `LlmError`
+/// without a preserved typed error are never retried.
+fn is_transient_llm_error(error: &AgentExecutionError) -> bool {
+    let AgentExecutionError::LlmError {
+        provider_error: Some(pe),
+        ..
+    } = error
+    else {
+        return false;
+    };
+    y_provider::classify_provider_error(pe).should_auto_retry()
 }
 
 // ---------------------------------------------------------------------------

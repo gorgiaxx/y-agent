@@ -45,7 +45,13 @@ impl PlanTool {
                 review, and follow the current operation mode plus Guardrails \
                 plan-review policy. Delegates to sub-agents for plan writing and \
                 phased execution. Use this for multi-file changes, architectural \
-                design, refactoring, or multi-step coordination."
+                design, refactoring, or multi-step coordination. \
+                \n\n\
+                If a previous plan was interrupted (cancelled or partially \
+                failed), calling Plan again automatically resumes it from \
+                where it left off — completed phases are preserved and only \
+                remaining tasks are executed. Pass resume=true to force-resume \
+                a completed plan (e.g. to retry unsatisfactory results)."
                 .into(),
             help: Some(
                 "Triggers a multi-stage planning workflow:\n\
@@ -53,9 +59,12 @@ impl PlanTool {
                  2. operation mode and Guardrails decide auto vs manual review\n\
                  3. executable phases are run by dedicated sub-agents\n\
                  \n\
+                 If a prior plan run was interrupted, Plan auto-resumes it.\n\
+                 \n\
                  Parameters:\n\
                  - request (required): The user's original task description\n\
-                 - context (optional): Additional context from prior exploration"
+                 - context (optional): Additional context from prior exploration\n\
+                 - resume (optional): Force-resume the latest plan run for this session"
                     .into(),
             ),
             parameters: serde_json::json!({
@@ -68,6 +77,13 @@ impl PlanTool {
                     "context": {
                         "type": "string",
                         "description": "Optional additional context from prior exploration"
+                    },
+                    "resume": {
+                        "type": "boolean",
+                        "description": "Force-resume the latest plan run for this session, \
+                            even if it completed. Default false. When false, only \
+                            interrupted plans (cancelled/partial_failure) are auto-resumed.",
+                        "default": false
                     }
                 },
                 "required": ["request"]
