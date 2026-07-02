@@ -10,11 +10,15 @@ export function formatMessageTime(timestamp: number | string | Date, now: Date =
     return time;
   }
 
+  // Always render month/day (and year when crossing the year boundary) explicitly,
+  // so the output is locale-independent and matches the MM/DD contract.
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+
   if (diffMs < oneYearMs) {
-    const md = date.toLocaleDateString([], { month: '2-digit', day: '2-digit' });
-    return `${md} ${time}`;
+    return `${mm}/${dd} ${time}`;
   }
 
-  const ymd = date.toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' });
-  return `${ymd} ${time}`;
+  const yyyy = date.getFullYear();
+  return `${yyyy}/${mm}/${dd} ${time}`;
 }
