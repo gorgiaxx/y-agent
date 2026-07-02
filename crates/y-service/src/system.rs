@@ -605,6 +605,78 @@ impl SystemService {
     }
 }
 
+/// Snapshot of in-memory collection sizes for debugging memory growth.
+///
+/// Intended for the diagnostics / observability panel so users can spot
+/// unbounded growth without attaching a profiler.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryStats {
+    /// Number of pending plan runs (presentation-layer state).
+    pub pending_runs: usize,
+    /// Number of cached turn metadata entries (presentation-layer state).
+    pub turn_meta_cache: usize,
+    /// Number of pruning watermark entries.
+    pub pruning_watermarks: usize,
+    /// Number of session permission mode entries.
+    pub session_permission_modes: usize,
+    /// Number of pending user-interaction requests.
+    pub pending_interactions: usize,
+    /// Number of pending permission prompts.
+    pub pending_permissions: usize,
+    /// Number of file-history sessions tracked.
+    pub file_history_sessions: usize,
+    /// Total file-history snapshots across all sessions.
+    pub file_history_total_snapshots: usize,
+}
+
+impl SystemService {
+    /// Gather current sizes of key in-memory collections for diagnostics.
+    ///
+    /// `pending_runs` and `turn_meta_cache` are presentation-layer state
+    /// passed in by the caller; the rest come from the service container.
+    pub async fn memory_stats(
+        container: &ServiceContainer,
+        pending_runs: usize,
+        turn_meta_cache: usize,
+    ) -> MemoryStats {
+        let pruning_watermarks = container.pruning_watermarks.read().await.len();
+        let session_permission_modes = container
+            .session_state
+            .session_permission_modes
+            .read()
+            .await
+            .len();
+        let pending_interactions = container
+            .session_state
+            .pending_interactions
+            .lock()
+            .await
+            .len();
+        let pending_permissions = container
+            .session_state
+            .pending_permissions
+            .lock()
+            .await
+            .len();
+
+        let fhm = container.file_history_managers.read().await;
+        let file_history_sessions = fhm.len();
+        let file_history_total_snapshots: usize = fhm.values().map(|m| m.snapshots().len()).sum();
+        drop(fhm);
+
+        MemoryStats {
+            pending_runs,
+            turn_meta_cache,
+            pruning_watermarks,
+            session_permission_modes,
+            pending_interactions,
+            pending_permissions,
+            file_history_sessions,
+            file_history_total_snapshots,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

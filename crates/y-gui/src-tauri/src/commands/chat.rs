@@ -440,7 +440,12 @@ async fn apply_prepared_prompt_context(
     }
 
     if let Some(default_permission) = permission {
-        let mut modes = state.container.session_permission_modes.write().await;
+        let mut modes = state
+            .container
+            .session_state
+            .session_permission_modes
+            .write()
+            .await;
         modes
             .entry(session_id.clone())
             .or_insert(default_permission);
@@ -1086,7 +1091,7 @@ pub async fn chat_answer_question(
         y_service::user_interaction_orchestrator::UserInteractionOrchestrator::deliver_answer(
             &interaction_id,
             answers,
-            &state.container.pending_interactions,
+            &state.container.session_state.pending_interactions,
         )
         .await;
 
@@ -1128,7 +1133,12 @@ pub async fn chat_answer_permission(
     decision: PermissionPromptResponse,
 ) -> Result<bool, String> {
     let delivered = {
-        let mut map = state.container.pending_permissions.lock().await;
+        let mut map = state
+            .container
+            .session_state
+            .pending_permissions
+            .lock()
+            .await;
         if let Some(pending) = map.remove(&request_id) {
             pending.send(decision).is_ok()
         } else {
@@ -1188,7 +1198,7 @@ pub async fn chat_answer_plan_review(
     let delivered = y_service::plan_orchestrator::PlanOrchestrator::deliver_review_decision(
         &review_id,
         plan_decision,
-        &state.container.pending_plan_reviews,
+        &state.container.session_state.pending_plan_reviews,
     )
     .await;
 

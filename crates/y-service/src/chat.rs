@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use y_agent::agent::definition::AgentDefinition;
 use y_context::AssembledContext;
-use y_core::provider::{RequestMode, ToolCallingMode};
+use y_core::provider::{RequestMode, ThinkingConfig, ToolCallingMode};
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore, SessionNode};
 use y_core::types::{Message, Role, SessionId};
 
@@ -44,6 +44,19 @@ pub use crate::chat_types::{
 /// lifetime issues with holding container references.
 pub struct ChatService;
 
+/// Turn configuration resolved from request + agent config.
+///
+/// Extracts the common field-resolution logic that was duplicated across
+/// `prepare_turn`, the intra-turn retry path, and the resend retry path.
+struct ResolvedTurnConfig {
+    provider_id: Option<String>,
+    thinking: Option<ThinkingConfig>,
+    plan_mode: Option<String>,
+    operation_mode: OperationMode,
+    mcp_mode: Option<String>,
+    mcp_servers: Vec<String>,
+    working_directory: Option<String>,
+}
 impl ChatService {
     // -- Steering queue management -----------------------------------------
     //
@@ -59,7 +72,7 @@ impl ChatService {
         text: String,
     ) -> SteerMessage {
         let steer = SteerMessage::new(text);
-        let mut queues = container.steering_queues.lock().await;
+        let mut queues = container.session_state.steering_queues.lock().await;
         queues
             .entry(session_id.clone())
             .or_default()
@@ -72,7 +85,7 @@ impl ChatService {
         container: &ServiceContainer,
         session_id: &SessionId,
     ) -> Vec<SteerMessage> {
-        let queues = container.steering_queues.lock().await;
+        let queues = container.session_state.steering_queues.lock().await;
         queues.get(session_id).cloned().unwrap_or_default()
     }
 
@@ -82,7 +95,7 @@ impl ChatService {
         session_id: &SessionId,
         steer_id: &str,
     ) -> bool {
-        let mut queues = container.steering_queues.lock().await;
+        let mut queues = container.session_state.steering_queues.lock().await;
         let Some(queue) = queues.get_mut(session_id) else {
             return false;
         };
@@ -96,7 +109,7 @@ impl ChatService {
         container: &ServiceContainer,
         session_id: &SessionId,
     ) -> Vec<SteerMessage> {
-        let mut queues = container.steering_queues.lock().await;
+        let mut queues = container.session_state.steering_queues.lock().await;
         queues
             .get_mut(session_id)
             .map(std::mem::take)
@@ -105,7 +118,7 @@ impl ChatService {
 
     /// Clear a session's steering queue (called at run start).
     pub async fn clear_steers(container: &ServiceContainer, session_id: &SessionId) {
-        let mut queues = container.steering_queues.lock().await;
+        let mut queues = container.session_state.steering_queues.lock().await;
         queues.remove(session_id);
     }
 
@@ -123,7 +136,7 @@ impl ChatService {
         text: String,
     ) -> FollowUpMessage {
         let msg = FollowUpMessage::new(text);
-        let mut queues = container.follow_up_queues.lock().await;
+        let mut queues = container.session_state.follow_up_queues.lock().await;
         queues
             .entry(session_id.clone())
             .or_default()
@@ -136,7 +149,7 @@ impl ChatService {
         container: &ServiceContainer,
         session_id: &SessionId,
     ) -> Vec<FollowUpMessage> {
-        let queues = container.follow_up_queues.lock().await;
+        let queues = container.session_state.follow_up_queues.lock().await;
         queues.get(session_id).cloned().unwrap_or_default()
     }
 
@@ -146,7 +159,7 @@ impl ChatService {
         session_id: &SessionId,
         follow_up_id: &str,
     ) -> bool {
-        let mut queues = container.follow_up_queues.lock().await;
+        let mut queues = container.session_state.follow_up_queues.lock().await;
         let Some(queue) = queues.get_mut(session_id) else {
             return false;
         };
@@ -160,7 +173,7 @@ impl ChatService {
         container: &ServiceContainer,
         session_id: &SessionId,
     ) -> Vec<FollowUpMessage> {
-        let mut queues = container.follow_up_queues.lock().await;
+        let mut queues = container.session_state.follow_up_queues.lock().await;
         queues
             .get_mut(session_id)
             .map(std::mem::take)
@@ -169,7 +182,7 @@ impl ChatService {
 
     /// Clear a session's follow-up queue (called at run start).
     pub async fn clear_follow_ups(container: &ServiceContainer, session_id: &SessionId) {
-        let mut queues = container.follow_up_queues.lock().await;
+        let mut queues = container.session_state.follow_up_queues.lock().await;
         queues.remove(session_id);
     }
 
@@ -500,6 +513,58 @@ impl ChatService {
             .and_then(|value| serde_json::from_value(value).ok())
     }
 
+    /// Resolve turn configuration fields from request overrides and agent config.
+    ///
+    /// Request fields take priority; agent config fields are the fallback.
+    /// `request_mcp_mode` / `request_mcp_servers` are `None` in the resend path
+    /// (which has no MCP overrides in the request) -- they fall back to agent
+    /// config.
+    #[allow(clippy::too_many_arguments)]
+    async fn resolve_turn_config(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        request_provider_id: Option<&str>,
+        request_thinking: Option<&ThinkingConfig>,
+        request_plan_mode: Option<&str>,
+        request_operation_mode: Option<OperationMode>,
+        request_mcp_mode: Option<&str>,
+        request_mcp_servers: Option<&[String]>,
+        agent_config: Option<&SessionAgentConfig>,
+    ) -> ResolvedTurnConfig {
+        let provider_id = request_provider_id
+            .map(ToOwned::to_owned)
+            .or_else(|| agent_config.and_then(|c| c.provider_id.clone()));
+        let thinking = request_thinking
+            .cloned()
+            .or_else(|| agent_config.and_then(|c| c.thinking.clone()));
+        let plan_mode = request_plan_mode
+            .map(ToOwned::to_owned)
+            .or_else(|| agent_config.and_then(|c| c.plan_mode.clone()));
+        let operation_mode = request_operation_mode.unwrap_or_default();
+        {
+            let mut modes = container
+                .session_state
+                .session_operation_modes
+                .write()
+                .await;
+            modes.insert(session_id.clone(), operation_mode);
+        }
+        let mcp_mode = request_mcp_mode
+            .map(ToOwned::to_owned)
+            .or_else(|| agent_config.and_then(|c| c.mcp_mode.clone()));
+        let mcp_servers = request_mcp_servers.map_or_else(|| agent_config.map_or_else(Vec::new, |c| c.mcp_servers.clone()), ToOwned::to_owned);
+        let working_directory = agent_config.and_then(|c| c.working_directory.clone());
+        ResolvedTurnConfig {
+            provider_id,
+            thinking,
+            plan_mode,
+            operation_mode,
+            mcp_mode,
+            mcp_servers,
+            working_directory,
+        }
+    }
+
     /// Prepare a turn: resolve/create session, persist user message, read
     /// transcript, compute turn number, and assemble all data needed for
     /// `execute_turn()`.
@@ -569,36 +634,18 @@ impl ChatService {
         );
         let knowledge_collections =
             Self::resolve_turn_knowledge(request.knowledge_collections, agent_config.as_ref());
-        let provider_id = request.provider_id.or_else(|| {
-            agent_config
-                .as_ref()
-                .and_then(|config| config.provider_id.clone())
-        });
-        let thinking = request.thinking.or_else(|| {
-            agent_config
-                .as_ref()
-                .and_then(|config| config.thinking.clone())
-        });
-        let plan_mode = request.plan_mode.or_else(|| {
-            agent_config
-                .as_ref()
-                .and_then(|config| config.plan_mode.clone())
-        });
-        let operation_mode = request.operation_mode.unwrap_or_default();
-        {
-            let mut modes = container.session_operation_modes.write().await;
-            modes.insert(session_id.clone(), operation_mode);
-        }
-        let mcp_mode = request.mcp_mode.or_else(|| {
-            agent_config
-                .as_ref()
-                .and_then(|config| config.mcp_mode.clone())
-        });
-        let mcp_servers = request.mcp_servers.unwrap_or_else(|| {
-            agent_config
-                .as_ref()
-                .map_or_else(Vec::new, |config| config.mcp_servers.clone())
-        });
+        let turn_cfg = Self::resolve_turn_config(
+            container,
+            &session_id,
+            request.provider_id.as_deref(),
+            request.thinking.as_ref(),
+            request.plan_mode.as_deref(),
+            request.operation_mode,
+            request.mcp_mode.as_deref(),
+            request.mcp_servers.as_deref(),
+            agent_config.as_ref(),
+        )
+        .await;
         let request_mode = request.request_mode.unwrap_or_default();
 
         // 2. Build and persist the user message.
@@ -704,18 +751,16 @@ impl ChatService {
             history,
             turn_number,
             user_input: request.user_input,
-            provider_id,
+            provider_id: turn_cfg.provider_id,
             request_mode,
             session_created,
-            working_directory: agent_config
-                .as_ref()
-                .and_then(|config| config.working_directory.clone()),
+            working_directory: turn_cfg.working_directory,
             knowledge_collections,
-            thinking,
-            plan_mode,
-            operation_mode,
-            mcp_mode,
-            mcp_servers,
+            thinking: turn_cfg.thinking,
+            plan_mode: turn_cfg.plan_mode,
+            operation_mode: turn_cfg.operation_mode,
+            mcp_mode: turn_cfg.mcp_mode,
+            mcp_servers: turn_cfg.mcp_servers,
             skills,
             agent_config,
             image_generation_options: request.image_generation_options,
@@ -831,36 +876,22 @@ impl ChatService {
                 Self::resolve_turn_skills(requested_skills, agent_config.as_ref(), user_turns == 1);
             let knowledge_collections =
                 Self::resolve_turn_knowledge(request.knowledge_collections, agent_config.as_ref());
-            let provider_id = request.provider_id.or_else(|| {
-                agent_config
-                    .as_ref()
-                    .and_then(|config| config.provider_id.clone())
-            });
-            let thinking = request.thinking.or_else(|| {
-                agent_config
-                    .as_ref()
-                    .and_then(|config| config.thinking.clone())
-            });
-            let plan_mode = request.plan_mode.or_else(|| {
-                agent_config
-                    .as_ref()
-                    .and_then(|config| config.plan_mode.clone())
-            });
-            let operation_mode = request.operation_mode.unwrap_or_default();
-            {
-                let mut modes = container.session_operation_modes.write().await;
-                modes.insert(request.session_id.clone(), operation_mode);
-            }
+            let turn_cfg = Self::resolve_turn_config(
+                container,
+                &request.session_id,
+                request.provider_id.as_deref(),
+                request.thinking.as_ref(),
+                request.plan_mode.as_deref(),
+                request.operation_mode,
+                None,
+                None,
+                agent_config.as_ref(),
+            )
+            .await;
             let request_mode = request
                 .request_mode
                 .or_else(|| Self::request_mode_from_metadata(&user_msg.metadata))
                 .unwrap_or_default();
-            let mcp_mode = agent_config
-                .as_ref()
-                .and_then(|config| config.mcp_mode.clone());
-            let mcp_servers = agent_config
-                .as_ref()
-                .map_or_else(Vec::new, |config| config.mcp_servers.clone());
             let user_input = user_msg.content.clone();
 
             // Derive turn number from display transcript (after removing the
@@ -876,18 +907,16 @@ impl ChatService {
                 history,
                 turn_number,
                 user_input,
-                provider_id,
+                provider_id: turn_cfg.provider_id,
                 request_mode,
                 session_created: false,
-                working_directory: agent_config
-                    .as_ref()
-                    .and_then(|config| config.working_directory.clone()),
+                working_directory: turn_cfg.working_directory,
                 knowledge_collections,
-                thinking,
-                plan_mode,
-                operation_mode,
-                mcp_mode,
-                mcp_servers,
+                thinking: turn_cfg.thinking,
+                plan_mode: turn_cfg.plan_mode,
+                operation_mode: turn_cfg.operation_mode,
+                mcp_mode: turn_cfg.mcp_mode,
+                mcp_servers: turn_cfg.mcp_servers,
                 skills,
                 agent_config,
                 image_generation_options: None,
@@ -964,36 +993,22 @@ impl ChatService {
             Self::resolve_turn_skills(requested_skills, agent_config.as_ref(), user_turns == 1);
         let knowledge_collections =
             Self::resolve_turn_knowledge(request.knowledge_collections, agent_config.as_ref());
-        let provider_id = request.provider_id.or_else(|| {
-            agent_config
-                .as_ref()
-                .and_then(|config| config.provider_id.clone())
-        });
-        let thinking = request.thinking.or_else(|| {
-            agent_config
-                .as_ref()
-                .and_then(|config| config.thinking.clone())
-        });
-        let plan_mode = request.plan_mode.or_else(|| {
-            agent_config
-                .as_ref()
-                .and_then(|config| config.plan_mode.clone())
-        });
-        let operation_mode = request.operation_mode.unwrap_or_default();
-        {
-            let mut modes = container.session_operation_modes.write().await;
-            modes.insert(request.session_id.clone(), operation_mode);
-        }
+        let turn_cfg = Self::resolve_turn_config(
+            container,
+            &request.session_id,
+            request.provider_id.as_deref(),
+            request.thinking.as_ref(),
+            request.plan_mode.as_deref(),
+            request.operation_mode,
+            None,
+            None,
+            agent_config.as_ref(),
+        )
+        .await;
         let request_mode = request
             .request_mode
             .or_else(|| Self::request_mode_from_metadata(&last_msg.metadata))
             .unwrap_or_default();
-        let mcp_mode = agent_config
-            .as_ref()
-            .and_then(|config| config.mcp_mode.clone());
-        let mcp_servers = agent_config
-            .as_ref()
-            .map_or_else(Vec::new, |config| config.mcp_servers.clone());
         let user_input = last_msg.content.clone();
 
         // Derive turn number from display transcript (never compacted) for
@@ -1014,18 +1029,16 @@ impl ChatService {
             history,
             turn_number,
             user_input,
-            provider_id,
+            provider_id: turn_cfg.provider_id,
             request_mode,
             session_created: false,
-            working_directory: agent_config
-                .as_ref()
-                .and_then(|config| config.working_directory.clone()),
+            working_directory: turn_cfg.working_directory,
             knowledge_collections,
-            thinking,
-            plan_mode,
-            operation_mode,
-            mcp_mode,
-            mcp_servers,
+            thinking: turn_cfg.thinking,
+            plan_mode: turn_cfg.plan_mode,
+            operation_mode: turn_cfg.operation_mode,
+            mcp_mode: turn_cfg.mcp_mode,
+            mcp_servers: turn_cfg.mcp_servers,
             skills,
             agent_config,
             image_generation_options: None,
@@ -1146,120 +1159,121 @@ impl ChatService {
         exec_config.additional_read_dirs = Self::root_additional_read_dirs(container).await;
 
         // 3. Delegate to AgentService.
-        let result = match AgentService::execute(container, &exec_config, progress, cancel).await {
-            Ok(r) => r,
-            Err(AgentExecutionError::LlmError {
-                message,
-                partial_messages,
-            }) => {
-                Self::persist_llm_error_partial_state(
-                    container,
-                    input,
-                    &message,
-                    &partial_messages,
-                )
-                .await;
-                if !partial_messages.is_empty() {
-                    tracing::info!(
-                        count = partial_messages.len(),
-                        session = %input.session_id.0,
-                        "persisted partial messages before LLM error"
-                    );
+        let mut result =
+            match AgentService::execute(container, &exec_config, progress, cancel).await {
+                Ok(r) => r,
+                Err(AgentExecutionError::LlmError {
+                    message,
+                    partial_messages,
+                }) => {
+                    Self::persist_llm_error_partial_state(
+                        container,
+                        input,
+                        &message,
+                        &partial_messages,
+                    )
+                    .await;
+                    if !partial_messages.is_empty() {
+                        tracing::info!(
+                            count = partial_messages.len(),
+                            session = %input.session_id.0,
+                            "persisted partial messages before LLM error"
+                        );
+                    }
+                    // Record the turn boundary so a retry can anchor to it and
+                    // resume from the partial tool-call state, instead of falling
+                    // back to a destructive full-turn resend.
+                    Self::persist_turn_checkpoint(container, input).await;
+                    return Err(TurnError::LlmError(message));
                 }
-                // Record the turn boundary so a retry can anchor to it and
-                // resume from the partial tool-call state, instead of falling
-                // back to a destructive full-turn resend.
-                Self::persist_turn_checkpoint(container, input).await;
-                return Err(TurnError::LlmError(message));
-            }
-            Err(AgentExecutionError::Cancelled {
-                partial_messages,
-                accumulated_content,
-                iteration_texts,
-                iteration_reasonings,
-                iteration_reasoning_durations_ms,
-                iteration_tool_counts,
-                tool_calls_executed,
-                iterations,
-                input_tokens,
-                output_tokens,
-                cost_usd,
-                model,
-                generated_images,
-            }) => {
-                // Persist intermediate messages (assistant + tool results from
-                // earlier successful iterations) to the CONTEXT transcript only.
-                // These are raw protocol messages (individual assistant msgs with
-                // tool_calls + tool role msgs) that the LLM needs for continuity
-                // on resume, but they are NOT suitable for GUI display (the
-                // frontend expects a single consolidated assistant message).
-                let ctx_store = container.session_manager.transcript_store();
-                for msg in &partial_messages {
-                    let _ = ctx_store.append(&input.session_id, msg).await;
-                }
-
-                // Build and persist a consolidated assistant message with all
-                // accumulated content and metadata. This goes to BOTH transcripts
-                // so the GUI can render it properly and the LLM sees the final
-                // state on resume.
-                if !accumulated_content.trim().is_empty() || !tool_calls_executed.is_empty() {
-                    let tool_results_meta: Vec<serde_json::Value> =
-                        Self::build_tool_results_metadata(&tool_calls_executed);
-
-                    let mut meta = serde_json::json!({
-                        "model": model,
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cost_usd": cost_usd,
-                        "tool_results": tool_results_meta,
-                        "iteration_texts": iteration_texts,
-                        "iteration_reasonings": iteration_reasonings,
-                        "iteration_reasoning_durations_ms": iteration_reasoning_durations_ms,
-                        "iteration_tool_counts": iteration_tool_counts,
-                        "cancelled": true,
-                    });
-
-                    if !generated_images.is_empty() {
-                        meta["generated_images"] = serde_json::to_value(&generated_images)
-                            .unwrap_or(serde_json::Value::Array(vec![]));
+                Err(AgentExecutionError::Cancelled {
+                    partial_messages,
+                    accumulated_content,
+                    iteration_texts,
+                    iteration_reasonings,
+                    iteration_reasoning_durations_ms,
+                    iteration_tool_counts,
+                    tool_calls_executed,
+                    iterations,
+                    input_tokens,
+                    output_tokens,
+                    cost_usd,
+                    model,
+                    generated_images,
+                }) => {
+                    // Persist intermediate messages (assistant + tool results from
+                    // earlier successful iterations) to the CONTEXT transcript only.
+                    // These are raw protocol messages (individual assistant msgs with
+                    // tool_calls + tool role msgs) that the LLM needs for continuity
+                    // on resume, but they are NOT suitable for GUI display (the
+                    // frontend expects a single consolidated assistant message).
+                    let ctx_store = container.session_manager.transcript_store();
+                    for msg in &partial_messages {
+                        let _ = ctx_store.append(&input.session_id, msg).await;
                     }
 
-                    let assistant_msg = Message {
-                        message_id: y_core::types::generate_message_id(),
-                        role: Role::Assistant,
-                        content: accumulated_content.clone(),
-                        tool_call_id: None,
-                        tool_calls: vec![],
-                        timestamp: y_core::types::now(),
-                        metadata: meta,
-                    };
+                    // Build and persist a consolidated assistant message with all
+                    // accumulated content and metadata. This goes to BOTH transcripts
+                    // so the GUI can render it properly and the LLM sees the final
+                    // state on resume.
+                    if !accumulated_content.trim().is_empty() || !tool_calls_executed.is_empty() {
+                        let tool_results_meta: Vec<serde_json::Value> =
+                            Self::build_tool_results_metadata(&tool_calls_executed);
 
-                    // Display transcript: consolidated message for GUI rendering.
-                    let _ = container
-                        .session_manager
-                        .display_transcript_store()
-                        .append(&input.session_id, &assistant_msg)
-                        .await;
+                        let mut meta = serde_json::json!({
+                            "model": model,
+                            "input_tokens": input_tokens,
+                            "output_tokens": output_tokens,
+                            "cost_usd": cost_usd,
+                            "tool_results": tool_results_meta,
+                            "iteration_texts": iteration_texts,
+                            "iteration_reasonings": iteration_reasonings,
+                            "iteration_reasoning_durations_ms": iteration_reasoning_durations_ms,
+                            "iteration_tool_counts": iteration_tool_counts,
+                            "cancelled": true,
+                        });
 
-                    // Context transcript: consolidated message for LLM context.
-                    let _ = ctx_store.append(&input.session_id, &assistant_msg).await;
+                        if !generated_images.is_empty() {
+                            meta["generated_images"] = serde_json::to_value(&generated_images)
+                                .unwrap_or(serde_json::Value::Array(vec![]));
+                        }
+
+                        let assistant_msg = Message {
+                            message_id: y_core::types::generate_message_id(),
+                            role: Role::Assistant,
+                            content: accumulated_content.clone(),
+                            tool_call_id: None,
+                            tool_calls: vec![],
+                            timestamp: y_core::types::now(),
+                            metadata: meta,
+                        };
+
+                        // Display transcript: consolidated message for GUI rendering.
+                        let _ = container
+                            .session_manager
+                            .display_transcript_store()
+                            .append(&input.session_id, &assistant_msg)
+                            .await;
+
+                        // Context transcript: consolidated message for LLM context.
+                        let _ = ctx_store.append(&input.session_id, &assistant_msg).await;
+                    }
+
+                    if !partial_messages.is_empty() || !accumulated_content.trim().is_empty() {
+                        tracing::info!(
+                            partial_count = partial_messages.len(),
+                            accumulated_len = accumulated_content.len(),
+                            iterations,
+                            session = %input.session_id.0,
+                            "persisted partial state on cancellation"
+                        );
+                    }
+
+                    // No checkpoint or post-turn optimization for cancelled turns.
+                    return Err(TurnError::Cancelled);
                 }
-
-                if !partial_messages.is_empty() || !accumulated_content.trim().is_empty() {
-                    tracing::info!(
-                        partial_count = partial_messages.len(),
-                        accumulated_len = accumulated_content.len(),
-                        iterations,
-                        session = %input.session_id.0,
-                        "persisted partial state on cancellation"
-                    );
-                }
-
-                // No checkpoint or post-turn optimization for cancelled turns.
-                return Err(TurnError::Cancelled);
-            }
-            Err(e) => return Err(TurnError::from(e)),
-        };
+                Err(e) => return Err(TurnError::from(e)),
+            };
 
         // 4. Session-specific post-processing: persist final assistant message,
         //    create checkpoint. AgentService doesn't handle session storage —
@@ -1304,7 +1318,7 @@ impl ChatService {
         )
         .await;
 
-        let mut new_messages = result.new_messages.clone();
+        let mut new_messages = std::mem::take(&mut result.new_messages);
         new_messages.push(assistant_msg);
 
         // Checkpoint the completed turn boundary.

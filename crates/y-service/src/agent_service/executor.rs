@@ -329,8 +329,8 @@ pub(crate) async fn execute_inner(
         iteration_reasoning_durations_ms: Vec::new(),
         iteration_tool_counts: Vec::new(),
         dynamic_tool_defs: Vec::new(),
-        pending_interactions: container.pending_interactions.clone(),
-        pending_permissions: container.pending_permissions.clone(),
+        pending_interactions: container.session_state.pending_interactions.clone(),
+        pending_permissions: container.session_state.pending_permissions.clone(),
         cancel_token: cancel.clone(),
         injected_steers: Vec::new(),
     };

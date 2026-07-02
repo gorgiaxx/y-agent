@@ -55,6 +55,51 @@ const ACTIVATION_SET_CEILING: usize = 20;
 /// Background scheduler poll interval for long-lived presentation layers.
 const BACKGROUND_SCHEDULER_TICK_INTERVAL: Duration = Duration::from_secs(1);
 
+/// Per-session runtime state: pending HITL channels, steering/follow-up
+/// queues, and session-scoped mode overrides.
+///
+/// Extracted from `ServiceContainer` to reduce the container's field count
+/// and group related per-session state into a single aggregate.
+#[derive(Clone)]
+pub struct SessionState {
+    /// Pending user-interaction answer channels for `AskUser` tool calls.
+    pub pending_interactions: crate::chat::PendingInteractions,
+
+    /// Pending permission-approval channels for HITL permission requests.
+    pub pending_permissions: crate::chat::PendingPermissions,
+
+    /// Pending plan-review channels for HITL plan approval/rejection.
+    pub pending_plan_reviews: crate::chat::PendingPlanReviews,
+
+    /// Per-session steering queues. Holds user messages enqueued while a turn
+    /// is streaming; drained and injected at LLM-call boundaries.
+    pub steering_queues: crate::chat::SteeringQueues,
+
+    /// Per-session follow-up queues. Holds user messages enqueued while a
+    /// turn is streaming but intended for processing after the run stops.
+    pub follow_up_queues: crate::chat::FollowUpQueues,
+
+    /// Session-scoped permission overrides.
+    pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
+
+    /// Session-scoped input operation modes.
+    pub session_operation_modes: Arc<RwLock<HashMap<SessionId, OperationMode>>>,
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        Self {
+            pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            pending_plan_reviews: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            steering_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            follow_up_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
+            session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+}
+
 /// All wired application services, constructed from [`ServiceConfig`].
 ///
 /// Fields are logically grouped by domain. A future refactoring may extract
@@ -170,31 +215,10 @@ pub struct ServiceContainer {
     /// Knowledge base service (ingestion, retrieval, embedding).
     pub knowledge_service: Arc<Mutex<KnowledgeService>>,
 
-    // -- Interactions (HITL) -----------------------------------------------
-    /// Pending user-interaction answer channels for `AskUser` tool calls.
-    pub pending_interactions: crate::chat::PendingInteractions,
-
-    /// Pending permission-approval channels for HITL permission requests.
-    pub pending_permissions: crate::chat::PendingPermissions,
-
-    /// Pending plan-review channels for HITL plan approval/rejection.
-    /// Decoupled from the LLM -- the GUI talks directly to the orchestrator.
-    pub pending_plan_reviews: crate::chat::PendingPlanReviews,
-
-    /// Per-session steering queues. Holds user messages enqueued while a turn
-    /// is streaming; drained and injected at LLM-call boundaries by the agent
-    /// execution loop (root and sub-agents alike, keyed by session id).
-    pub steering_queues: crate::chat::SteeringQueues,
-    /// Per-session follow-up queues. Holds user messages enqueued while a
-    /// turn is streaming but intended for processing after the run naturally
-    /// stops. Drained by the agent execution loop to extend the run.
-    pub follow_up_queues: crate::chat::FollowUpQueues,
-
-    /// Session-scoped permission overrides.
-    pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
-
-    /// Session-scoped input operation modes.
-    pub session_operation_modes: Arc<RwLock<HashMap<SessionId, OperationMode>>>,
+    // -- Session state (HITL, steering, modes) ----------------------------
+    /// Per-session runtime state: pending HITL channels, steering/follow-up
+    /// queues, and session-scoped mode overrides.
+    pub session_state: SessionState,
 
     // -- Bot ---------------------------------------------------------------
     /// Path to the bot persona directory (`~/.config/y-agent/persona/`).
@@ -383,13 +407,7 @@ impl ServiceContainer {
             provider_metrics_store,
             skill_search: RwLock::new(ctx.skill_search),
             callable_agents_text: ctx.callable_agents_text,
-            pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            pending_plan_reviews: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            steering_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            follow_up_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
-            session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
+            session_state: SessionState::default(),
             persona_dir: config.persona_dir.clone(),
             mcp_manager,
             file_history_managers: crate::rewind::create_file_history_managers(),
@@ -1025,22 +1043,23 @@ impl ServiceContainer {
     /// grow unboundedly over the application lifetime.
     pub async fn cleanup_session_state(&self, session_id: &SessionId) {
         self.pruning_watermarks.write().await.remove(session_id);
-        self.session_permission_modes
+        self.session_state
+            .session_permission_modes
             .write()
             .await
             .remove(session_id);
         crate::rewind::RewindService::cleanup_session(&self.file_history_managers, session_id)
             .await;
         {
-            let mut interactions = self.pending_interactions.lock().await;
+            let mut interactions = self.session_state.pending_interactions.lock().await;
             interactions.retain(|_, pending| pending.session_id() != session_id);
         }
         {
-            let mut permissions = self.pending_permissions.lock().await;
+            let mut permissions = self.session_state.pending_permissions.lock().await;
             permissions.retain(|_, pending| pending.session_id() != session_id);
         }
         {
-            let mut reviews = self.pending_plan_reviews.lock().await;
+            let mut reviews = self.session_state.pending_plan_reviews.lock().await;
             reviews.retain(|_, pending| pending.session_id() != session_id);
         }
         if let Err(e) = self
@@ -1083,7 +1102,13 @@ impl ServiceContainer {
         let mut restored = Vec::with_capacity(runs.len());
 
         for run in runs {
-            if self.pending_plan_reviews.lock().await.contains_key(&run.id) {
+            if self
+                .session_state
+                .pending_plan_reviews
+                .lock()
+                .await
+                .contains_key(&run.id)
+            {
                 continue;
             }
 
@@ -1103,7 +1128,7 @@ impl ServiceContainer {
             let (decision_tx, decision_rx) = tokio::sync::oneshot::channel();
 
             {
-                let mut map = self.pending_plan_reviews.lock().await;
+                let mut map = self.session_state.pending_plan_reviews.lock().await;
                 map.insert(
                     run.id.clone(),
                     crate::chat_types::PendingPlanReview::new(session_id.clone(), decision_tx),
@@ -1967,50 +1992,50 @@ mod tests {
 
         let (interaction_tx, _interaction_rx) = tokio::sync::oneshot::channel();
         let (other_interaction_tx, _other_interaction_rx) = tokio::sync::oneshot::channel();
-        sc.pending_interactions.lock().await.insert(
+        sc.session_state.pending_interactions.lock().await.insert(
             "interaction-a".to_string(),
             crate::chat_types::PendingInteraction::new(target_session.clone(), interaction_tx),
         );
-        sc.pending_interactions.lock().await.insert(
+        sc.session_state.pending_interactions.lock().await.insert(
             "interaction-b".to_string(),
             crate::chat_types::PendingInteraction::new(other_session.clone(), other_interaction_tx),
         );
 
         let (permission_tx, _permission_rx) = tokio::sync::oneshot::channel();
         let (other_permission_tx, _other_permission_rx) = tokio::sync::oneshot::channel();
-        sc.pending_permissions.lock().await.insert(
+        sc.session_state.pending_permissions.lock().await.insert(
             "permission-a".to_string(),
             crate::chat_types::PendingPermission::new(target_session.clone(), permission_tx),
         );
-        sc.pending_permissions.lock().await.insert(
+        sc.session_state.pending_permissions.lock().await.insert(
             "permission-b".to_string(),
             crate::chat_types::PendingPermission::new(other_session.clone(), other_permission_tx),
         );
 
         let (review_tx, _review_rx) = tokio::sync::oneshot::channel();
         let (other_review_tx, _other_review_rx) = tokio::sync::oneshot::channel();
-        sc.pending_plan_reviews.lock().await.insert(
+        sc.session_state.pending_plan_reviews.lock().await.insert(
             "review-a".to_string(),
             crate::chat_types::PendingPlanReview::new(target_session.clone(), review_tx),
         );
-        sc.pending_plan_reviews.lock().await.insert(
+        sc.session_state.pending_plan_reviews.lock().await.insert(
             "review-b".to_string(),
             crate::chat_types::PendingPlanReview::new(other_session, other_review_tx),
         );
 
         sc.cleanup_session_state(&target_session).await;
 
-        let interactions = sc.pending_interactions.lock().await;
+        let interactions = sc.session_state.pending_interactions.lock().await;
         assert!(!interactions.contains_key("interaction-a"));
         assert!(interactions.contains_key("interaction-b"));
         drop(interactions);
 
-        let permissions = sc.pending_permissions.lock().await;
+        let permissions = sc.session_state.pending_permissions.lock().await;
         assert!(!permissions.contains_key("permission-a"));
         assert!(permissions.contains_key("permission-b"));
         drop(permissions);
 
-        let reviews = sc.pending_plan_reviews.lock().await;
+        let reviews = sc.session_state.pending_plan_reviews.lock().await;
         assert!(!reviews.contains_key("review-a"));
         assert!(reviews.contains_key("review-b"));
     }

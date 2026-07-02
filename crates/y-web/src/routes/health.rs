@@ -131,9 +131,27 @@ async fn memory_stats(State(state): State<AppState>) -> Json<MemoryStats> {
         .map(|map| map.len())
         .unwrap_or(0);
     let pruning_watermarks = state.container.pruning_watermarks.read().await.len();
-    let session_permission_modes = state.container.session_permission_modes.read().await.len();
-    let pending_interactions = state.container.pending_interactions.lock().await.len();
-    let pending_permissions = state.container.pending_permissions.lock().await.len();
+    let session_permission_modes = state
+        .container
+        .session_state
+        .session_permission_modes
+        .read()
+        .await
+        .len();
+    let pending_interactions = state
+        .container
+        .session_state
+        .pending_interactions
+        .lock()
+        .await
+        .len();
+    let pending_permissions = state
+        .container
+        .session_state
+        .pending_permissions
+        .lock()
+        .await
+        .len();
 
     let file_history_managers = state.container.file_history_managers.read().await;
     let file_history_sessions = file_history_managers.len();

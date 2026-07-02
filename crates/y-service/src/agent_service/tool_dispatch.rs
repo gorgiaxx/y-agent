@@ -569,7 +569,11 @@ pub(crate) async fn session_permission_mode(
     container: &ServiceContainer,
     session_id: &SessionId,
 ) -> Option<PermissionMode> {
-    let modes = container.session_permission_modes.read().await;
+    let modes = container
+        .session_state
+        .session_permission_modes
+        .read()
+        .await;
     modes.get(session_id).copied()
 }
 
@@ -577,7 +581,7 @@ pub(crate) async fn session_operation_mode(
     container: &ServiceContainer,
     session_id: &SessionId,
 ) -> Option<OperationMode> {
-    let modes = container.session_operation_modes.read().await;
+    let modes = container.session_state.session_operation_modes.read().await;
     modes.get(session_id).copied()
 }
 
@@ -586,7 +590,11 @@ pub(crate) async fn set_session_permission_mode(
     session_id: &SessionId,
     mode: PermissionMode,
 ) {
-    let mut modes = container.session_permission_modes.write().await;
+    let mut modes = container
+        .session_state
+        .session_permission_modes
+        .write()
+        .await;
     modes.insert(session_id.clone(), mode);
 }
 

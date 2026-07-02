@@ -867,7 +867,7 @@ async fn answer_question(
         y_service::user_interaction_orchestrator::UserInteractionOrchestrator::deliver_answer(
             &body.interaction_id,
             body.answers,
-            &state.container.pending_interactions,
+            &state.container.session_state.pending_interactions,
         )
         .await;
 
@@ -880,7 +880,12 @@ async fn answer_permission(
     Json(body): Json<AnswerPermissionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let delivered = {
-        let mut map = state.container.pending_permissions.lock().await;
+        let mut map = state
+            .container
+            .session_state
+            .pending_permissions
+            .lock()
+            .await;
         if let Some(pending) = map.remove(&body.request_id) {
             pending.send(body.decision).is_ok()
         } else {
@@ -914,7 +919,7 @@ async fn answer_plan_review(
     let delivered = PlanOrchestrator::deliver_review_decision(
         &body.review_id,
         decision,
-        &state.container.pending_plan_reviews,
+        &state.container.session_state.pending_plan_reviews,
     )
     .await;
 
