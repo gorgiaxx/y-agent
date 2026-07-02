@@ -16,35 +16,7 @@ use crate::state::{save_gui_config, AppState, GuiConfig};
 /// runtime, hooks, tools, guardrails) as they were loaded at startup.
 #[tauri::command]
 pub async fn config_get(state: State<'_, AppState>) -> Result<Value, String> {
-    // Read the config files from the config directory and return as JSON.
-    let config_dir = &state.config_dir;
-    let mut merged = serde_json::Map::new();
-
-    let sections = [
-        "providers",
-        "storage",
-        "session",
-        "runtime",
-        "hooks",
-        "tools",
-        "guardrails",
-        "browser",
-        "knowledge",
-        "langfuse",
-    ];
-
-    for section in &sections {
-        let path = config_dir.join(format!("{section}.toml"));
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|e| format!("Failed to read {section}.toml: {e}"))?;
-            let value: Value = toml::from_str(&content)
-                .map_err(|e| format!("Failed to parse {section}.toml: {e}"))?;
-            merged.insert((*section).to_string(), value);
-        }
-    }
-
-    Ok(Value::Object(merged))
+    y_service::ConfigService::read_all(&state.config_dir)
 }
 
 /// Set a specific configuration section.
@@ -56,32 +28,7 @@ pub async fn config_set_section(
     section: String,
     content: Value,
 ) -> Result<(), String> {
-    let allowed = [
-        "providers",
-        "storage",
-        "session",
-        "runtime",
-        "hooks",
-        "tools",
-        "guardrails",
-        "browser",
-        "knowledge",
-        "langfuse",
-    ];
-    if !allowed.contains(&section.as_str()) {
-        return Err(format!("Unknown config section: {section}"));
-    }
-
-    let path = state.config_dir.join(format!("{section}.toml"));
-    std::fs::create_dir_all(&state.config_dir)
-        .map_err(|e| format!("Failed to create config dir: {e}"))?;
-
-    let toml_str =
-        toml::to_string_pretty(&content).map_err(|e| format!("Failed to serialize config: {e}"))?;
-
-    std::fs::write(&path, toml_str).map_err(|e| format!("Failed to write {section}.toml: {e}"))?;
-
-    Ok(())
+    y_service::ConfigService::write_section_json(&state.config_dir, &section, &content)
 }
 
 /// Get the GUI-specific configuration.
@@ -119,28 +66,7 @@ pub async fn config_get_section(
     state: State<'_, AppState>,
     section: String,
 ) -> Result<String, String> {
-    let allowed = [
-        "providers",
-        "storage",
-        "session",
-        "runtime",
-        "hooks",
-        "tools",
-        "guardrails",
-        "browser",
-        "knowledge",
-        "langfuse",
-    ];
-    if !allowed.contains(&section.as_str()) {
-        return Err(format!("Unknown config section: {section}"));
-    }
-
-    let path = state.config_dir.join(format!("{section}.toml"));
-    if !path.exists() {
-        return Ok(String::new());
-    }
-
-    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {section}.toml: {e}"))
+    y_service::ConfigService::read_section(&state.config_dir, &section)
 }
 
 /// Save a single config section from raw TOML content.
@@ -152,32 +78,7 @@ pub async fn config_save_section(
     section: String,
     content: String,
 ) -> Result<(), String> {
-    let allowed = [
-        "providers",
-        "storage",
-        "session",
-        "runtime",
-        "hooks",
-        "tools",
-        "guardrails",
-        "browser",
-        "knowledge",
-        "langfuse",
-    ];
-    if !allowed.contains(&section.as_str()) {
-        return Err(format!("Unknown config section: {section}"));
-    }
-
-    // Validate TOML syntax before writing.
-    let _: Value = toml::from_str(&content).map_err(|e| format!("Invalid TOML syntax: {e}"))?;
-
-    let path = state.config_dir.join(format!("{section}.toml"));
-    std::fs::create_dir_all(&state.config_dir)
-        .map_err(|e| format!("Failed to create config dir: {e}"))?;
-
-    std::fs::write(&path, &content).map_err(|e| format!("Failed to write {section}.toml: {e}"))?;
-
-    Ok(())
+    y_service::ConfigService::save_section(&state.config_dir, &section, &content)
 }
 
 /// Hot-reload configuration from updated config files.
@@ -310,9 +211,7 @@ pub async fn provider_test(
 
 /// Fetch available models from a provider's model listing endpoint.
 ///
-/// For OpenAI-compatible providers, queries `{base_url}/models`.
-/// For Azure, queries `{prefix}/models?api-version={version}` with
-/// `api-key` header authentication.
+/// Thin delegation to `y_service::list_provider_models`.
 #[tauri::command]
 pub async fn provider_list_models(
     base_url: String,
@@ -325,109 +224,18 @@ pub async fn provider_list_models(
     azure_api_version: Option<String>,
     azure_auth_mode: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    let effective_key = if !api_key.is_empty() {
-        api_key
-    } else if !api_key_env.is_empty() {
-        std::env::var(&api_key_env)
-            .map_err(|_| format!("Environment variable '{api_key_env}' is not set"))?
-    } else {
-        String::new()
-    };
-
-    let client =
-        y_service::SystemService::provider_http_client_builder(http_protocol.unwrap_or_default())
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-    let custom_headers =
-        y_service::SystemService::provider_custom_header_map(&headers.unwrap_or_default())?;
-
-    let pt = provider_type.as_deref().unwrap_or("");
-    let res_name = azure_resource_name.as_deref().unwrap_or("");
-    let api_ver = azure_api_version.as_deref().unwrap_or("");
-    let auth_mode = azure_auth_mode.as_deref().unwrap_or("");
-
-    let url = resolve_models_url(pt, &base_url, res_name, api_ver);
-    let mut req =
-        y_service::SystemService::apply_provider_custom_headers(client.get(&url), &custom_headers);
-    if !effective_key.is_empty() {
-        req = apply_model_list_auth(req, pt, auth_mode, &effective_key);
-    }
-
-    let response = req
-        .send()
-        .await
-        .map_err(|e| format!("Network error reaching {url}: {e}"))?;
-
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-
-    if !status.is_success() {
-        let detail: String = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|v| {
-                v.pointer("/error/message")
-                    .and_then(|m| m.as_str())
-                    .map(std::borrow::ToOwned::to_owned)
-            })
-            .unwrap_or_else(|| {
-                if body.is_empty() {
-                    format!("(no response body, HTTP {status})")
-                } else {
-                    body.chars().take(200).collect()
-                }
-            });
-        return Err(format!("HTTP {status}: {detail}"));
-    }
-
-    // Parse and return the full response JSON so the frontend can handle it.
-    let value: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("Failed to parse response: {e}"))?;
-    Ok(value)
-}
-
-fn resolve_models_url(
-    provider_type: &str,
-    base_url: &str,
-    azure_resource_name: &str,
-    azure_api_version: &str,
-) -> String {
-    if provider_type != "azure" {
-        return format!("{}/models", base_url.trim_end_matches('/'));
-    }
-
-    let api_version = if azure_api_version.is_empty() {
-        "2024-10-21"
-    } else {
-        azure_api_version
-    };
-
-    let prefix = if !base_url.is_empty() {
-        if let Some(idx) = base_url.find("/deployments/") {
-            base_url[..idx].to_string()
-        } else {
-            base_url.trim_end_matches('/').to_string()
-        }
-    } else if !azure_resource_name.is_empty() {
-        format!("https://{azure_resource_name}.openai.azure.com/openai")
-    } else {
-        return format!("{}/models", base_url.trim_end_matches('/'));
-    };
-
-    format!("{prefix}/models?api-version={api_version}")
-}
-
-fn apply_model_list_auth(
-    req: reqwest::RequestBuilder,
-    provider_type: &str,
-    azure_auth_mode: &str,
-    key: &str,
-) -> reqwest::RequestBuilder {
-    if provider_type == "azure" && azure_auth_mode != "bearer" {
-        req.header("api-key", key)
-    } else {
-        req.header("Authorization", format!("Bearer {key}"))
-    }
+    y_service::list_provider_models(
+        &base_url,
+        &api_key,
+        &api_key_env,
+        headers.as_ref(),
+        http_protocol.unwrap_or_default(),
+        provider_type.as_deref(),
+        azure_resource_name.as_deref(),
+        azure_api_version.as_deref(),
+        azure_auth_mode.as_deref(),
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------

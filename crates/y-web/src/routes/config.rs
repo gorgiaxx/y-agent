@@ -18,23 +18,6 @@ use crate::error::ApiError;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const ALLOWED_SECTIONS: &[&str] = &[
-    "providers",
-    "storage",
-    "session",
-    "runtime",
-    "hooks",
-    "tools",
-    "guardrails",
-    "browser",
-    "knowledge",
-    "langfuse",
-];
-
-// ---------------------------------------------------------------------------
 // Request types
 // ---------------------------------------------------------------------------
 
@@ -97,19 +80,9 @@ pub struct SavePromptTemplateRequest {
 
 /// `GET /api/v1/config` -- get the full configuration as JSON.
 async fn config_get(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let config_dir = &state.config_dir;
-    let mut merged = serde_json::Map::new();
-
-    for section in ALLOWED_SECTIONS {
-        let path = config_dir.join(format!("{section}.toml"));
-        if let Ok(content) = tokio::fs::read_to_string(&path).await {
-            let value: Value = toml::from_str(&content)
-                .map_err(|e| ApiError::Internal(format!("Failed to parse {section}.toml: {e}")))?;
-            merged.insert((*section).to_string(), value);
-        }
-    }
-
-    Ok(Json(Value::Object(merged)))
+    let config =
+        y_service::ConfigService::read_all(&state.config_dir).map_err(ApiError::Internal)?;
+    Ok(Json(config))
 }
 
 /// `GET /api/v1/config/:section` -- get a section as raw TOML.
@@ -117,17 +90,8 @@ async fn config_get_section(
     State(state): State<AppState>,
     Path(section): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !ALLOWED_SECTIONS.contains(&section.as_str()) {
-        return Err(ApiError::BadRequest(format!(
-            "Unknown config section: {section}"
-        )));
-    }
-
-    let path = state.config_dir.join(format!("{section}.toml"));
-    let Ok(content) = tokio::fs::read_to_string(&path).await else {
-        return Ok(Json(serde_json::json!({ "content": "" })));
-    };
-
+    let content = y_service::ConfigService::read_section(&state.config_dir, &section)
+        .map_err(ApiError::BadRequest)?;
     Ok(Json(serde_json::json!({ "content": content })))
 }
 
@@ -137,28 +101,10 @@ async fn config_save_section(
     Path(section): Path<String>,
     Json(body): Json<SaveSectionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if !ALLOWED_SECTIONS.contains(&section.as_str()) {
-        return Err(ApiError::BadRequest(format!(
-            "Unknown config section: {section}"
-        )));
-    }
-
-    // Validate TOML syntax.
-    let _: Value = toml::from_str(&body.content)
-        .map_err(|e| ApiError::BadRequest(format!("Invalid TOML syntax: {e}")))?;
-
-    let path = state.config_dir.join(format!("{section}.toml"));
-    tokio::fs::create_dir_all(&state.config_dir)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to create config dir: {e}")))?;
-
-    tokio::fs::write(&path, &body.content)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to write {section}.toml: {e}")))?;
-
+    y_service::ConfigService::save_section(&state.config_dir, &section, &body.content)
+        .map_err(ApiError::BadRequest)?;
     Ok(Json(serde_json::json!({"message": "saved"})))
 }
-
 /// `POST /api/v1/config/reload` -- hot-reload configuration.
 async fn config_reload(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     async fn read_toml(
