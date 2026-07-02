@@ -359,6 +359,15 @@ impl ProviderPoolImpl {
             .collect()
     }
 
+    /// Return the pool's retry policy for transient (5xx / network) failures.
+    ///
+    /// Exposed so higher-level orchestration layers (e.g. plan phase execution)
+    /// can reuse the same configured `max_retries` and backoff strategy rather
+    /// than inventing their own.
+    pub fn retry_config(&self) -> &crate::config::RetryConfig {
+        &self.retry
+    }
+
     /// Return a snapshot of metrics for all providers.
     ///
     /// Each entry pairs the provider ID with its current metrics snapshot.
