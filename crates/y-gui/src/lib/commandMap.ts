@@ -327,6 +327,11 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   chat_delete_steer:   { method: 'DELETE', path: '/api/v1/chat/steer',
                          body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id'), steer_id: arg(a, 'steerId', 'steer_id') }) },
   chat_list_steers:    { method: 'GET', path: pathWith('/api/v1/chat/steer/{sessionId}', 'sessionId') },
+  chat_add_follow_up:  { method: 'POST', path: '/api/v1/chat/follow-up',
+                         body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id'), text: arg(a, 'text') }) },
+  chat_delete_follow_up: { method: 'DELETE', path: '/api/v1/chat/follow-up',
+                         body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id'), follow_up_id: arg(a, 'followUpId', 'follow_up_id') }) },
+  chat_list_follow_ups: { method: 'GET', path: pathWith('/api/v1/chat/follow-up/{sessionId}', 'sessionId') },
   // -- Agents --
   agent_list:          { method: 'GET',  path: '/api/v1/agents' },
   agent_get:           { method: 'GET',  path: pathWith('/api/v1/agents/{id}', 'id') },
