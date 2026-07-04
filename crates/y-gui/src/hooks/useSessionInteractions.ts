@@ -162,6 +162,17 @@ export function useSessionInteractions(activeSessionId: string | null) {
     }).catch(console.error);
   }, []);
 
+  const handlePermissionApproveAlways = useCallback((requestId: string) => {
+    setPermissionBySession((prev) => clearSessionInteractionByPredicate(
+      prev,
+      (interaction) => interaction.requestId === requestId,
+    ));
+    transport.invoke('chat_answer_permission', {
+      requestId,
+      decision: 'approve_always',
+    }).catch(console.error);
+  }, []);
+
   const answerPlanReview = useCallback((
     reviewId: string,
     decision: 'approve' | 'revise' | 'reject',
@@ -202,6 +213,7 @@ export function useSessionInteractions(activeSessionId: string | null) {
     handlePermissionApprove,
     handlePermissionDeny,
     handlePermissionAllowAllForSession,
+    handlePermissionApproveAlways,
     handlePlanReviewApprove,
     handlePlanReviewRevise,
     handlePlanReviewReject,

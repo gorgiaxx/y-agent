@@ -197,6 +197,9 @@ pub struct ServiceContainer {
 
     /// Guardrail manager for security middleware.
     pub guardrail_manager: GuardrailManager,
+    /// Exec policy manager (Starlark DSL for shell command approval).
+    /// `None` when no policy file is configured.
+    pub exec_policy_manager: Option<Arc<y_guardrails::ExecPolicyManager>>,
 
     // -- Scheduler ---------------------------------------------------------
     /// Workflow store for persistent workflow templates.
@@ -324,6 +327,9 @@ impl ServiceContainer {
         // 5. Guardrails.
         let guardrail_manager = GuardrailManager::new(config.guardrails.clone());
 
+        // 5b. Exec policy (optional Starlark DSL for shell commands).
+        let exec_policy_manager = Self::init_exec_policy(config);
+
         // 6. Knowledge service (early -- needed for tool registration).
         let (knowledge_service, embedding_provider) = Self::init_knowledge_service(config);
 
@@ -380,6 +386,7 @@ impl ServiceContainer {
             session_manager: sessions.session_manager,
             hook_system: std::sync::RwLock::new(hook_system),
             tool_registry: tools.tool_registry,
+            exec_policy_manager,
             runtime_manager,
             context_pipeline: ctx.pipeline,
             guardrail_manager,
@@ -984,6 +991,51 @@ impl ServiceContainer {
     /// turns use the new values (e.g. `max_tool_iterations`).
     pub fn reload_guardrails(&self, new_config: y_guardrails::GuardrailConfig) {
         self.guardrail_manager.reload_config(new_config);
+    }
+
+    /// Initialize the exec policy manager from the guardrail config.
+    ///
+    /// If `exec_policy.policy_file` is set and the file exists, loads it.
+    /// Otherwise returns `None` (exec policy disabled).
+    fn init_exec_policy(config: &ServiceConfig) -> Option<Arc<y_guardrails::ExecPolicyManager>> {
+        let policy_file = config.guardrails.exec_policy.policy_file.as_ref()?;
+        let expanded = std::path::PathBuf::from(crate::app_config::expand_tilde(policy_file));
+
+        if !expanded.exists() {
+            info!(
+                path = %expanded.display(),
+                "exec_policy file not found — exec policy disabled"
+            );
+            return None;
+        }
+
+        match y_guardrails::ExecPolicyManager::from_file(&expanded) {
+            Ok(mgr) => {
+                info!(
+                    path = %expanded.display(),
+                    rules = mgr.policy().rule_count(),
+                    "exec policy loaded"
+                );
+                Some(Arc::new(mgr))
+            }
+            Err(e) => {
+                warn!(
+                    path = %expanded.display(),
+                    error = %e,
+                    "failed to load exec policy — disabled"
+                );
+                None
+            }
+        }
+    }
+
+    /// Hot-reload the exec policy from disk.
+    pub async fn reload_exec_policy(&self) {
+        if let Some(mgr) = &self.exec_policy_manager {
+            if let Err(e) = mgr.reload().await {
+                warn!(error = %e, "failed to reload exec policy");
+            }
+        }
     }
 
     /// Hot-reload the session configuration.
@@ -1682,6 +1734,7 @@ mod tests {
         let _ = &sc.runtime_manager;
         let _ = &sc.context_pipeline;
         let _ = &sc.guardrail_manager;
+        let _ = &sc.exec_policy_manager;
         let _ = &sc.agent_pool;
         let _ = &sc.prompt_context;
     }

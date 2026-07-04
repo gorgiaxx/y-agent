@@ -44,6 +44,10 @@ pub struct GuardrailConfig {
     /// Plan review configuration.
     #[serde(default)]
     pub plan_review: PlanReviewConfig,
+
+    /// Exec policy (Starlark DSL) configuration.
+    #[serde(default)]
+    pub exec_policy: ExecPolicyConfig,
 }
 
 impl Default for GuardrailConfig {
@@ -57,6 +61,7 @@ impl Default for GuardrailConfig {
             risk: RiskConfig::default(),
             hitl: HitlConfig::default(),
             plan_review: PlanReviewConfig::default(),
+            exec_policy: ExecPolicyConfig::default(),
         }
     }
 }
@@ -148,6 +153,21 @@ pub struct PlanReviewConfig {
     /// Whether plan execution is automatic or manually reviewed.
     #[serde(default)]
     pub mode: PlanReviewMode,
+}
+
+/// Configuration for the Starlark exec policy engine.
+///
+/// When `policy_file` is set, shell commands are evaluated against the
+/// Starlark policy before the generic permission model. Rules can be
+/// auto-derived from HITL "Always Allow" decisions.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExecPolicyConfig {
+    /// Path to the Starlark policy file (e.g. `~/.y-agent/exec_policy.rules`).
+    ///
+    /// If `None` or the file does not exist, exec policy is disabled and
+    /// the generic permission model is used for all tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_file: Option<String>,
 }
 
 // Serde default helpers

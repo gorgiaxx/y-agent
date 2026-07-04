@@ -91,6 +91,7 @@ export function ChatView() {
     handlePermissionApprove,
     handlePermissionDeny,
     handlePermissionAllowAllForSession,
+    handlePermissionApproveAlways,
     handlePlanReviewApprove,
     handlePlanReviewRevise,
     handlePlanReviewReject,
@@ -338,6 +339,7 @@ export function ChatView() {
           onPermissionApprove: handlePermissionApprove,
           onPermissionDeny: handlePermissionDeny,
           onPermissionAllowAllForSession: handlePermissionAllowAllForSession,
+          onPermissionApproveAlways: handlePermissionApproveAlways,
         }}
         edit={{
           pendingEdit: visiblePendingEdit,

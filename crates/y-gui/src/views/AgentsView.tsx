@@ -430,6 +430,7 @@ export function AgentsView() {
                     onPermissionApprove: interactions.handlePermissionApprove,
                     onPermissionDeny: interactions.handlePermissionDeny,
                     onPermissionAllowAllForSession: interactions.handlePermissionAllowAllForSession,
+                    onPermissionApproveAlways: interactions.handlePermissionApproveAlways,
                   }}
                   edit={{
                     pendingEdit: visiblePendingEdit,

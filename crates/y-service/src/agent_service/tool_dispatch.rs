@@ -97,6 +97,13 @@ pub(crate) async fn execute_and_record_tool(
     let session_mode = session_permission_mode(container, &ctx.session_id).await;
     let operation_mode = session_operation_mode(container, &ctx.session_id).await;
 
+    // Extract shell command content for exec_policy evaluation.
+    let shell_command_content: Option<&str> = if tc.name == "ShellExec" {
+        tc.arguments.get("command").and_then(|v| v.as_str())
+    } else {
+        None
+    };
+
     // Built-in agents auto-allow their declared tools without consulting
     // global permission policy. This prevents background subagents from
     // being blocked when the user sets a global "ask" mode.
@@ -114,11 +121,23 @@ pub(crate) async fn execute_and_record_tool(
             reason: format!("built-in agent '{}' declared tool", config.agent_name),
         }
     } else {
-        resolve_permission_decision_for_session(
-            permission_model.evaluate(&tc.name, is_dangerous),
-            session_mode,
-            operation_mode,
-        )
+        // Stage 0: Exec policy (Starlark DSL for shell commands).
+        // If a rule matches, its decision takes precedence.
+        let ep_decision = evaluate_exec_policy(
+            container.exec_policy_manager.as_ref(),
+            shell_command_content,
+        );
+
+        if let Some(ep_decision) = ep_decision {
+            resolve_permission_decision_for_session(ep_decision, session_mode, operation_mode)
+        } else {
+            // No exec policy match — fall through to generic permission model.
+            resolve_permission_decision_for_session(
+                permission_model.evaluate(&tc.name, is_dangerous),
+                session_mode,
+                operation_mode,
+            )
+        }
     };
 
     match decision.action {
@@ -222,6 +241,15 @@ pub(crate) async fn execute_and_record_tool(
                         PermissionMode::BypassPermissions,
                     )
                     .await;
+                    // Fall through to execute the tool.
+                }
+                Some(crate::chat::PermissionPromptResponse::ApproveAlways) => {
+                    tracing::info!(
+                        tool = %tc.name,
+                        request_id = %request_id,
+                        "user approved: always allow (persist exec_policy rule)"
+                    );
+                    persist_exec_policy_amendment(container, tc).await;
                     // Fall through to execute the tool.
                 }
                 Some(crate::chat::PermissionPromptResponse::Deny) | None => {
@@ -565,6 +593,85 @@ pub(crate) fn resolve_permission_decision_for_session(
     }
 }
 
+/// Tokenize a shell command for exec policy matching.
+///
+/// Returns `None` for commands with shell metacharacters (pipes, redirects,
+/// subshells) that make simple tokenization unreliable. The exec policy only
+/// applies to simple prefix commands.
+fn tokenize_shell_command_for_exec_policy(command: &str) -> Option<Vec<String>> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Skip commands with shell metacharacters.
+    if trimmed.contains('|')
+        || trimmed.contains('>')
+        || trimmed.contains('&')
+        || trimmed.contains(';')
+        || trimmed.contains('$')
+        || trimmed.contains('`')
+    {
+        return None;
+    }
+
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    for ch in trimmed.chars() {
+        match ch {
+            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+            '"' if !in_single_quote => in_double_quote = !in_double_quote,
+            c if c.is_whitespace() && !in_single_quote && !in_double_quote => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            c => current.push(c),
+        }
+    }
+
+    if in_single_quote || in_double_quote {
+        return None;
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens)
+    }
+}
+
+/// Evaluate a shell command against the exec policy if configured.
+fn evaluate_exec_policy(
+    manager: Option<&Arc<y_guardrails::ExecPolicyManager>>,
+    shell_command: Option<&str>,
+) -> Option<y_guardrails::PermissionDecision> {
+    let mgr = manager?;
+    let cmd = shell_command?;
+    let tokens = tokenize_shell_command_for_exec_policy(cmd)?;
+    let eval = mgr.evaluate(&tokens)?;
+    let action = match eval.decision {
+        y_guardrails::ExecDecision::Allow => y_guardrails::PermissionAction::Allow,
+        y_guardrails::ExecDecision::Ask => y_guardrails::PermissionAction::Ask,
+        y_guardrails::ExecDecision::Deny => y_guardrails::PermissionAction::Deny,
+    };
+    let justification = eval
+        .determining_justification()
+        .unwrap_or("exec policy rule")
+        .to_string();
+    Some(y_guardrails::PermissionDecision {
+        action,
+        reason: format!("exec_policy: {justification}"),
+    })
+}
+
 pub(crate) async fn session_permission_mode(
     container: &ServiceContainer,
     session_id: &SessionId,
@@ -596,6 +703,33 @@ pub(crate) async fn set_session_permission_mode(
         .write()
         .await;
     modes.insert(session_id.clone(), mode);
+}
+
+/// Persist an `exec_policy` amendment for a `ShellExec` tool call.
+///
+/// Called when the user responds with "Always Allow" — derives a prefix
+/// rule from the command tokens and appends it to the policy file.
+async fn persist_exec_policy_amendment(container: &ServiceContainer, tc: &ToolCallRequest) {
+    let Some(mgr) = &container.exec_policy_manager else {
+        return;
+    };
+    if tc.name != "ShellExec" {
+        return;
+    }
+    let Some(cmd_str) = tc.arguments.get("command").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let Some(tokens) = tokenize_shell_command_for_exec_policy(cmd_str) else {
+        return;
+    };
+    let proposed = y_guardrails::ExecPolicyManager::propose_amendment(&tokens);
+    if let Err(e) = mgr.persist_amendment(proposed).await {
+        tracing::warn!(
+            tool = %tc.name,
+            error = %e,
+            "failed to persist exec_policy amendment"
+        );
+    }
 }
 
 /// Resolve the root session ID for file history tracking.

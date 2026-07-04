@@ -92,6 +92,8 @@ export interface InputDialogProps {
   onPermissionDeny?: (requestId: string) => void;
   /** Callback when user allows all future tool calls for this session. */
   onPermissionAllowAllForSession?: (requestId: string) => void;
+  /** Callback when user approves and persists a rule for future sessions. */
+  onPermissionApproveAlways?: (requestId: string) => void;
 }
 
 export interface InputEditProps {
@@ -181,6 +183,7 @@ export function InputArea(props: InputAreaProps) {
   const {
     askUserData, onAskUserSubmit, onAskUserDismiss,
     permissionData, onPermissionApprove, onPermissionDeny, onPermissionAllowAllForSession,
+    onPermissionApproveAlways,
   } = dialogs;
   const { pendingEdit, onCancelEdit, rewindDraft, onRewindDraftConsumed } = edit;
   const {
@@ -732,6 +735,7 @@ export function InputArea(props: InputAreaProps) {
             onApprove={onPermissionApprove}
             onDeny={onPermissionDeny}
             onAllowAllForSession={onPermissionAllowAllForSession}
+            onApproveAlways={onPermissionApproveAlways}
           />
         )}
 

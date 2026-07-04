@@ -170,3 +170,13 @@
 .permission-btn--allow-all:hover {
   background: var(--surface-secondary);
 }
+
+.permission-btn--allow-always {
+  background: transparent;
+  color: var(--success, var(--accent));
+  border-color: var(--success, var(--accent));
+}
+
+.permission-btn--allow-always:hover {
+  background: var(--surface-hover);
+}

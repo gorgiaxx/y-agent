@@ -23,6 +23,8 @@ interface PermissionDialogProps {
   onDeny: (requestId: string) => void;
   /** Callback when user allows all future tool calls for this session. */
   onAllowAllForSession: (requestId: string) => void;
+  /** Callback when user approves and persists a rule for future sessions. */
+  onApproveAlways?: (requestId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -66,6 +68,7 @@ export function PermissionDialog({
   onApprove,
   onDeny,
   onAllowAllForSession,
+  onApproveAlways,
 }: PermissionDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -114,7 +117,6 @@ export function PermissionDialog({
         )}
         <div className="permission-reason">{reason}</div>
       </div>
-
       {/* Footer */}
       <div className="permission-footer">
         <span className="permission-hint">Enter = Allow, Shift+Enter = Allow All, Esc = Deny</span>
@@ -140,6 +142,15 @@ export function PermissionDialog({
             <Check size={14} />
             Allow All for Session
           </button>
+          {onApproveAlways && (
+            <button
+              className="permission-btn permission-btn--allow-always"
+              onClick={() => onApproveAlways(requestId)}
+            >
+              <Check size={14} />
+              Always Allow
+            </button>
+          )}
         </div>
       </div>
     </div>

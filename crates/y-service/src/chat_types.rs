@@ -287,6 +287,10 @@ pub enum PermissionPromptResponse {
     Approve,
     Deny,
     AllowAllForSession,
+    /// Approve and persist an `exec_policy` rule so the same command prefix
+    /// is auto-allowed in future sessions. Only effective for `ShellExec`
+    /// when an `exec_policy` manager is configured.
+    ApproveAlways,
 }
 
 /// Structured outcome of a plan-review prompt.
