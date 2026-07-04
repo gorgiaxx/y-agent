@@ -110,6 +110,8 @@ globset = "0.4"
 grep-searcher = "0.1"
 grep-regex = "0.1"
 grep-matcher = "0.1"
+starlark = "0.14"
+multimap = "0.10"
 
 # CLI
 clap = { version = "4", features = ["derive"] }

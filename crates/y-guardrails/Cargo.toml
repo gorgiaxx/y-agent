@@ -11,10 +11,15 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-uuid = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
-tracing = { workspace = true }
+uuid = { workspace = true }
+starlark = { workspace = true }
+multimap = { workspace = true }
+parking_lot = "0.12"
+fs2 = "0.4"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

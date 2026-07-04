@@ -3,6 +3,7 @@
 //! Implements the multi-stage pipeline that mirrors Claude Code's architecture:
 //!
 //! ```text
+//! 0. Exec policy (Starlark DSL for shell commands) — if a rule matches, it wins
 //! 1. Deny rules (tool-level and content-specific)
 //! 2. Ask rules (tool-level and content-specific)
 //! 3. Tool.check_permissions() (content-specific tool logic)
@@ -18,6 +19,9 @@ use y_core::permission_types::{
     PermissionBehavior, PermissionContext, PermissionMode, PermissionReason, PermissionResult,
     PermissionRule,
 };
+
+use crate::exec_policy::decision::ExecDecision;
+use crate::exec_policy::manager::ExecPolicyManager;
 
 // ---------------------------------------------------------------------------
 // Pipeline
@@ -41,6 +45,60 @@ pub fn evaluate_pipeline(
     tool_result: &PermissionResult,
     perm_ctx: &PermissionContext,
 ) -> PermissionResult {
+    evaluate_pipeline_with_exec_policy(
+        tool_name,
+        input_content,
+        is_dangerous,
+        tool_result,
+        perm_ctx,
+        None,
+    )
+}
+
+/// Evaluate the full permission pipeline with an optional exec policy manager.
+///
+/// When `exec_policy` is provided and the tool is `ShellExec`, the command is
+/// tokenized and evaluated against the Starlark policy. If a rule matches,
+/// its decision takes precedence over the generic permission model:
+/// - `Allow` → allowed without asking
+/// - `Ask` → escalated to HITL
+/// - `Deny` → blocked
+pub fn evaluate_pipeline_with_exec_policy(
+    tool_name: &str,
+    input_content: Option<&str>,
+    is_dangerous: bool,
+    tool_result: &PermissionResult,
+    perm_ctx: &PermissionContext,
+    exec_policy: Option<&ExecPolicyManager>,
+) -> PermissionResult {
+    // Stage 0: Exec policy (Starlark DSL for shell commands).
+    // Only applies to ShellExec tool with content.
+    if let (Some(mgr), Some(content)) = (exec_policy, input_content) {
+        if tool_name == "ShellExec" {
+            if let Some(cmd_tokens) = tokenize_shell_command(content) {
+                if let Some(eval) = mgr.evaluate(&cmd_tokens) {
+                    let behavior = match eval.decision {
+                        ExecDecision::Allow => PermissionBehavior::Allow,
+                        ExecDecision::Ask => PermissionBehavior::Ask,
+                        ExecDecision::Deny => PermissionBehavior::Deny,
+                    };
+                    let justification = eval
+                        .determining_justification()
+                        .unwrap_or("exec policy rule")
+                        .to_string();
+                    return PermissionResult {
+                        behavior,
+                        reason: PermissionReason::Rule {
+                            rule_display: format!("exec_policy: {justification}"),
+                        },
+                        message: Some(format!("exec policy: {justification}")),
+                        updated_input: None,
+                    };
+                }
+            }
+        }
+    }
+
     // Stage 1: Deny rules -- highest priority, cannot be overridden.
     if let Some(rule) = find_matching_rule(
         &perm_ctx.rules,
@@ -274,6 +332,70 @@ fn rule_is_more_specific(a: &PermissionRule, b: &PermissionRule) -> bool {
     a.source.precedence() < b.source.precedence()
 }
 
+/// Tokenize a shell command string into tokens for exec policy matching.
+///
+/// This is a simple whitespace tokenizer that handles basic quoting.
+/// For complex shell syntax (pipes, heredocs, subshells), the command
+/// is not tokenized and `None` is returned, causing the exec policy to
+/// be skipped (falling back to the generic permission model).
+fn tokenize_shell_command(command: &str) -> Option<Vec<String>> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Skip commands with shell metacharacters that make tokenization unreliable.
+    // The exec policy only applies to simple prefix commands.
+    if trimmed.contains('|')
+        || trimmed.contains('>')
+        || trimmed.contains('&')
+        || trimmed.contains(';')
+        || trimmed.contains('$')
+        || trimmed.contains('`')
+    {
+        return None;
+    }
+
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    for ch in trimmed.chars() {
+        match ch {
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+            }
+            c if c.is_whitespace() && !in_single_quote && !in_double_quote => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            c => {
+                current.push(c);
+            }
+        }
+    }
+
+    if in_single_quote || in_double_quote {
+        // Unclosed quote — can't safely tokenize.
+        return None;
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -505,5 +627,147 @@ mod tests {
             &context,
         );
         assert_eq!(result.behavior, PermissionBehavior::Allow);
+    }
+
+    // --- Exec policy integration tests ---
+
+    #[test]
+    fn exec_policy_allow_overrides_dangerous() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["cargo", "test"], decision = "allow")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::Default, vec![]);
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("cargo test"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+        assert_eq!(result.behavior, PermissionBehavior::Allow);
+    }
+
+    #[test]
+    fn exec_policy_deny_blocks_command() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["rm"], decision = "deny")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::Default, vec![]);
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("rm -rf /"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+        assert_eq!(result.behavior, PermissionBehavior::Deny);
+    }
+
+    #[test]
+    fn exec_policy_ask_escalates() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["git", "push"], decision = "ask")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::Default, vec![]);
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("git push origin main"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+        assert_eq!(result.behavior, PermissionBehavior::Ask);
+    }
+
+    #[test]
+    fn exec_policy_skipped_for_non_shell_tool() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["cargo", "test"], decision = "allow")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::Default, vec![]);
+        // FileWrite is not ShellExec — exec_policy should be skipped.
+        let result = evaluate_pipeline_with_exec_policy(
+            "FileWrite",
+            Some("cargo test"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+        // Without an allow rule, dangerous tool with passthrough → Ask.
+        assert_eq!(result.behavior, PermissionBehavior::Ask);
+    }
+
+    #[test]
+    fn exec_policy_skipped_for_shell_metacharacters() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["cargo", "test"], decision = "allow")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::Default, vec![]);
+        // Pipe in command — tokenization skipped, exec_policy not consulted.
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("cargo test | tee output.log"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+        assert_eq!(result.behavior, PermissionBehavior::Ask);
+    }
+
+    #[test]
+    fn exec_policy_no_match_falls_through() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["ls"], decision = "allow")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::Default, vec![]);
+        // "cargo test" doesn't match any rule — falls through to generic pipeline.
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("cargo test"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+        assert_eq!(result.behavior, PermissionBehavior::Ask);
+    }
+
+    #[test]
+    fn exec_policy_none_falls_through() {
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::Default, vec![]);
+        // No exec_policy manager — should behave like the original pipeline.
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("cargo test"),
+            true,
+            &tool_result,
+            &context,
+            None,
+        );
+        assert_eq!(result.behavior, PermissionBehavior::Ask);
     }
 }

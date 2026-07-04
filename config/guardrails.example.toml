@@ -45,3 +45,24 @@ mode = "manual"
 
 [hitl]
 # auto_approve_low_risk = true
+
+# --- Exec Policy (Starlark DSL) ----------------------------------------------
+# Optional: path to a Starlark policy file for shell-command approval.
+# When set, shell commands are evaluated against the policy before the
+# generic permission model. Rules can auto-derive from HITL "Always Allow"
+# decisions.
+#
+# [exec_policy]
+# policy_file = "~/.y-agent/exec_policy.rules"
+#
+# Example policy file (exec_policy.rules):
+#
+# prefix_rule(
+#     pattern = ["git", ["push", "commit"]],
+#     decision = "ask",
+#     match = [["git", "push"]],
+#     not_match = [["git", "status"]],
+#     justification = "review before push or commit",
+# )
+# prefix_rule(pattern = ["cargo", "test"], decision = "allow")
+# prefix_rule(pattern = ["rm"], decision = "deny", justification = "never allow rm")

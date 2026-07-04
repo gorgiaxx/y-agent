@@ -17,7 +17,11 @@
 //! - [`middleware::llm_guard::LlmGuardMiddleware`] — output safety validation (priority 900)
 //! - [`middleware::loop_detector::LoopDetectorMiddleware`] — loop detection (priority 20)
 
-pub mod capability_gap;
+pub mod exec_policy;
+// Re-export primary exec_policy types.
+pub use exec_policy::{
+    ExecDecision, ExecPolicyError, ExecPolicyManager, ExecPolicyResult, Policy, PolicyParser,
+};
 pub mod config;
 pub mod error;
 pub mod hitl;
