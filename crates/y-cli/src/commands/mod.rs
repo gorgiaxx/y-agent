@@ -2,12 +2,15 @@
 
 pub mod agent;
 pub mod chat;
+pub mod common;
 pub mod completion;
 pub mod config_cmd;
 pub mod diag;
 pub mod init;
 pub mod kb;
 pub mod mcp;
+pub mod print;
+pub mod rpc;
 pub mod serve;
 pub mod session;
 pub mod skills;
@@ -31,6 +34,12 @@ pub enum Commands {
         /// Agent name to use.
         #[arg(long, default_value = "default")]
         agent: String,
+
+        /// Initial prompt (one or more words). After sending the first message,
+        /// the REPL continues if stdin is a TTY; otherwise the process exits.
+        /// Bare `y-agent "do X"` is forwarded here.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        prompt: Vec<String>,
     },
 
     /// Initialize a new y-agent project.
@@ -95,6 +104,29 @@ pub enum Commands {
 
     /// Generate shell completions.
     Completion(completion::CompletionArgs),
+    /// Single-shot prompt: send one message, print the response, exit.
+    /// Useful for scripting (`y-agent print "summarize this"`).
+    Print {
+        /// Output mode: `text` (final response only) or `json` (structured result).
+        #[arg(long, default_value = "text")]
+        mode: String,
+
+        /// Session ID to resume for this single turn (optional).
+        #[arg(long)]
+        session: Option<String>,
+
+        /// Agent name to use.
+        #[arg(long, default_value = "default")]
+        agent: String,
+
+        /// The prompt. Use `--` before prompts starting with `-`.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        prompt: Vec<String>,
+    },
+
+    /// Headless JSONL stdio protocol for embedding in other processes.
+    /// Reads JSON commands from stdin, writes JSON events/responses to stdout.
+    Rpc,
 
     /// Launch the TUI interface.
     #[cfg(feature = "tui")]
@@ -161,11 +193,12 @@ mod tests {
         ));
     }
 
-    // T-CLI-003-04: test_parse_unknown_command
+    // T-CLI-003-04: bare unknown tokens fail at clap parse level; the
+    // bare-prompt resolver in main.rs (not clap) forwards them to `chat`.
     #[test]
     fn test_parse_unknown_command() {
         let result = TestCli::try_parse_from(["y-agent", "foobar"]);
-        assert!(result.is_err(), "unknown command should fail");
+        assert!(result.is_err(), "unknown command should fail at clap level");
     }
 
     // T-CLI-003-05: test_parse_init_command

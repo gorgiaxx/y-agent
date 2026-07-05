@@ -7,15 +7,25 @@ use std::io::{self, BufRead, Write};
 use y_core::provider::ProviderPool;
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::tool::ToolRegistry;
-use y_core::types::{Message, Role, SessionId};
+#[cfg(test)]
+use y_core::types::Role;
+use y_core::types::{Message, SessionId};
 use y_service::PromptContext;
 
-use crate::orchestrator::{self, TurnInput};
 use crate::output;
 use crate::wire::AppServices;
 
 /// Run an interactive chat session.
-pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str) -> Result<()> {
+///
+/// `initial_prompt` is sent as the first user message before entering the
+/// REPL loop. When set and stdin is not a TTY, the session exits after the
+/// response (print-like behavior). When stdin is a TTY, the REPL continues.
+pub async fn run(
+    services: &AppServices,
+    session_id: Option<&str>,
+    _agent: &str,
+    initial_prompt: Option<&str>,
+) -> Result<()> {
     // Check if providers are available.
     let provider_statuses = services.provider_pool().await.provider_statuses().await;
     if provider_statuses.is_empty() {
@@ -94,14 +104,36 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
     };
     *services.prompt_context.write().await = initial_ctx;
 
-    println!("Type your message (Ctrl+D to exit, /help for commands):\n");
-
     let has_providers = !provider_statuses.is_empty();
     let mut history: Vec<Message> = Vec::new();
     let mut turn_number: u32 = 0;
     let stdin = io::stdin();
     let mut stdout = io::stdout();
 
+    // If an initial prompt was provided (bare-prompt or explicit), send it
+    // as the first message before entering the REPL.
+    if let Some(prompt) = initial_prompt {
+        if !prompt.is_empty() {
+            process_input(
+                prompt,
+                services,
+                &session,
+                &mut history,
+                &mut turn_number,
+                session_uuid,
+                working_directory.as_deref(),
+                has_providers,
+            )
+            .await;
+
+            // Non-interactive (piped stdin): print the response and exit.
+            if !atty::is(atty::Stream::Stdin) {
+                return Ok(());
+            }
+        }
+    }
+
+    println!("Type your message (Ctrl+D to exit, /help for commands):\n");
     print!("> ");
     stdout.flush()?;
 
@@ -117,7 +149,32 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
 
         // Handle slash commands.
         if input.starts_with('/') {
-            if handle_slash_command(input, services, &session, &mut history, &mut turn_number).await
+            // First try file-based slash commands (template expansion).
+            let user_config_dir = crate::config::dirs_user_config();
+            let user_cmds = crate::slash_files::user_commands_dir(user_config_dir.as_deref());
+            let proj_cmds = crate::slash_files::project_commands_dir();
+            if let Some((expanded, _agent)) =
+                crate::slash_files::try_expand(input, Some(&proj_cmds), user_cmds.as_deref())
+            {
+                process_input(
+                    &expanded,
+                    services,
+                    &session,
+                    &mut history,
+                    &mut turn_number,
+                    session_uuid,
+                    working_directory.as_deref(),
+                    has_providers,
+                )
+                .await;
+            } else if handle_slash_command(
+                input,
+                services,
+                &session,
+                &mut history,
+                &mut turn_number,
+            )
+            .await
             {
                 break;
             }
@@ -127,86 +184,69 @@ pub async fn run(services: &AppServices, session_id: Option<&str>, _agent: &str)
             continue;
         }
 
-        // Build user message.
-        let user_msg = Message {
-            message_id: y_core::types::generate_message_id(),
-            role: Role::User,
-            content: input.to_string(),
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: serde_json::Value::Null,
-        };
-
-        // Persist user message.
-        let _ = services
-            .session_manager
-            .append_message(&session.id, &user_msg)
-            .await;
-
-        history.push(user_msg);
-
-        if has_providers {
-            // Delegate to the shared orchestrator.
-            let turn_input = TurnInput {
-                user_input: input,
-                session_id: session.id.clone(),
-                session_uuid,
-                history: &history,
-                turn_number,
-                provider_id: None,
-                request_mode: y_core::provider::RequestMode::TextChat,
-                working_directory: working_directory.clone(),
-                knowledge_collections: vec![],
-                thinking: None,
-                plan_mode: None,
-                operation_mode: y_service::chat_types::OperationMode::Default,
-                agent_name: "chat-turn".to_string(),
-                toolcall_enabled: true,
-                preferred_models: vec![],
-                provider_tags: vec![],
-                temperature: None,
-                max_completion_tokens: None,
-                max_iterations: None,
-                max_tool_calls: None,
-                trust_tier: None,
-                agent_allowed_tools: vec![],
-                prune_tool_history: false,
-                mcp_mode: None,
-                mcp_servers: vec![],
-                image_generation_options: None,
-                pre_turn_message_count: None,
-            };
-
-            match orchestrator::execute_turn(services, &turn_input).await {
-                Ok(result) => {
-                    // Print tool call summaries.
-                    for tc in &result.tool_calls_executed {
-                        let status = if tc.success { "[OK]" } else { "[FAIL]" };
-                        println!("\n  [tool: {}] {status}", tc.name);
-                    }
-
-                    println!("\nAssistant: {}\n", result.content);
-
-                    // Append the new messages to local history.
-                    history.extend(result.new_messages);
-                    turn_number += 1;
-                }
-                Err(e) => {
-                    output::print_error(&format!("LLM request failed: {e}"));
-                }
-            }
-        } else {
-            // No providers — echo mode.
-            println!("\nAssistant: [echo] {input}");
-            println!("           (No LLM providers configured — running in echo mode)\n");
-        }
+        process_input(
+            input,
+            services,
+            &session,
+            &mut history,
+            &mut turn_number,
+            session_uuid,
+            working_directory.as_deref(),
+            has_providers,
+        )
+        .await;
 
         print!("> ");
         stdout.flush()?;
     }
 
     Ok(())
+}
+
+/// Process a single user input: send it as a turn and print the response.
+///
+/// Shared between the initial-prompt path and the REPL loop. Persists the user
+/// message, executes the turn via the orchestrator, and prints tool call
+/// summaries + the assistant response.
+#[allow(clippy::too_many_arguments)]
+async fn process_input(
+    input: &str,
+    services: &AppServices,
+    session: &y_core::session::SessionNode,
+    history: &mut Vec<Message>,
+    turn_number: &mut u32,
+    session_uuid: uuid::Uuid,
+    working_directory: Option<&str>,
+    has_providers: bool,
+) {
+    if has_providers {
+        match crate::commands::common::run_single_turn(
+            services,
+            session,
+            history,
+            turn_number,
+            input,
+            working_directory.map(str::to_string),
+            session_uuid,
+        )
+        .await
+        {
+            Ok(result) => {
+                for tc in &result.tool_calls_executed {
+                    let status = if tc.success { "[OK]" } else { "[FAIL]" };
+                    println!("\n  [tool: {}] {status}", tc.name);
+                }
+                println!("\nAssistant: {}\n", result.content);
+            }
+            Err(e) => {
+                output::print_error(&format!("LLM request failed: {e}"));
+            }
+        }
+    } else {
+        // No providers — echo mode.
+        println!("\nAssistant: [echo] {input}");
+        println!("           (No LLM providers configured — running in echo mode)\n");
+    }
 }
 
 /// Handle a slash command. Returns `true` if the chat should exit.

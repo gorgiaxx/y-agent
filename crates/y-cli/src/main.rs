@@ -4,13 +4,17 @@
 //! loads configuration, wires all services, and dispatches to the
 //! requested subcommand.
 
+mod bare_prompt;
 mod commands;
 mod config;
 mod orchestrator;
 mod output;
+mod slash_files;
 #[cfg(feature = "tui")]
 mod tui;
 mod wire;
+
+use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
@@ -50,40 +54,62 @@ struct Cli {
     /// Path to user configuration directory (defaults to ~/.config/y-agent/).
     #[arg(long, global = true)]
     user_config_dir: Option<String>,
+
+    /// Named profile for isolated agent state (e.g. `work`). Resolves to
+    /// `~/.config/y-agent-<name>/`. Mutually exclusive with `--user-config-dir`.
+    /// Can also be set via the `Y_AGENT_PROFILE` environment variable.
+    #[arg(long, global = true)]
+    profile: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // Bare-prompt resolution: `y-agent "do X"` forwards to `chat -- "do X"`.
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let resolved_args = bare_prompt::resolve(&raw_args);
+    let cli = Cli::parse_from(resolved_args);
 
     // Handle init command early -- it runs before config exists.
-    if let Some(Commands::Init(ref args)) = cli.command {
+    if let Some(Commands::Init(args)) = &cli.command {
         return commands::init::run(args).await;
     }
 
     // Handle completion early -- no config needed.
-    if let Some(Commands::Completion(ref args)) = cli.command {
+    if let Some(Commands::Completion(args)) = &cli.command {
         commands::completion::run(args);
         return Ok(());
     }
 
     // Build CLI overrides.
     let mut cli_overrides = std::collections::HashMap::new();
-    if let Some(ref level) = cli.log_level {
+    if let Some(level) = &cli.log_level {
         cli_overrides.insert("log_level".to_string(), level.clone());
     }
     cli_overrides.insert("output_format".to_string(), cli.output.clone());
 
+    // Resolve profile: `--profile <name>` or `Y_AGENT_PROFILE` env var.
+    // Profiles live at `~/.config/y-agent-<name>/`. Mutually exclusive with
+    // `--user-config-dir`.
+    let profile_dir = resolve_profile(&cli)?;
+    let user_config_dir = match (&profile_dir, &cli.user_config_dir) {
+        (Some(dir), None) => Some(dir.clone()),
+        (None, Some(d)) => Some(PathBuf::from(d)),
+        (None, None) => None,
+        (Some(_), Some(_)) => {
+            anyhow::bail!("--profile and --user-config-dir are mutually exclusive");
+        }
+    };
+
     // Load configuration.
     let mut loader = ConfigLoader::new().with_cli_overrides(cli_overrides);
-    if let Some(ref config_path) = cli.config {
+    if let Some(config_path) = &cli.config {
         loader = loader.with_project_config(Some(config_path.into()));
     }
-    if let Some(ref config_dir) = cli.config_dir {
+    if let Some(config_dir) = &cli.config_dir {
         loader = loader.with_config_dir(Some(config_dir.into()));
     }
-    if let Some(ref user_config_dir) = cli.user_config_dir {
-        loader = loader.with_user_config_dir(Some(user_config_dir.into()));
+    if let Some(dir) = &user_config_dir {
+        loader = loader.with_user_config_dir(Some(dir.clone()));
     }
     let config = loader.load()?;
     config::validate_config(&config)?;
@@ -158,47 +184,62 @@ async fn main() -> Result<()> {
     let mode = OutputMode::from_str_or_default(&config.output_format);
 
     // Dispatch command.
-    match cli.command {
-        Some(Commands::Chat { session, agent }) => {
+    match &cli.command {
+        Some(Commands::Chat {
+            session,
+            agent,
+            prompt,
+        }) => {
             let services = wire::wire(&config).await?;
-            commands::chat::run(&services, session.as_deref(), &agent).await?;
+            let initial_prompt = if prompt.is_empty() {
+                None
+            } else {
+                Some(prompt.join(" "))
+            };
+            commands::chat::run(
+                &services,
+                session.as_deref(),
+                agent,
+                initial_prompt.as_deref(),
+            )
+            .await?;
         }
         Some(Commands::Status) => {
             let services = wire::wire(&config).await?;
             commands::status::run(&services, mode).await?;
         }
-        Some(Commands::Config { ref action }) => {
+        Some(Commands::Config { action }) => {
             commands::config_cmd::run(action, &config, mode)?;
         }
-        Some(Commands::Session { ref action }) => {
+        Some(Commands::Session { action }) => {
             let services = wire::wire(&config).await?;
             commands::session::run(action, &services, mode).await?;
         }
-        Some(Commands::Tool { ref action }) => {
+        Some(Commands::Tool { action }) => {
             let services = wire::wire(&config).await?;
             commands::tool::run(action, &services, mode).await?;
         }
-        Some(Commands::Agent { ref action }) => {
+        Some(Commands::Agent { action }) => {
             let services = wire::wire(&config).await?;
             commands::agent::run(action, &services, mode).await?;
         }
-        Some(Commands::Workflow { ref action }) => {
+        Some(Commands::Workflow { action }) => {
             let services = wire::wire(&config).await?;
             commands::workflow::run(action, &services, mode).await?;
         }
-        Some(Commands::Diag { ref action }) => {
+        Some(Commands::Diag { action }) => {
             let services = wire::wire(&config).await?;
             commands::diag::run(action, &services, mode).await?;
         }
-        Some(Commands::Skill { ref action }) => {
+        Some(Commands::Skill { action }) => {
             let services = wire::wire(&config).await?;
             commands::skills::run(action, &services, mode).await?;
         }
-        Some(Commands::Kb { ref action }) => {
+        Some(Commands::Kb { action }) => {
             let services = wire::wire(&config).await?;
             commands::kb::run(action, &services, mode).await?;
         }
-        Some(Commands::Mcp { ref action }) => match action {
+        Some(Commands::Mcp { action }) => match action {
             commands::mcp::McpAction::Status => {
                 let services = wire::wire(&config).await?;
                 let services = std::sync::Arc::new(services);
@@ -206,7 +247,12 @@ async fn main() -> Result<()> {
                 commands::mcp::run_status(&services, mode).await?;
             }
             other => {
-                let path = resolve_mcp_tools_toml_path(cli.user_config_dir.as_deref())?;
+                let path = resolve_mcp_tools_toml_path(
+                    user_config_dir
+                        .as_deref()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .as_deref(),
+                )?;
                 commands::mcp::run_offline(other, &path, mode)?;
             }
         },
@@ -214,8 +260,27 @@ async fn main() -> Result<()> {
             // Already handled above before config loading.
             unreachable!("completion is dispatched before config loading");
         }
+        Some(Commands::Print {
+            mode: print_mode,
+            session,
+            agent,
+            prompt,
+        }) => {
+            let services = wire::wire(&config).await?;
+            let args = commands::print::PrintArgs {
+                mode: print_mode.clone(),
+                session: session.clone(),
+                agent: agent.clone(),
+                prompt: prompt.clone(),
+            };
+            commands::print::run(&services, args).await?;
+        }
+        Some(Commands::Rpc) => {
+            let services = wire::wire(&config).await?;
+            commands::rpc::run(&services).await?;
+        }
         #[cfg(feature = "tui")]
-        Some(Commands::Tui { ref session }) => {
+        Some(Commands::Tui { session }) => {
             let services = wire::wire(&config).await?;
             let exit_info =
                 commands::tui_cmd::run(services, Some(toast_rx), session.clone()).await?;
@@ -225,14 +290,22 @@ async fn main() -> Result<()> {
             // Already handled above before config loading.
             unreachable!("init is dispatched before config loading");
         }
-        Some(Commands::Serve(ref args)) => {
+        Some(Commands::Serve(args)) => {
             let services = wire::wire(&config).await?;
             let services = std::sync::Arc::new(services);
             services.start_background_services().await;
-            commands::serve::run(services, args, cli.user_config_dir.as_deref()).await?;
+            commands::serve::run(
+                services,
+                args,
+                user_config_dir
+                    .as_deref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .as_deref(),
+            )
+            .await?;
         }
         #[cfg(feature = "tui")]
-        Some(Commands::Resume { ref session }) => {
+        Some(Commands::Resume { session }) => {
             let services = wire::wire(&config).await?;
             // Resume uses the most recent session if none specified.
             let session_id = resolve_resume_session(session.clone(), &services).await;
@@ -240,10 +313,7 @@ async fn main() -> Result<()> {
             print_exit_summary(&exit_info);
         }
         #[cfg(feature = "tui")]
-        Some(Commands::Fork {
-            ref session,
-            ref label,
-        }) => {
+        Some(Commands::Fork { session, label }) => {
             let services = wire::wire(&config).await?;
             let forked = fork_session(session.clone(), label.clone(), &services).await?;
             let exit_info = commands::tui_cmd::run(services, Some(toast_rx), Some(forked)).await?;
@@ -256,6 +326,33 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve a named profile to its config directory.
+///
+/// `--profile <name>` takes precedence over the `Y_AGENT_PROFILE` env var.
+/// Returns `None` if neither is set. Returns an error if the home directory
+/// cannot be resolved when a profile is requested.
+fn resolve_profile(cli: &Cli) -> Result<Option<PathBuf>> {
+    if let Some(name) = &cli.profile {
+        return Ok(Some(profile_path(name)?));
+    }
+    if let Ok(name) = std::env::var("Y_AGENT_PROFILE") {
+        if !name.is_empty() {
+            return Ok(Some(profile_path(&name)?));
+        }
+    }
+    Ok(None)
+}
+
+/// Build the config directory path for a named profile.
+///
+/// Profiles live at `~/.config/y-agent-<name>/` (siblings of the default
+/// `~/.config/y-agent/`).
+fn profile_path(name: &str) -> Result<PathBuf> {
+    config::home_dir()
+        .map(|h| h.join(".config").join(format!("y-agent-{name}")))
+        .ok_or_else(|| anyhow::anyhow!("cannot resolve home directory for profile `{name}`"))
 }
 
 /// Resolve the `tools.toml` path used by the `mcp` subcommands.
@@ -364,4 +461,40 @@ async fn fork_session(
     println!("Forked session: {fork_title} ({fork_id})");
 
     Ok(fork_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // T-CLI-PROF-01: profile_path builds `~/.config/y-agent-<name>/`.
+    #[test]
+    fn test_profile_path_resolution() {
+        // We can't assert the absolute path without a fixed home, but we can
+        // verify the suffix structure when home resolves.
+        if let Some(home) = config::home_dir() {
+            let path = profile_path("work").unwrap();
+            assert_eq!(path, home.join(".config").join("y-agent-work"));
+        }
+    }
+
+    // T-CLI-PROF-02: profile_path with empty name still produces a path
+    // (validation is the caller's responsibility; the function is pure).
+    #[test]
+    fn test_profile_path_empty_name() {
+        if config::home_dir().is_some() {
+            let path = profile_path("").unwrap();
+            assert!(path.ends_with("y-agent-"));
+        }
+    }
+
+    // T-CLI-PROF-03: different profile names produce different paths.
+    #[test]
+    fn test_profile_paths_distinct() {
+        if config::home_dir().is_some() {
+            let work = profile_path("work").unwrap();
+            let personal = profile_path("personal").unwrap();
+            assert_ne!(work, personal);
+        }
+    }
 }

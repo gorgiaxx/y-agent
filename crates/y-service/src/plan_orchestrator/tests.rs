@@ -1914,3 +1914,155 @@ async fn test_archive_stale_phase_sessions_archives_duplicates() {
         "sessions with different title should not be archived"
     );
 }
+
+#[test]
+fn test_snapshot_with_running_includes_in_progress_for_running_tasks() {
+    let task1 = PlanTask {
+        id: "task-1".into(),
+        phase: 1,
+        title: "Phase 1".into(),
+        description: String::new(),
+        depends_on: vec![],
+        status: TaskStatus::Completed,
+        estimated_iterations: 4,
+        key_files: vec![],
+        acceptance_criteria: vec![],
+    };
+    let task2 = PlanTask {
+        id: "task-2".into(),
+        phase: 2,
+        title: "Phase 2".into(),
+        description: String::new(),
+        depends_on: vec![],
+        status: TaskStatus::InProgress,
+        estimated_iterations: 4,
+        key_files: vec![],
+        acceptance_criteria: vec![],
+    };
+    let task3 = PlanTask {
+        id: "task-3".into(),
+        phase: 3,
+        title: "Phase 3".into(),
+        description: String::new(),
+        depends_on: vec![],
+        status: TaskStatus::Pending,
+        estimated_iterations: 4,
+        key_files: vec![],
+        acceptance_criteria: vec![],
+    };
+
+    let task_map: std::collections::HashMap<&str, &PlanTask> =
+        [("task-1", &task1), ("task-2", &task2), ("task-3", &task3)]
+            .into_iter()
+            .collect();
+
+    // phase_results has task-1 completed; task-2 and task-3 are still running.
+    let phase_results = vec![serde_json::json!({
+        "task_id": "task-1",
+        "phase": 1,
+        "title": "Phase 1",
+        "status": "completed",
+    })];
+
+    let mut running = std::collections::HashSet::new();
+    running.insert("task-2".to_string());
+    running.insert("task-3".to_string());
+
+    let snapshot = snapshot_with_running(&phase_results, &running, &task_map);
+
+    // Snapshot should have 3 entries: task-1 completed, task-2 in_progress,
+    // task-3 in_progress.
+    assert_eq!(snapshot.len(), 3);
+
+    let in_progress: Vec<&serde_json::Value> = snapshot
+        .iter()
+        .filter(|p| p.get("status").and_then(|v| v.as_str()) == Some("in_progress"))
+        .collect();
+    assert_eq!(
+        in_progress.len(),
+        2,
+        "two running tasks should be in_progress"
+    );
+
+    let ids: Vec<&str> = in_progress
+        .iter()
+        .filter_map(|p| p.get("task_id").and_then(|v| v.as_str()))
+        .collect();
+    assert!(ids.contains(&"task-2"));
+    assert!(ids.contains(&"task-3"));
+}
+
+#[test]
+fn test_snapshot_with_running_empty_running_set() {
+    let task_map: std::collections::HashMap<&str, &PlanTask> = std::collections::HashMap::new();
+    let phase_results = vec![serde_json::json!({
+        "task_id": "task-1",
+        "status": "completed",
+    })];
+    let running = std::collections::HashSet::new();
+
+    let snapshot = snapshot_with_running(&phase_results, &running, &task_map);
+    assert_eq!(
+        snapshot.len(),
+        1,
+        "no running tasks means snapshot equals phase_results"
+    );
+}
+
+#[test]
+fn test_build_plan_execution_tool_content_includes_tasks() {
+    let plan = StructuredPlan {
+        plan_title: "Test Plan".into(),
+        plan_file: "/tmp/test.md".into(),
+        estimated_effort: String::new(),
+        overview: String::new(),
+        scope_in: vec![],
+        scope_out: vec![],
+        guardrails: vec![],
+        execution_contract: PlanExecutionContract::default(),
+        tasks: vec![PlanTask {
+            id: "task-1".into(),
+            phase: 1,
+            title: "Phase 1".into(),
+            description: String::new(),
+            depends_on: vec![],
+            status: TaskStatus::Pending,
+            estimated_iterations: 4,
+            key_files: vec![],
+            acceptance_criteria: vec![],
+        }],
+    };
+
+    let phase_results = vec![serde_json::json!({
+        "task_id": "task-1",
+        "phase": 1,
+        "title": "Phase 1",
+        "status": "completed",
+    })];
+
+    let content = build_plan_execution_tool_content(
+        std::path::Path::new("/tmp/test.md"),
+        &plan,
+        "run-1",
+        1,
+        0,
+        &phase_results,
+        None,
+        None,
+    );
+
+    // The tool content must include tasks so the frontend can render the
+    // phase list even when metadata.display is unavailable (e.g. fallback
+    // parsing of result_preview in StaticBubble).
+    assert!(
+        content.get("tasks").is_some(),
+        "tasks field must be present"
+    );
+    let tasks = content["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["id"], "task-1");
+    assert_eq!(
+        tasks[0]["status"], "completed",
+        "task status should be resolved from phase_results"
+    );
+}

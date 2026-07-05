@@ -1136,25 +1136,44 @@ impl PlanOrchestrator {
                 break;
             }
 
-            // Emit progress for all tasks starting in this wave.
-            for task in &runnable {
-                if let Some(tx) = progress {
-                    let mut snapshot = phase_results.clone();
+            // Track which tasks in the current chunk are still running so that
+            // completion progress events include in_progress entries for them.
+            // Without this, a snapshot emitted after one task finishes shows the
+            // still-running siblings as "pending" instead of "in_progress".
+            let mut running: HashSet<String> = HashSet::new();
+
+            // Emit a single progress event marking ALL runnable tasks in this
+            // wave as in_progress. Individual per-task emits would leave only the
+            // last task marked in_progress (each snapshot is independent), hiding
+            // the parallel execution state from the GUI.
+            if let Some(tx) = progress {
+                let mut snapshot = phase_results.clone();
+                for task in &runnable {
                     snapshot.push(serde_json::json!({
                         "task_id": task.id,
                         "phase": task.phase,
                         "title": task.title,
                         "status": "in_progress",
                     }));
-                    emit_plan_execution_progress(
-                        tx,
-                        plan_path,
-                        plan,
-                        plan_run_id,
-                        &snapshot,
-                        format!("Executing phase {}: {}", task.phase, task.title),
-                    );
+                    running.insert(task.id.clone());
                 }
+                emit_plan_execution_progress(
+                    tx,
+                    plan_path,
+                    plan,
+                    plan_run_id,
+                    &snapshot,
+                    format!(
+                        "Executing {} phase{}: {}",
+                        runnable.len(),
+                        if runnable.len() == 1 { "" } else { "s" },
+                        runnable
+                            .iter()
+                            .map(|t| t.title.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    ),
+                );
             }
 
             // Execute runnable tasks concurrently, in chunks of
@@ -1194,6 +1213,7 @@ impl PlanOrchestrator {
                 let chunk_results = futures::future::join_all(chunk_futures).await;
 
                 for (task, result) in chunk_results {
+                    running.remove(&task.id);
                     match result {
                         Ok(summary) => {
                             completed.insert(task.id.clone());
@@ -1216,12 +1236,14 @@ impl PlanOrchestrator {
                                 )
                                 .await;
                             if let Some(tx) = progress {
+                                let snapshot =
+                                    snapshot_with_running(&phase_results, &running, &task_map);
                                 emit_plan_execution_progress(
                                     tx,
                                     plan_path,
                                     plan,
                                     plan_run_id,
-                                    &phase_results,
+                                    &snapshot,
                                     format!("Completed phase {}: {}", task.phase, task.title),
                                 );
                             }
@@ -1258,12 +1280,14 @@ impl PlanOrchestrator {
                                 )
                                 .await;
                             if let Some(tx) = progress {
+                                let snapshot =
+                                    snapshot_with_running(&phase_results, &running, &task_map);
                                 emit_plan_execution_progress(
                                     tx,
                                     plan_path,
                                     plan,
                                     plan_run_id,
-                                    &phase_results,
+                                    &snapshot,
                                     format!("Failed phase {}: {}", task.phase, task.title),
                                 );
                             }
@@ -3131,6 +3155,7 @@ fn build_plan_execution_tool_content(
         "total_phases": plan.tasks.len(),
         "completed": completed,
         "failed": failed,
+        "tasks": build_execution_tasks(plan, phase_results),
         "phases": compact_plan_phase_results(phase_results),
     });
 
@@ -3276,6 +3301,29 @@ fn count_phase_results(phase_results: &[serde_json::Value], status: &str) -> usi
         .iter()
         .filter(|phase| phase.get("status").and_then(|value| value.as_str()) == Some(status))
         .count()
+}
+
+/// Build a progress snapshot that includes `in_progress` entries for tasks
+/// currently running but not yet in `phase_results`. This ensures the GUI
+/// shows still-running phases as `in_progress` (not `pending`) when a sibling
+/// task completes or fails during parallel execution.
+fn snapshot_with_running(
+    phase_results: &[serde_json::Value],
+    running: &HashSet<String>,
+    task_map: &std::collections::HashMap<&str, &PlanTask>,
+) -> Vec<serde_json::Value> {
+    let mut snapshot = phase_results.to_vec();
+    for task_id in running {
+        if let Some(task) = task_map.get(task_id.as_str()) {
+            snapshot.push(serde_json::json!({
+                "task_id": task.id,
+                "phase": task.phase,
+                "title": task.title,
+                "status": "in_progress",
+            }));
+        }
+    }
+    snapshot
 }
 
 /// Compute the transitive downstream closure for a given `task_id`.

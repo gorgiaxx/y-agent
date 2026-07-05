@@ -842,6 +842,53 @@ describe('Plan tool rendering', () => {
     expect(html).toContain('tool-call-plan-task-retry');
     expect(html).toContain('build error');
   });
+
+  it('renders tasks from result_preview fallback when metadata.display is absent', () => {
+    // After plan execution completes, the tool result content (result_preview)
+    // is parsed as a fallback when metadata.display is not available. The
+    // backend must include tasks in the tool content so the phase list
+    // survives the streaming-to-static transition.
+    const result = JSON.stringify({
+      plan_title: 'Fallback Test',
+      plan_file: '/tmp/fallback.md',
+      plan_run_id: 'run-fallback',
+      total_phases: 2,
+      completed: 2,
+      failed: 0,
+      tasks: [
+        {
+          id: 'task-1', phase: 1, title: 'First phase', description: '', depends_on: [],
+          status: 'completed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+        },
+        {
+          id: 'task-2', phase: 2, title: 'Second phase', description: '', depends_on: ['task-1'],
+          status: 'completed', estimated_iterations: 4, key_files: [], acceptance_criteria: [],
+        },
+      ],
+      phases: [
+        { task_id: 'task-1', phase: 1, title: 'First phase', status: 'completed' },
+        { task_id: 'task-2', phase: 2, title: 'Second phase', status: 'completed' },
+      ],
+    });
+
+    const html = renderToStaticMarkup(
+      <ToolCallCard
+        toolCall={{
+          id: 'plan-fallback-1',
+          name: 'Plan',
+          arguments: JSON.stringify({ request: 'Fallback rendering' }),
+        }}
+        status="success"
+        result={result}
+      />,
+    );
+
+    // Tasks should be rendered from the result_preview fallback.
+    expect(html).toContain('First phase');
+    expect(html).toContain('Second phase');
+    expect(html).toContain('2/2 completed');
+    expect(html).not.toContain('No tasks were extracted');
+  });
 });
 
 describe('shouldDisplayStreamingAgent', () => {

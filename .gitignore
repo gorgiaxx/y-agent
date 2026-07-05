@@ -21,6 +21,7 @@ docs/openai
 docs/plan
 docs/research
 docs/design
+docs/reviews
 *.pdf
 
 ### Rust / Cargo

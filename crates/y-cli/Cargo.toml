@@ -39,6 +39,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 uuid = { workspace = true }
+atty = "0.2"
 chrono = { workspace = true }
 
 # TUI dependencies (optional, behind `tui` feature flag)
