@@ -199,31 +199,27 @@ export function SettingsPanel({
       } catch (e) { errors.push(`providers: ${e}`); }
     }
 
-    if (dirtySession) {
-      try {
-        const toml = mergeIntoRawToml(rawSessionToml, sessionForm as unknown as Record<string, unknown>, SESSION_SCHEMA);
-        await saveSection('session', toml);
-        setRawSessionToml(toml);
-        setDirtySession(false);
-      } catch (e) { errors.push(`session: ${e}`); }
-    }
+    // Canonical TOML-backed sections: merge form into raw TOML, save, clear dirty.
+    const sectionRegistry = [
+      { section: 'session', dirty: dirtySession, setDirty: setDirtySession, raw: rawSessionToml, setRaw: setRawSessionToml, form: sessionForm, schema: SESSION_SCHEMA },
+      { section: 'runtime', dirty: dirtyRuntime, setDirty: setDirtyRuntime, raw: rawRuntimeToml, setRaw: setRawRuntimeToml, form: runtimeForm, schema: RUNTIME_SCHEMA },
+      { section: 'browser', dirty: dirtyBrowser, setDirty: setDirtyBrowser, raw: rawBrowserToml, setRaw: setRawBrowserToml, form: browserForm, schema: BROWSER_SCHEMA },
+      { section: 'storage', dirty: dirtyStorage, setDirty: setDirtyStorage, raw: rawStorageToml, setRaw: setRawStorageToml, form: storageForm, schema: STORAGE_SCHEMA },
+      { section: 'hooks', dirty: dirtyHooks, setDirty: setDirtyHooks, raw: rawHooksToml, setRaw: setRawHooksToml, form: hooksForm, schema: HOOKS_SCHEMA },
+      { section: 'tools', dirty: dirtyTools, setDirty: setDirtyTools, raw: rawToolsToml, setRaw: setRawToolsToml, form: toolsForm, schema: TOOLS_SCHEMA },
+      { section: 'guardrails', dirty: dirtyGuardrails, setDirty: setDirtyGuardrails, raw: rawGuardrailsToml, setRaw: setRawGuardrailsToml, form: guardrailsForm, schema: GUARDRAILS_SCHEMA },
+      { section: 'knowledge', dirty: dirtyKnowledge, setDirty: setDirtyKnowledge, raw: rawKnowledgeToml, setRaw: setRawKnowledgeToml, form: knowledgeForm, schema: KNOWLEDGE_SCHEMA },
+      { section: 'langfuse', dirty: dirtyLangfuse, setDirty: setDirtyLangfuse, raw: rawLangfuseToml, setRaw: setRawLangfuseToml, form: langfuseForm, schema: LANGFUSE_SCHEMA },
+    ] as const;
 
-    if (dirtyRuntime) {
+    for (const s of sectionRegistry) {
+      if (!s.dirty) continue;
       try {
-        const toml = mergeIntoRawToml(rawRuntimeToml, runtimeForm as unknown as Record<string, unknown>, RUNTIME_SCHEMA);
-        await saveSection('runtime', toml);
-        setRawRuntimeToml(toml);
-        setDirtyRuntime(false);
-      } catch (e) { errors.push(`runtime: ${e}`); }
-    }
-
-    if (dirtyBrowser) {
-      try {
-        const toml = mergeIntoRawToml(rawBrowserToml, browserForm as unknown as Record<string, unknown>, BROWSER_SCHEMA);
-        await saveSection('browser', toml);
-        setRawBrowserToml(toml);
-        setDirtyBrowser(false);
-      } catch (e) { errors.push(`browser: ${e}`); }
+        const toml = mergeIntoRawToml(s.raw, s.form as unknown as Record<string, unknown>, s.schema);
+        await saveSection(s.section, toml);
+        s.setRaw(toml);
+        s.setDirty(false);
+      } catch (e) { errors.push(`${s.section}: ${e}`); }
     }
 
     if (dirtyMcp) {
@@ -232,60 +228,6 @@ export function SettingsPanel({
         await transport.invoke('mcp_config_save', { content: json });
         setDirtyMcp(false);
       } catch (e) { errors.push(`mcp: ${e}`); }
-    }
-
-    if (dirtyStorage) {
-      try {
-        const toml = mergeIntoRawToml(rawStorageToml, storageForm as unknown as Record<string, unknown>, STORAGE_SCHEMA);
-        await saveSection('storage', toml);
-        setRawStorageToml(toml);
-        setDirtyStorage(false);
-      } catch (e) { errors.push(`storage: ${e}`); }
-    }
-
-    if (dirtyHooks) {
-      try {
-        const toml = mergeIntoRawToml(rawHooksToml, hooksForm as unknown as Record<string, unknown>, HOOKS_SCHEMA);
-        await saveSection('hooks', toml);
-        setRawHooksToml(toml);
-        setDirtyHooks(false);
-      } catch (e) { errors.push(`hooks: ${e}`); }
-    }
-
-    if (dirtyTools) {
-      try {
-        const toml = mergeIntoRawToml(rawToolsToml, toolsForm as unknown as Record<string, unknown>, TOOLS_SCHEMA);
-        await saveSection('tools', toml);
-        setRawToolsToml(toml);
-        setDirtyTools(false);
-      } catch (e) { errors.push(`tools: ${e}`); }
-    }
-
-    if (dirtyGuardrails) {
-      try {
-        const toml = mergeIntoRawToml(rawGuardrailsToml, guardrailsForm as unknown as Record<string, unknown>, GUARDRAILS_SCHEMA);
-        await saveSection('guardrails', toml);
-        setRawGuardrailsToml(toml);
-        setDirtyGuardrails(false);
-      } catch (e) { errors.push(`guardrails: ${e}`); }
-    }
-
-    if (dirtyKnowledge) {
-      try {
-        const toml = mergeIntoRawToml(rawKnowledgeToml, knowledgeForm as unknown as Record<string, unknown>, KNOWLEDGE_SCHEMA);
-        await saveSection('knowledge', toml);
-        setRawKnowledgeToml(toml);
-        setDirtyKnowledge(false);
-      } catch (e) { errors.push(`knowledge: ${e}`); }
-    }
-
-    if (dirtyLangfuse) {
-      try {
-        const toml = mergeIntoRawToml(rawLangfuseToml, langfuseForm as unknown as Record<string, unknown>, LANGFUSE_SCHEMA);
-        await saveSection('langfuse', toml);
-        setRawLangfuseToml(toml);
-        setDirtyLangfuse(false);
-      } catch (e) { errors.push(`langfuse: ${e}`); }
     }
 
     // Save dirty prompt files.

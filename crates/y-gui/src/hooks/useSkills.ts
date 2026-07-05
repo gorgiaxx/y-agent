@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { transport } from '../lib';
 import type { SkillInfo, SkillDetail, SkillFileEntry, SkillImportResult, DiagnosticsGatewayEvent } from '../types';
 
@@ -174,20 +174,38 @@ export function useSkills(): UseSkillsReturn {
     }
   }, []);
 
-  return {
-    skills,
-    loading,
-    refresh,
-    getSkillDetail,
-    uninstallSkill,
-    setEnabled,
-    openFolder,
-    importSkill,
-    importStatus,
-    importError,
-    clearImportStatus,
-    getSkillFiles,
-    readSkillFile,
-    saveSkillFile,
-  };
+  return useMemo(
+    () => ({
+      skills,
+      loading,
+      refresh,
+      getSkillDetail,
+      uninstallSkill,
+      setEnabled,
+      openFolder,
+      importSkill,
+      importStatus,
+      importError,
+      clearImportStatus,
+      getSkillFiles,
+      readSkillFile,
+      saveSkillFile,
+    }),
+    [
+      skills,
+      loading,
+      refresh,
+      getSkillDetail,
+      uninstallSkill,
+      setEnabled,
+      openFolder,
+      importSkill,
+      importStatus,
+      importError,
+      clearImportStatus,
+      getSkillFiles,
+      readSkillFile,
+      saveSkillFile,
+    ],
+  );
 }

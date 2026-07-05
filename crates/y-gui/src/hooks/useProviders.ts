@@ -8,7 +8,7 @@
 //   - Provider icon map (parsed from TOML config)
 // ---------------------------------------------------------------------------
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { transport } from '../lib';
 import type { SystemStatus, ProviderInfo } from '../types';
 
@@ -77,13 +77,24 @@ export function useProviders(
     refreshProviderIcons();
   }, [refreshProviders, refreshProviderIcons]);
 
-  return {
-    systemStatus,
-    providers,
-    selectedProviderId,
-    setSelectedProviderId,
-    providerIconMap,
-    refreshProviders,
-    refreshProviderIcons,
-  };
+  return useMemo(
+    () => ({
+      systemStatus,
+      providers,
+      selectedProviderId,
+      setSelectedProviderId,
+      providerIconMap,
+      refreshProviders,
+      refreshProviderIcons,
+    }),
+    [
+      systemStatus,
+      providers,
+      selectedProviderId,
+      setSelectedProviderId,
+      providerIconMap,
+      refreshProviders,
+      refreshProviderIcons,
+    ],
+  );
 }

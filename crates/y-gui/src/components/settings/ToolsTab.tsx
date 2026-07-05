@@ -2,14 +2,11 @@
 // ToolsTab -- Tool Registry configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { transport } from '../../lib';
-import type { AppConfigResponse } from '../../types';
 import type { ToolsFormData } from './settingsTypes';
 import { jsonToTools } from './settingsTypes';
-import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
-import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { TOOLS_SCHEMA } from '../../utils/settingsSchemas';
+import { SettingsTabShell } from './SettingsTabShell';
+import { useSettingsTab } from './useSettingsTab';
 import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 
 interface ToolsTabProps {
@@ -27,104 +24,63 @@ export function ToolsTab({
   setDirtyTools,
   setRawToolsToml,
 }: ToolsTabProps) {
-  const [loading, setLoading] = useState(false);
-  const [rawMode, setRawMode] = useState(false);
-  const [rawContent, setRawContent] = useState('');
-  const cachedRawToml = useRef<string | undefined>(undefined);
-
-  const loadForm = useCallback(async () => {
-    setLoading(true);
-    try {
-            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
-      const json = allConfig?.tools ?? {};
-      setToolsForm(jsonToTools(json));
-      try {
-        const raw = await loadSection('tools');
-        setRawToolsToml(raw);
-        cachedRawToml.current = raw;
-        setRawContent(raw);
-      } catch {
-        setRawToolsToml(undefined);
-        cachedRawToml.current = undefined;
-        setRawContent('');
-      }
-    } catch {
-      // Use defaults if not found.
-    } finally {
-      setLoading(false);
-    }
-  }, [loadSection, setToolsForm, setRawToolsToml]);
-
-  useEffect(() => {
-    loadForm();
-  }, [loadForm]);
-
-  const handleToggleRaw = useCallback((next: boolean) => {
-    if (next) {
-      setRawContent(mergeIntoRawToml(cachedRawToml.current, toolsForm as unknown as Record<string, unknown>, TOOLS_SCHEMA));
-    }
-    setRawMode(next);
-  }, [toolsForm]);
-
-  if (loading) {
-    return <div className="section-loading">Loading...</div>;
-  }
-
-  if (rawMode) {
-    return (
-      <>
-        <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
-        <RawTomlEditor
-          content={rawContent}
-          onChange={(val) => {
-            setRawContent(val);
-            setRawToolsToml(val);
-            setDirtyTools(true);
-          }}
-          placeholder="No tools.toml found. Content will be created on save."
-        />
-      </>
-    );
-  }
+  const { loading, rawMode, rawContent, handleToggleRaw, handleRawChange, update } = useSettingsTab({
+    section: 'tools',
+    schema: TOOLS_SCHEMA,
+    configKey: 'tools',
+    form: toolsForm,
+    setForm: setToolsForm,
+    setDirty: setDirtyTools,
+    setRawToml: setRawToolsToml,
+    jsonToForm: jsonToTools,
+    loadSection,
+  });
 
   return (
-    <>
-      <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
-      <div className="settings-form-wrap">
-        <SettingsGroup title="Tool Registry">
-          <SettingsItem title="Max Active Tools" description="Max fully-loaded tools per session.">
-            <Input
-              numeric
-              type="number"
-              min={1}
-              max={200}
-              className="w-[100px]"
-              value={toolsForm.max_active}
-              onChange={(e) => { setToolsForm({ ...toolsForm, max_active: Number(e.target.value) || 20 }); setDirtyTools(true); }}
-            />
-          </SettingsItem>
-          <SettingsItem title="Search Limit" description="Max results for ToolSearch.">
-            <Input
-              numeric
-              type="number"
-              min={1}
-              max={100}
-              className="w-[100px]"
-              value={toolsForm.search_limit}
-              onChange={(e) => { setToolsForm({ ...toolsForm, search_limit: Number(e.target.value) || 10 }); setDirtyTools(true); }}
-            />
-          </SettingsItem>
-          <SettingsItem
-            title="Allow Dynamic Tools"
-            description="Whether agents can create tools dynamically at runtime."
-          >
-            <Checkbox
-              checked={toolsForm.allow_dynamic_tools}
-              onCheckedChange={(c) => { setToolsForm({ ...toolsForm, allow_dynamic_tools: c === true }); setDirtyTools(true); }}
-            />
-          </SettingsItem>
-        </SettingsGroup>
-      </div>
-    </>
+    <SettingsTabShell
+      loading={loading}
+      rawMode={rawMode}
+      rawContent={rawContent}
+      onToggleRaw={handleToggleRaw}
+      onRawChange={handleRawChange}
+      rawPlaceholder="No tools.toml found. Content will be created on save."
+      form={
+        <div className="settings-form-wrap">
+          <SettingsGroup title="Tool Registry">
+            <SettingsItem title="Max Active Tools" description="Max fully-loaded tools per session.">
+              <Input
+                numeric
+                type="number"
+                min={1}
+                max={200}
+                className="w-[100px]"
+                value={toolsForm.max_active}
+                onChange={(e) => update({ max_active: Number(e.target.value) || 20 })}
+              />
+            </SettingsItem>
+            <SettingsItem title="Search Limit" description="Max results for ToolSearch.">
+              <Input
+                numeric
+                type="number"
+                min={1}
+                max={100}
+                className="w-[100px]"
+                value={toolsForm.search_limit}
+                onChange={(e) => update({ search_limit: Number(e.target.value) || 10 })}
+              />
+            </SettingsItem>
+            <SettingsItem
+              title="Allow Dynamic Tools"
+              description="Whether agents can create tools dynamically at runtime."
+            >
+              <Checkbox
+                checked={toolsForm.allow_dynamic_tools}
+                onCheckedChange={(c) => update({ allow_dynamic_tools: c === true })}
+              />
+            </SettingsItem>
+          </SettingsGroup>
+        </div>
+      }
+    />
   );
 }

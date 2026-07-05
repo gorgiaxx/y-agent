@@ -10,7 +10,7 @@
  *   that may have mutated backend state.
  * - Re-fetches when `active` changes from false to true (tab activation).
  */
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { transport } from '../lib';
 
 
@@ -396,29 +396,53 @@ export function useAutomation(active = true): UseAutomationReturn {
     }
   }, []);
 
-  return {
-    workflows,
-    schedules,
-    loading,
-    refreshAll,
-    // Workflow ops
-    getWorkflow,
-    createWorkflow,
-    updateWorkflow,
-    deleteWorkflow,
-    validateWorkflow,
-    getWorkflowDag,
-    // Schedule ops
-    getSchedule,
-    createSchedule,
-    updateSchedule,
-    deleteSchedule,
-    pauseSchedule,
-    resumeSchedule,
-    // Execution history & replay
-    getExecutionHistory,
-    getExecution,
-    triggerScheduleNow,
-    executeWorkflow,
-  };
+  return useMemo(
+    () => ({
+      workflows,
+      schedules,
+      loading,
+      refreshAll,
+      // Workflow ops
+      getWorkflow,
+      createWorkflow,
+      updateWorkflow,
+      deleteWorkflow,
+      validateWorkflow,
+      getWorkflowDag,
+      // Schedule ops
+      getSchedule,
+      createSchedule,
+      updateSchedule,
+      deleteSchedule,
+      pauseSchedule,
+      resumeSchedule,
+      // Execution history & replay
+      getExecutionHistory,
+      getExecution,
+      triggerScheduleNow,
+      executeWorkflow,
+    }),
+    [
+      workflows,
+      schedules,
+      loading,
+      refreshAll,
+      getWorkflow,
+      createWorkflow,
+      updateWorkflow,
+      deleteWorkflow,
+      validateWorkflow,
+      getWorkflowDag,
+      getSchedule,
+      createSchedule,
+      updateSchedule,
+      deleteSchedule,
+      pauseSchedule,
+      resumeSchedule,
+      getExecutionHistory,
+      getExecution,
+      triggerScheduleNow,
+      executeWorkflow,
+    ],
+  );
 }

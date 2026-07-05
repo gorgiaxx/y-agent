@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { transport } from '../lib';
 import type {
   KnowledgeCollectionInfo,
@@ -335,30 +335,56 @@ export function useKnowledge(): UseKnowledgeReturn {
     refreshStats();
   }, [refreshCollections, refreshStats]);
 
-  return {
-    // State
-    collections,
-    entries,
-    selectedCollection,
-    stats,
-    loading,
-    ingestStatus,
-    ingestError,
-    batchProgress,
-    // Actions
-    refreshCollections,
-    createCollection,
-    deleteCollection,
-    renameCollection,
-    setSelectedCollection,
-    loadEntries,
-    getEntryDetail,
-    deleteEntry,
-    search,
-    ingest,
-    ingestBatch,
-    cancelIngest,
-    clearIngestStatus,
-    refreshStats,
-  };
+  return useMemo(
+    () => ({
+      // State
+      collections,
+      entries,
+      selectedCollection,
+      stats,
+      loading,
+      ingestStatus,
+      ingestError,
+      batchProgress,
+      // Actions
+      refreshCollections,
+      createCollection,
+      deleteCollection,
+      renameCollection,
+      setSelectedCollection,
+      loadEntries,
+      getEntryDetail,
+      deleteEntry,
+      search,
+      ingest,
+      ingestBatch,
+      cancelIngest,
+      clearIngestStatus,
+      refreshStats,
+    }),
+    [
+      collections,
+      entries,
+      selectedCollection,
+      stats,
+      loading,
+      ingestStatus,
+      ingestError,
+      batchProgress,
+      refreshCollections,
+      createCollection,
+      deleteCollection,
+      renameCollection,
+      setSelectedCollection,
+      loadEntries,
+      getEntryDetail,
+      deleteEntry,
+      search,
+      ingest,
+      ingestBatch,
+      cancelIngest,
+      clearIngestStatus,
+      refreshStats,
+    ],
+  );
 }

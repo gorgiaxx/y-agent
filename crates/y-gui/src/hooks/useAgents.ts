@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { transport } from '../lib';
 
 export interface AgentFeatureFlags {
@@ -180,17 +180,32 @@ export function useAgents(): UseAgentsReturn {
     }
   }, [refreshAgents]);
 
-  return {
-    agents,
-    tools,
-    promptSections,
-    loading,
-    refreshAgents,
-    getAgentDetail,
-    getAgentSource,
-    parseAgentToml,
-    saveAgent,
-    resetAgent,
-    reloadAgents,
-  };
+  return useMemo(
+    () => ({
+      agents,
+      tools,
+      promptSections,
+      loading,
+      refreshAgents,
+      getAgentDetail,
+      getAgentSource,
+      parseAgentToml,
+      saveAgent,
+      resetAgent,
+      reloadAgents,
+    }),
+    [
+      agents,
+      tools,
+      promptSections,
+      loading,
+      refreshAgents,
+      getAgentDetail,
+      getAgentSource,
+      parseAgentToml,
+      saveAgent,
+      resetAgent,
+      reloadAgents,
+    ],
+  );
 }

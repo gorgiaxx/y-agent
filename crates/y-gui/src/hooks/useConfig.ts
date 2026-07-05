@@ -1,6 +1,6 @@
 // Custom hook for GUI configuration.
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { transport } from '../lib';
 import type { GuiConfig } from '../types';
 
@@ -81,5 +81,8 @@ export function useConfig(): UseConfigReturn {
     return await transport.invoke<string>('config_reload');
   }, []);
 
-  return { config, updateConfig, loading, loadSection, saveSection, reloadConfig };
+  return useMemo(
+    () => ({ config, updateConfig, loading, loadSection, saveSection, reloadConfig }),
+    [config, updateConfig, loading, loadSection, saveSection, reloadConfig],
+  );
 }

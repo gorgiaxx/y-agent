@@ -6,21 +6,26 @@ import { describe, expect, it } from 'vitest';
 
 const read = (rel: string) =>
   readFileSync(new URL(rel, import.meta.url), 'utf8');
-
 // Tabs that expose a Form/RAW toggle and must render it into the shared
 // action-bar slot rather than an inline section header.
-const TOGGLE_TABS = [
-  'ProvidersTab',
+//
+// SHELL_TABS use the shared SettingsTabShell (canonical form tabs).
+// INLINE_TABS have a list+detail layout and render the action-slot inline.
+const SHELL_TABS = [
   'SessionTab',
   'RuntimeTab',
   'BrowserTab',
-  'McpTab',
   'StorageTab',
   'HooksTab',
   'ToolsTab',
   'GuardrailsTab',
   'KnowledgeTab',
   'LangfuseTab',
+] as const;
+
+const INLINE_TABS = [
+  'ProvidersTab',
+  'McpTab',
 ] as const;
 
 describe('Settings action-bar Form/RAW toggle slot', () => {
@@ -57,13 +62,17 @@ describe('Settings action-bar Form/RAW toggle slot', () => {
     );
   });
 
-  it.each(TOGGLE_TABS)('%s portals its toggle into the action-bar slot', (tab) => {
+  it.each(SHELL_TABS)('%s portals its toggle into the action-bar slot via SettingsTabShell', (tab) => {
+    const src = read(`../components/settings/${tab}.tsx`);
+    // Shell tabs render the shell, which owns the action-slot + toggle.
+    expect(src).toContain('SettingsTabShell');
+    // The old inline header-with-toggle wrapper must be gone.
+    expect(src).not.toContain('settings-header-with-toggle');
+  });
+
+  it.each(INLINE_TABS)('%s portals its toggle into the action-bar slot inline', (tab) => {
     const src = read(`../components/settings/${tab}.tsx`);
     expect(src).toContain('SettingsActionSlot');
-    expect(src).toMatch(
-      /<SettingsActionSlot>\s*<RawModeToggle rawMode=\{rawMode\} onToggle=\{handleToggleRaw\} \/>\s*<\/SettingsActionSlot>/s,
-    );
-    // The old inline header-with-toggle wrapper must be gone.
     expect(src).not.toContain('settings-header-with-toggle');
   });
 

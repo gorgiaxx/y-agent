@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 
 import { logger, transport } from '../lib';
 
@@ -226,16 +226,28 @@ export function useBackgroundTasks(sessionId: string | null) {
     return () => window.clearInterval(id);
   }, [refresh]);
 
-  return {
-    tasks,
-    logs,
-    loading,
-    error,
-    busyProcessId,
-    refresh,
-    pollTask,
-    killTask,
-  };
+  return useMemo(
+    () => ({
+      tasks,
+      logs,
+      loading,
+      error,
+      busyProcessId,
+      refresh,
+      pollTask,
+      killTask,
+    }),
+    [
+      tasks,
+      logs,
+      loading,
+      error,
+      busyProcessId,
+      refresh,
+      pollTask,
+      killTask,
+    ],
+  );
 }
 
 export type UseBackgroundTasksReturn = ReturnType<typeof useBackgroundTasks>;

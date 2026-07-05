@@ -1,6 +1,6 @@
 // Custom hook for workspace management.
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { transport } from '../lib';
 import type { WorkspaceInfo } from '../types';
 
@@ -103,14 +103,26 @@ export function useWorkspaces(): UseWorkspacesReturn {
     }
   }, []);
 
-  return {
-    workspaces,
-    sessionWorkspaceMap,
-    createWorkspace,
-    updateWorkspace,
-    deleteWorkspace,
-    assignSession,
-    unassignSession,
-    refreshWorkspaces,
-  };
+  return useMemo(
+    () => ({
+      workspaces,
+      sessionWorkspaceMap,
+      createWorkspace,
+      updateWorkspace,
+      deleteWorkspace,
+      assignSession,
+      unassignSession,
+      refreshWorkspaces,
+    }),
+    [
+      workspaces,
+      sessionWorkspaceMap,
+      createWorkspace,
+      updateWorkspace,
+      deleteWorkspace,
+      assignSession,
+      unassignSession,
+      refreshWorkspaces,
+    ],
+  );
 }

@@ -2,15 +2,13 @@
 // LangfuseTab -- Langfuse OTLP export configuration form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { transport } from '../../lib';
-import type { AppConfigResponse } from '../../types';
 import type { LangfuseFormData } from './settingsTypes';
 import { jsonToLangfuse } from './settingsTypes';
-import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
-import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import { LANGFUSE_SCHEMA } from '../../utils/settingsSchemas';
+import { SettingsTabShell } from './SettingsTabShell';
+import { useSettingsTab } from './useSettingsTab';
 import { TagChipInput } from './TagChipInput';
 import { Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 
@@ -29,77 +27,31 @@ export function LangfuseTab({
   setDirtyLangfuse,
   setRawLangfuseToml,
 }: LangfuseTabProps) {
-  const [loading, setLoading] = useState(false);
-  const [rawMode, setRawMode] = useState(false);
-  const [rawContent, setRawContent] = useState('');
-  const cachedRawToml = useRef<string | undefined>(undefined);
   const [showPublicKey, setShowPublicKey] = useState(false);
   const [showSecretKey, setShowSecretKey] = useState(false);
 
-  const loadForm = useCallback(async () => {
-    setLoading(true);
-    try {
-            const allConfig = await transport.invoke<AppConfigResponse>('config_get');
-      const json = allConfig?.langfuse ?? {};
-      setLangfuseForm(jsonToLangfuse(json));
-      try {
-        const raw = await loadSection('langfuse');
-        setRawLangfuseToml(raw);
-        cachedRawToml.current = raw;
-        setRawContent(raw);
-      } catch {
-        setRawLangfuseToml(undefined);
-        cachedRawToml.current = undefined;
-        setRawContent('');
-      }
-    } catch {
-      // Use defaults if not found.
-    } finally {
-      setLoading(false);
-    }
-  }, [loadSection, setLangfuseForm, setRawLangfuseToml]);
-
-  useEffect(() => {
-    loadForm();
-  }, [loadForm]);
-
-  const handleToggleRaw = useCallback((next: boolean) => {
-    if (next) {
-      setRawContent(mergeIntoRawToml(cachedRawToml.current, langfuseForm as unknown as Record<string, unknown>, LANGFUSE_SCHEMA));
-    }
-    setRawMode(next);
-  }, [langfuseForm]);
-
-  const update = useCallback((patch: Partial<LangfuseFormData>) => {
-    setLangfuseForm((prev) => ({ ...prev, ...patch }));
-    setDirtyLangfuse(true);
-  }, [setLangfuseForm, setDirtyLangfuse]);
-
-  if (loading) {
-    return <div className="section-loading">Loading...</div>;
-  }
-
-  if (rawMode) {
-    return (
-      <>
-        <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
-        <RawTomlEditor
-          content={rawContent}
-          onChange={(val) => {
-            setRawContent(val);
-            setRawLangfuseToml(val);
-            setDirtyLangfuse(true);
-          }}
-          placeholder="No langfuse.toml found. Content will be created on save."
-        />
-      </>
-    );
-  }
+  const { loading, rawMode, rawContent, handleToggleRaw, handleRawChange, update } = useSettingsTab({
+    section: 'langfuse',
+    schema: LANGFUSE_SCHEMA,
+    configKey: 'langfuse',
+    form: langfuseForm,
+    setForm: setLangfuseForm,
+    setDirty: setDirtyLangfuse,
+    setRawToml: setRawLangfuseToml,
+    jsonToForm: jsonToLangfuse,
+    loadSection,
+  });
 
   return (
-    <>
-      <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
-      <div className="settings-form-wrap">
+    <SettingsTabShell
+      loading={loading}
+      rawMode={rawMode}
+      rawContent={rawContent}
+      onToggleRaw={handleToggleRaw}
+      onRawChange={handleRawChange}
+      rawPlaceholder="No langfuse.toml found. Content will be created on save."
+      form={
+        <div className="settings-form-wrap">
         <SettingsGroup title="Connection">
           <SettingsItem title="Enabled" description="Enable Langfuse OTLP trace export.">
             <Checkbox
@@ -314,6 +266,7 @@ export function LangfuseTab({
           </SettingsItem>
         </SettingsGroup>
       </div>
-    </>
+      }
+    />
   );
 }

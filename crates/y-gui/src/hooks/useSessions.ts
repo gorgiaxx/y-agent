@@ -1,6 +1,6 @@
 // Custom hook for session management.
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { transport } from '../lib';
 import { STORAGE_KEYS } from '../constants/storageKeys';
 
@@ -170,17 +170,30 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
     [],
   );
 
-  return {
-    sessions,
-    activeSessionId,
-    loading,
-    createSession,
-    selectSession,
-    deleteSession,
-    refreshSessions,
-    forkSession,
-    renameSession,
-  };
+  return useMemo(
+    () => ({
+      sessions,
+      activeSessionId,
+      loading,
+      createSession,
+      selectSession,
+      deleteSession,
+      refreshSessions,
+      forkSession,
+      renameSession,
+    }),
+    [
+      sessions,
+      activeSessionId,
+      loading,
+      createSession,
+      selectSession,
+      deleteSession,
+      refreshSessions,
+      forkSession,
+      renameSession,
+    ],
+  );
 }
 
 async function applyDefaultPromptTemplate(session: SessionInfo): Promise<SessionInfo> {
