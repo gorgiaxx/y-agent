@@ -1,4 +1,5 @@
 import { Fragment, useRef, useCallback, useLayoutEffect, useMemo, useState, memo, type UIEvent } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { Sparkles, AlertTriangle, ChevronDown, RefreshCw } from 'lucide-react';
 import type { Message } from '../../types';
 import type { ToolResultRecord } from '../../hooks/chatStreamTypes';
@@ -16,6 +17,7 @@ import { useChatSearchContext } from '../../hooks/useChatSearchContext';
 import {
   INITIAL_CHAT_SCROLL_STATE,
   reduceChatScrollState,
+  resolveFollowOutputBehavior,
   resolveFollowScrollTop,
   shouldShowScrollToBottomButton,
   type ChatScrollState,
@@ -204,6 +206,11 @@ function getDisplayItemKey(item: DisplayItem): string {
   return 'unknown';
 }
 
+// Below this item count, render a flat list (no Virtuoso overhead).
+// Virtualization only pays off for long conversations; short lists render
+// faster without it. This also enables SSR/static-markup tests.
+const VIRTUALIZATION_THRESHOLD = 50;
+
 function ChatPanelInner({
   messages,
   isStreaming,
@@ -223,16 +230,20 @@ function ChatPanelInner({
 }: ChatPanelProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const listContentRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [scrollState, setScrollState] = useState<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
   const scrollStateRef = useRef<ChatScrollState>(INITIAL_CHAT_SCROLL_STATE);
   const firstMessageIdRef = useRef<string | null | undefined>(undefined);
   const searchCtx = useChatSearchContext();
+  const isSearching = searchCtx.isOpen && !!searchCtx.query;
+
 
   // Pre-compute the flat display item list.
   const displayItems = useMemo(
     () => buildDisplayItems(messages, tombstonedSegments, contextResetPoints, compactPoints, toolResults, isStreaming, error),
     [messages, tombstonedSegments, contextResetPoints, compactPoints, toolResults, isStreaming, error],
   );
+  const useFlatList = isSearching || displayItems.length <= VIRTUALIZATION_THRESHOLD;
 
   const updateScrollState = useCallback((next: ChatScrollState) => {
     scrollStateRef.current = next;
@@ -244,6 +255,10 @@ function ChatPanelInner({
     ));
   }, []);
 
+  // --- Search-mode (non-virtualized) scroll management ---
+  // When search is active, all items render in the DOM so querySelectorAll
+  // can find [data-search-match] elements. The manual scroller is used only
+  // in that path; Virtuoso owns the scroller otherwise.
   const scrollNativeListToBottom = useCallback(() => {
     const scroller = scrollContainerRef.current;
     if (!scroller) {
@@ -277,6 +292,7 @@ function ChatPanelInner({
   }, []);
 
   useLayoutEffect(() => {
+    if (!useFlatList) return;
     const firstMessageId = messages[0]?.id ?? null;
     if (firstMessageIdRef.current !== firstMessageId) {
       firstMessageIdRef.current = firstMessageId;
@@ -286,9 +302,10 @@ function ChatPanelInner({
     }
 
     syncNativeScrollPosition();
-  }, [displayItems, messages, scrollNativeListToBottom, syncNativeScrollPosition]);
+  }, [displayItems, messages, useFlatList, scrollNativeListToBottom, syncNativeScrollPosition]);
 
   useLayoutEffect(() => {
+    if (!useFlatList) return;
     const content = listContentRef.current;
     if (!content || typeof ResizeObserver === 'undefined') {
       return;
@@ -299,7 +316,7 @@ function ChatPanelInner({
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [syncNativeScrollPosition]);
+  }, [useFlatList, syncNativeScrollPosition]);
 
   const handleScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     updateScrollState(
@@ -314,10 +331,45 @@ function ChatPanelInner({
     );
   }, [updateScrollState]);
 
+  // Reset scroll state on session switch (Virtuoso mode).
+  useLayoutEffect(() => {
+    if (useFlatList) return;
+    const firstMessageId = messages[0]?.id ?? null;
+    if (firstMessageIdRef.current !== firstMessageId) {
+      firstMessageIdRef.current = firstMessageId;
+      scrollStateRef.current = INITIAL_CHAT_SCROLL_STATE;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setScrollState(INITIAL_CHAT_SCROLL_STATE);
+      virtuosoRef.current?.scrollToIndex({ index: 'LAST' });
+    }
+  }, [messages, useFlatList]);
+
+  // --- Virtuoso follow-output + at-bottom detection ---
+  const followOutput = useCallback(
+    (atBottom: boolean) => resolveFollowOutputBehavior({
+      shouldAutoScroll: scrollStateRef.current.shouldAutoScroll,
+      isAtBottom: atBottom,
+    }),
+    [],
+  );
+
+  const handleAtBottomStateChange = useCallback((atBottom: boolean) => {
+    updateScrollState(
+      reduceChatScrollState(scrollStateRef.current, {
+        type: 'at-bottom-change',
+        isAtBottom: atBottom,
+      }),
+    );
+  }, [updateScrollState]);
+
   const scrollToBottom = useCallback(() => {
     updateScrollState(reduceChatScrollState(scrollStateRef.current, { type: 'jump-to-bottom' }));
-    scrollNativeListToBottom();
-  }, [scrollNativeListToBottom, updateScrollState]);
+    if (useFlatList) {
+      scrollNativeListToBottom();
+    } else {
+      virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'smooth' });
+    }
+  }, [useFlatList, scrollNativeListToBottom, updateScrollState]);
 
   const showScrollToBottom = shouldShowScrollToBottomButton(scrollState, isStreaming);
 
@@ -460,26 +512,44 @@ function ChatPanelInner({
     );
   }
 
-  const scrollListClass = searchCtx.isOpen && searchCtx.query
-    ? 'chat-message-list chat-message-list--searching'
-    : 'chat-message-list';
 
   return (
     <div className="chat-panel">
       <div className="chat-messages" style={{ position: 'relative' }}>
-        <div
-          ref={scrollContainerRef}
-          className={scrollListClass}
-          onScroll={handleScroll}
-        >
-          <div ref={listContentRef} className="chat-message-list-content">
-            {displayItems.map((item, index) => (
-              <Fragment key={getDisplayItemKey(item)}>
-                {renderItem(index, item)}
-              </Fragment>
-            ))}
+        {useFlatList ? (
+          // Flat list: render all items in the DOM. Used for search (so
+          // querySelectorAll can locate [data-search-match] elements) and
+          // for short conversations (Virtuoso overhead isn't worth it).
+          <div
+            ref={scrollContainerRef}
+            className={isSearching ? 'chat-message-list chat-message-list--searching' : 'chat-message-list'}
+            onScroll={handleScroll}
+          >
+            <div ref={listContentRef} className="chat-message-list-content">
+              {displayItems.map((item, index) => (
+                <Fragment key={getDisplayItemKey(item)}>
+                  {renderItem(index, item)}
+                </Fragment>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <Virtuoso<DisplayItem>
+            ref={virtuosoRef}
+            data={displayItems}
+            computeItemKey={(_index, item) => getDisplayItemKey(item)}
+            itemContent={renderItem}
+            followOutput={followOutput}
+            atBottomStateChange={handleAtBottomStateChange}
+            atBottomThreshold={24}
+            className="chat-message-list"
+            scrollerRef={(ref) => {
+              if (ref instanceof HTMLElement) {
+                scrollContainerRef.current = ref as HTMLDivElement;
+              }
+            }}
+          />
+        )}
         <ChatSearchToolbar scrollContainerRef={scrollContainerRef} />
         {showScrollToBottom && (
           <button
