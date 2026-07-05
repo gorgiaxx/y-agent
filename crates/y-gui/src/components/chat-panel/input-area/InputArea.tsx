@@ -1,6 +1,9 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Clock3, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock, Settings } from 'lucide-react';
-import { logger, transport, platform } from '../../../lib';
+
+import { usePromptTemplates } from '../../../hooks/usePromptTemplates';
+import { useTranslate } from '../../../hooks/useTranslate';
+import { useInputAttachments } from '../../../hooks/useInputAttachments';
 import { ProviderIconImg } from '../../common/ProviderIconPicker';
 import { ConfirmDialog } from '../../common/ConfirmDialog';
 import { Tooltip } from '../../ui/Tooltip';
@@ -10,7 +13,7 @@ import { PermissionDialog } from './PermissionDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
-import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions, SessionPromptConfig, UserPromptTemplate } from '../../../types';
+import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions, UserPromptTemplate } from '../../../types';
 import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../constants/imageGeneration';
 import type { PendingEdit } from '../../../hooks/useChat';
 import { useCloseOnOutsideClick } from '../../../hooks/useCloseOnOutsideClick';
@@ -201,9 +204,7 @@ export function InputArea(props: InputAreaProps) {
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [promptPickerOpen, setPromptPickerOpen] = useState(false);
-  const [promptTemplates, setPromptTemplates] = useState<UserPromptTemplate[]>([]);
-  const [promptTemplatesLoading, setPromptTemplatesLoading] = useState(false);
-  const [promptTemplateApplying, setPromptTemplateApplying] = useState<string | null>(null);
+  const { templates: promptTemplates, loading: promptTemplatesLoading, applying: promptTemplateApplying, loadTemplates: loadPromptTemplates, applyTemplate: applyPromptTemplate, clearSessionPrompt } = usePromptTemplates(onSessionPromptApplied);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [mcpDropdownOpen, setMcpDropdownOpen] = useState(false);
   const contentEditableRef = useRef<ContentEditableInputHandle>(null);
@@ -214,10 +215,10 @@ export function InputArea(props: InputAreaProps) {
   const mcpDropdownRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
   const lastCompEndRef = useRef<number>(0);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [translating, setTranslating] = useState(false);
-  const [inputHasText, setInputHasText] = useState(false);
+  const { attachments, removeAttachment: removeAttachmentById, clearAttachments: clearAttachmentList, handlePaste: handlePasteAttachment, pickFiles: pickAttachmentFiles } = useInputAttachments();
+  const { translating, translate } = useTranslate();
   const [uncontrolledRequestMode, setUncontrolledRequestMode] = useState<RequestMode>('text_chat');
+  const [inputHasText, setInputHasText] = useState(false);
   const requestMode = controlledRequestMode ?? uncontrolledRequestMode;
   const setRequestMode = useCallback((mode: RequestMode) => {
     if (controlledRequestMode !== undefined) {
@@ -413,19 +414,6 @@ export function InputArea(props: InputAreaProps) {
     setSelectedKbCollections([]);
   }, []);
 
-  const loadPromptTemplates = useCallback(async () => {
-    setPromptTemplatesLoading(true);
-    try {
-      const templates = await transport.invoke<UserPromptTemplate[]>('prompt_template_list');
-      setPromptTemplates(templates);
-    } catch (e) {
-      logger.error('[InputArea] prompt template list error:', e);
-      setPromptTemplates([]);
-    } finally {
-      setPromptTemplatesLoading(false);
-    }
-  }, []);
-
   const handlePromptPickerToggle = useCallback(() => {
     setPromptPickerOpen((open) => {
       const next = !open;
@@ -436,43 +424,17 @@ export function InputArea(props: InputAreaProps) {
     });
   }, [loadPromptTemplates]);
 
-  const applyPromptTemplate = useCallback(async (template: UserPromptTemplate) => {
+  const handleApplyPromptTemplate = useCallback(async (template: UserPromptTemplate) => {
     if (!sessionId) return;
-    setPromptTemplateApplying(template.id);
-    try {
-      const config: SessionPromptConfig = {
-        system_prompt: template.system_prompt,
-        prompt_section_ids: template.prompt_section_ids,
-        template_id: template.id,
-      };
-      await transport.invoke('session_set_prompt_config', { sessionId, config });
-      onSessionPromptApplied?.();
-      setPromptPickerOpen(false);
-    } catch (e) {
-      logger.error('[InputArea] prompt template apply error:', e);
-    } finally {
-      setPromptTemplateApplying(null);
-    }
-  }, [onSessionPromptApplied, sessionId]);
+    const ok = await applyPromptTemplate(sessionId, template);
+    if (ok) setPromptPickerOpen(false);
+  }, [sessionId, applyPromptTemplate]);
 
-  const clearSessionPrompt = useCallback(async () => {
+  const handleClearSessionPrompt = useCallback(async () => {
     if (!sessionId) return;
-    setPromptTemplateApplying('__clear__');
-    try {
-      const config: SessionPromptConfig = {
-        system_prompt: null,
-        prompt_section_ids: [],
-        template_id: null,
-      };
-      await transport.invoke('session_set_prompt_config', { sessionId, config });
-      onSessionPromptApplied?.();
-      setPromptPickerOpen(false);
-    } catch (e) {
-      logger.error('[InputArea] prompt clear error:', e);
-    } finally {
-      setPromptTemplateApplying(null);
-    }
-  }, [onSessionPromptApplied, sessionId]);
+    const ok = await clearSessionPrompt(sessionId);
+    if (ok) setPromptPickerOpen(false);
+  }, [sessionId, clearSessionPrompt]);
 
   const handleSend = useCallback(() => {
     // Prevent double-send from rapid Enter key events (common on Windows).
@@ -527,43 +489,23 @@ export function InputArea(props: InputAreaProps) {
       requestMode === 'image_generation' ? imageGenOptions : undefined,
     );
     resetInput();
-    setAttachments([]);
+    clearAttachmentList();
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, steerActive, onSteer, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions]);
+  }, [disabled, steerActive, onSteer, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions, clearAttachmentList]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
-    // Check for pasted images first.
-    const items = e.clipboardData.items;
-    for (const item of Array.from(items)) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) return;
-        const buffer = await file.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''),
-        );
-        const ext = file.type.split('/')[1] || 'png';
-        const att: Attachment = {
-          id: `paste-${Date.now()}`,
-          filename: `pasted-image.${ext}`,
-          mime_type: file.type,
-          base64_data: base64,
-          size: file.size,
-        };
-        setAttachments((prev) => [...prev, att]);
-        return;
-      }
-    }
+    // Try image paste first; fall back to plain text.
+    const handled = await handlePasteAttachment(e);
+    if (handled) return;
     // Fallback: paste as plain text.
     e.preventDefault();
     const text = e.clipboardData.getData('text/plain');
     // NOTE: execCommand is deprecated but is the only API that inserts text
     // into a contenteditable while preserving the native undo stack.
     document.execCommand('insertText', false, text);
-  }, []);
+  }, [handlePasteAttachment]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Ignore key events during IME composition (e.g. Chinese pinyin input).
@@ -670,18 +612,13 @@ export function InputArea(props: InputAreaProps) {
     if (translating) return;
     const { text } = contentEditableRef.current?.extractContent() ?? { text: '' };
     if (!text.trim()) return;
-    setTranslating(true);
-    try {
-      const translated = await transport.invoke<string>('translate_text', { text: text.trim() });
+    const translated = await translate(text);
+    if (translated !== null) {
       contentEditableRef.current?.setText(translated);
       contentEditableRef.current?.placeCursorAtEnd();
       updateHasContent();
-    } catch (e) {
-      logger.error('[InputArea] translation error:', e);
-    } finally {
-      setTranslating(false);
     }
-  }, [translating, updateHasContent]);
+  }, [translating, translate, updateHasContent]);
 
   return (
     <div className={`input-area ${expanded ? 'input-area--expanded' : ''}`}>
@@ -747,7 +684,7 @@ export function InputArea(props: InputAreaProps) {
           translating={translating}
           isCompacting={isCompacting}
           attachments={attachments}
-          onRemoveAttachment={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
+          onRemoveAttachment={removeAttachmentById}
           onInput={handleInput}
           onPaste={handlePaste}
           onKeyDown={handleKeyDown}
@@ -928,34 +865,7 @@ export function InputArea(props: InputAreaProps) {
           {/* Attachment picker (also used for image-to-image in generation mode) */}
           <ToolbarTooltipButton
             className={`toolbar-btn ${attachments.length > 0 ? 'toolbar-btn--active' : ''}`}
-            onClick={async () => {
-              try {
-                const imageFilters = [
-                  { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
-                ];
-                if (!platform.capabilities.nativeFilePaths) {
-                  const atts = await platform.openImageAttachments({
-                    multiple: true,
-                    filters: imageFilters,
-                  });
-                  if (atts) {
-                    setAttachments((prev) => [...prev, ...atts]);
-                  }
-                  return;
-                }
-                const result = await platform.openFileDialog({
-                  multiple: true,
-                  filters: imageFilters,
-                });
-                if (result) {
-                  const paths = result;
-                  const atts = await transport.invoke<Attachment[]>('attachment_read_files', { paths });
-                  setAttachments((prev) => [...prev, ...atts]);
-                }
-              } catch (e) {
-                logger.error('[InputArea] attachment picker error:', e);
-              }
-            }}
+            onClick={() => void pickAttachmentFiles()}
             tooltip={requestMode === 'image_generation' ? 'Reference image (image-to-image)' : 'Attach images'}
             disabled={disabled}
           >
@@ -1017,7 +927,7 @@ export function InputArea(props: InputAreaProps) {
                       {hasCustomPrompt && (
                         <button
                           className="toolbar-prompt-item toolbar-prompt-item--clear"
-                          onClick={() => void clearSessionPrompt()}
+                          onClick={() => void handleClearSessionPrompt()}
                           disabled={promptTemplateApplying !== null}
                         >
                           <span className="toolbar-prompt-item-icon">
@@ -1040,7 +950,7 @@ export function InputArea(props: InputAreaProps) {
                           <button
                             key={template.id}
                             className="toolbar-prompt-item"
-                            onClick={() => void applyPromptTemplate(template)}
+                            onClick={() => void handleApplyPromptTemplate(template)}
                             disabled={promptTemplateApplying !== null}
                             title={template.description ?? template.name}
                           >

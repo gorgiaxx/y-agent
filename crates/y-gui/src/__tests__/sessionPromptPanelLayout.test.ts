@@ -45,6 +45,10 @@ describe('Session prompt editor surface', () => {
       new URL('../components/chat-panel/input-area/InputArea.tsx', import.meta.url),
       'utf8',
     );
+    const hook = readFileSync(
+      new URL('../hooks/usePromptTemplates.ts', import.meta.url),
+      'utf8',
+    );
     const chatView = readFileSync(
       new URL('../views/ChatView.tsx', import.meta.url),
       'utf8',
@@ -52,8 +56,9 @@ describe('Session prompt editor surface', () => {
 
     expect(inputArea).toContain('promptPickerOpen');
     expect(inputArea).toContain('toolbar-prompt-dropdown');
-    expect(inputArea).toContain('prompt_template_list');
-    expect(inputArea).toContain('session_set_prompt_config');
+    expect(inputArea).toContain('usePromptTemplates');
+    expect(hook).toContain('prompt_template_list');
+    expect(hook).toContain('session_set_prompt_config');
     expect(inputArea).toContain('New & Manage');
     expect(inputArea).toContain('onManagePrompts');
     expect(chatView).toContain('onManagePrompts');
