@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { transport } from '../lib';
+import { useTransportListener } from './useTransportListener';
 import type { SkillInfo, SkillDetail, SkillFileEntry, SkillImportResult, DiagnosticsGatewayEvent } from '../types';
 
 export type ImportStatus = 'idle' | 'importing' | 'success' | 'error';
@@ -66,16 +67,15 @@ export function useSkills(): UseSkillsReturn {
   // runs as a sub-agent, so its successful completion is the signal that a new
   // skill was registered on disk. Without this the panel only updates on mount,
   // view activation, or panel-initiated actions (import/uninstall/toggle).
-  useEffect(() => {
-    const unlisten = transport.listen<DiagnosticsGatewayEvent>('diagnostics:event', ({ payload }) => {
+  useTransportListener<DiagnosticsGatewayEvent>(
+    'diagnostics:event',
+    ({ payload }) => {
       if (isSkillCreatedEvent(payload)) {
         void refresh();
       }
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [refresh]);
+    },
+    [refresh],
+  );
 
   // Expose refresh for external callers (e.g., view activation).
   // This is the same stable reference returned in the hook result.

@@ -12,6 +12,7 @@
 
 import { useState, useEffect, useCallback, useRef, startTransition } from 'react';
 import { transport } from '../lib';
+import { useTransportListener } from './useTransportListener';
 
 import type { Message, TurnMeta, ChatCompletePayload, DiagnosticsEntry } from '../types';
 import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
@@ -94,9 +95,13 @@ export function useStatusBarMeta({
   useEffect(() => {
     activeSessionIdRef.current = activeSessionId;
   }, [activeSessionId]);
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    transport.listen<ChatCompletePayload>('chat:complete', (e) => {
+
+  // Listen directly to chat:complete events for status bar meta.
+  // This is the authoritative source -- fires once per turn completion with
+  // all fields already resolved.
+  useTransportListener<ChatCompletePayload>(
+    'chat:complete',
+    (e) => {
       const payload = e.payload;
       // Only update if the event belongs to the currently viewed session.
       if (payload.session_id !== activeSessionIdRef.current) return;
@@ -115,9 +120,9 @@ export function useStatusBarMeta({
           cacheWriteTokens: payload.cache_write_tokens,
         });
       });
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
-  }, []);
+    },
+    [],
+  );
 
   // Live update: when diagnostics entries change during an active run,
   // extract the latest llm_response and update the status bar so the

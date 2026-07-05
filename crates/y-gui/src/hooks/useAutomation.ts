@@ -12,6 +12,7 @@
  */
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { transport } from '../lib';
+import { useTransportListener } from './useTransportListener';
 
 
 // ---------------------------------------------------------------------------
@@ -164,16 +165,15 @@ export function useAutomation(active = true): UseAutomationReturn {
     }
     prevActive.current = active;
   }, [active, refreshAll]);
-
   // Listen for chat:complete events -- agent tool calls during a chat turn
   // may have created/modified/deleted workflows or schedules.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    transport.listen<unknown>('chat:complete', () => {
+  useTransportListener<unknown>(
+    'chat:complete',
+    () => {
       refreshAll();
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
-  }, [refreshAll]);
+    },
+    [refreshAll],
+  );
 
   // --- Workflow operations ---
   const getWorkflow = useCallback(async (id: string): Promise<WorkflowInfo | null> => {

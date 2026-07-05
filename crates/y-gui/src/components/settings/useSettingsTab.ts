@@ -20,7 +20,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { transport } from '../../lib';
 import type { AppConfigResponse } from '../../types';
-import { mergeIntoRawToml, type FieldDef } from '../../utils/tomlUtils';
+import { mergeIntoRawToml } from '../../utils/tomlUtils';
+import type { FieldDef } from '../../utils/tomlUtils';
 
 export interface UseSettingsTabOptions<TForm> {
   section: string;

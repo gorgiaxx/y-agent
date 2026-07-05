@@ -4,6 +4,7 @@ import {
   markChatRunAwaitingInteraction,
   resolveChatRunInteraction,
 } from './chatBus';
+import { useTransportListener } from './useTransportListener';
 
 import {
   clearSessionInteractionByPredicate,
@@ -42,33 +43,34 @@ export function useSessionInteractions(activeSessionId: string | null) {
   const askUserData = getSessionInteraction(askUserBySession, activeSessionId);
   const permissionData = getSessionInteraction(permissionBySession, activeSessionId);
   const pendingReviewIds = getPendingReviewIdsForSession(planReviewStore, activeSessionId);
-
-  useEffect(() => {
-    const unlisten = transport.listen<{
-      run_id: string;
-      session_id: string;
-      interaction_id: string;
-      questions: unknown;
-    }>('chat:AskUser', (event) => {
+  useTransportListener<{
+    run_id: string;
+    session_id: string;
+    interaction_id: string;
+    questions: unknown;
+  }>(
+    'chat:AskUser',
+    (event) => {
       const { session_id, interaction_id, questions } = event.payload;
       setAskUserBySession((prev) => setSessionInteraction(prev, session_id, {
         interactionId: interaction_id,
         questions: questions as AskUserDialogState['questions'],
       }));
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
+    },
+    [],
+  );
 
-  useEffect(() => {
-    const unlisten = transport.listen<{
-      run_id: string;
-      session_id: string;
-      request_id: string;
-      tool_name: string;
-      action_description: string;
-      reason: string;
-      content_preview: string | null;
-    }>('chat:PermissionRequest', (event) => {
+  useTransportListener<{
+    run_id: string;
+    session_id: string;
+    request_id: string;
+    tool_name: string;
+    action_description: string;
+    reason: string;
+    content_preview: string | null;
+  }>(
+    'chat:PermissionRequest',
+    (event) => {
       const { session_id, request_id, tool_name, action_description, reason, content_preview } = event.payload;
       setPermissionBySession((prev) => setSessionInteraction(prev, session_id, {
         requestId: request_id,
@@ -77,17 +79,18 @@ export function useSessionInteractions(activeSessionId: string | null) {
         reason,
         contentPreview: content_preview,
       }));
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
+    },
+    [],
+  );
 
-  useEffect(() => {
-    const unlisten = transport.listen<{
-      run_id: string;
-      session_id: string;
-      review_id: string;
-      plan: Record<string, unknown>;
-    }>('chat:PlanReview', (event) => {
+  useTransportListener<{
+    run_id: string;
+    session_id: string;
+    review_id: string;
+    plan: Record<string, unknown>;
+  }>(
+    'chat:PlanReview',
+    (event) => {
       const { run_id, session_id, review_id, plan } = event.payload;
       markChatRunAwaitingInteraction(run_id, session_id);
       setPlanReviewStore((prev) => addPlanReview(prev, {
@@ -96,9 +99,9 @@ export function useSessionInteractions(activeSessionId: string | null) {
         sessionId: session_id,
         plan,
       }));
-    });
-    return () => { unlisten.then((fn) => fn()); };
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!activeSessionId) return;

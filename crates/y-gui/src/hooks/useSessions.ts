@@ -5,6 +5,7 @@ import { transport } from '../lib';
 import { STORAGE_KEYS } from '../constants/storageKeys';
 
 import type { SessionInfo, SessionPromptConfig, UserPromptTemplate } from '../types';
+import { useTransportListener } from './useTransportListener';
 
 export interface UseSessionsReturn {
   sessions: SessionInfo[];
@@ -83,19 +84,18 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
       window.removeEventListener('focus', refreshSessions);
     };
   }, [refreshSessions]);
-
   // Listen for title updates emitted by the GUI backend after LLM turns.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    transport.listen<{ session_id: string; title: string }>('session:title_updated', (e) => {
+  useTransportListener<{ session_id: string; title: string }>(
+    'session:title_updated',
+    (e) => {
       setSessions((prev) =>
         prev.map((s) =>
           s.id === e.payload.session_id ? { ...s, title: e.payload.title } : s,
         ),
       );
-    }).then((fn) => { unlisten = fn; });
-    return () => { unlisten?.(); };
-  }, []);
+    },
+    [],
+  );
 
   const createSession = useCallback(
     async (title?: string, options?: { agentId?: string | null }): Promise<SessionInfo | null> => {
