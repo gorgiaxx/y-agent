@@ -219,7 +219,7 @@ export function InputArea(props: InputAreaProps) {
   const { translating, translate } = useTranslate();
   const [uncontrolledRequestMode, setUncontrolledRequestMode] = useState<RequestMode>('text_chat');
   const [inputHasText, setInputHasText] = useState(false);
-  const requestMode = controlledRequestMode ?? uncontrolledRequestMode;
+  const requestedRequestMode = controlledRequestMode ?? uncontrolledRequestMode;
   const setRequestMode = useCallback((mode: RequestMode) => {
     if (controlledRequestMode !== undefined) {
       onRequestModeChange?.(mode);
@@ -334,15 +334,14 @@ export function InputArea(props: InputAreaProps) {
     || selectedProviderCapabilities.has('text');
   const canToggleRequestMode = providerSupportsImageGeneration && providerSupportsText;
 
-  useEffect(() => {
-    if (!providerSupportsImageGeneration) {
-      setRequestMode('text_chat');
-      return;
-    }
-    if (!providerSupportsText) {
-      setRequestMode('image_generation');
-    }
-  }, [providerSupportsImageGeneration, providerSupportsText, selectedProviderId, setRequestMode]);
+  // Clamp request mode to provider capabilities at render time. Avoids the
+  // set-state-in-effect anti-pattern and preserves user intent across provider
+  // switches (the clamped value reflects capabilities without overwriting intent).
+  const requestMode: RequestMode = !providerSupportsImageGeneration
+    ? 'text_chat'
+    : !providerSupportsText
+      ? 'image_generation'
+      : requestedRequestMode;
 
   const updateHasContent = useCallback(() => {
     const hasContent = contentEditableRef.current?.hasContent() ?? false;
@@ -591,7 +590,7 @@ export function InputArea(props: InputAreaProps) {
       queueMicrotask(exitCommandMode);
       contentEditableRef.current?.focus();
       contentEditableRef.current?.placeCursorAtEnd();
-      updateHasContent();
+      queueMicrotask(updateHasContent);
     }
   }, [pendingEdit, exitCommandMode, updateHasContent]);
 
@@ -603,7 +602,7 @@ export function InputArea(props: InputAreaProps) {
       queueMicrotask(exitCommandMode);
       contentEditableRef.current?.focus();
       contentEditableRef.current?.placeCursorAtEnd();
-      updateHasContent();
+      queueMicrotask(updateHasContent);
       onRewindDraftConsumed?.();
     }
   }, [rewindDraft, exitCommandMode, updateHasContent, onRewindDraftConsumed]);
