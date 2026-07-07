@@ -537,7 +537,8 @@ async fn call_llm_streaming(
         && !finish_observed;
     if stream_was_empty {
         let provider_name = provider_id
-            .as_ref().map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+            .as_ref()
+            .map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
         tracing::warn!(
             provider_id = ?provider_id,
             model = %model_name,
