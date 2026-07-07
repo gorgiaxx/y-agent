@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useChatContext, useSessionsContext } from '../providers/AppContexts';
 import { transport } from '../lib';
-import type { Message } from '../types';
+import type { Message, DiagSubagentCompleted } from '../types';
 import type { ToolResultRecord } from './chatStreamTypes';
 import {
   canonicalToolName,
@@ -189,7 +189,11 @@ export function useInfoPanel(): UseInfoPanelReturn {
 
   // Load the active session's sub-agent child sessions (plan phases, loop
   // rounds, delegated tasks) so they can be opened as drill-in sub-chats.
+  // Reloaded when the active session changes, when streaming starts/ends, and
+  // when a subagent_completed broadcast arrives for this session (so Task-
+  // delegated sub-agents appear without a session switch).
   const [childSessions, setChildSessions] = useState<ChildSessionSummary[]>([]);
+  const [childReloadTick, setChildReloadTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
     const load = async (): Promise<ChildSessionSummary[]> => {
@@ -217,7 +221,29 @@ export function useInfoPanel(): UseInfoPanelReturn {
     return () => {
       cancelled = true;
     };
-  }, [activeSessionId, activeStreaming]);
+  }, [activeSessionId, activeStreaming, childReloadTick]);
+
+  // Listen for subagent_completed broadcasts and bump the reload tick when one
+  // arrives for the active session. The backend emits this with the parent
+  // session's UUID, so a match means a sub-agent under this session finished
+  // (plan phase, loop round, or Task delegation) and the child list should
+  // refresh to surface it.
+  useEffect(() => {
+    if (!activeSessionId) return;
+    const unlisten = transport.listen<DiagSubagentCompleted>(
+      'diagnostics:event',
+      (event) => {
+        const ev = event.payload;
+        if (ev.type !== 'subagent_completed') return;
+        if (ev.session_id && ev.session_id === activeSessionId) {
+          setChildReloadTick((t) => t + 1);
+        }
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn?.()).catch(() => {});
+    };
+  }, [activeSessionId]);
 
   return useMemo(() => {
     const historical = parseMetaToolResults(messages);

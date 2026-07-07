@@ -391,10 +391,21 @@ async fn call_llm_streaming(
         ..Default::default()
     };
     let mut finish_reason = FinishReason::Stop;
+    let mut finish_observed = false;
+    let mut usage_observed = false;
 
     // Track reasoning timing: first reasoning delta -> first content delta.
     let mut reasoning_start: Option<std::time::Instant> = None;
     let mut reasoning_duration_ms: Option<u64> = None;
+
+    // Whether the stream emitted any substance: content, reasoning, tool
+    // calls, generated images, or a usage/finish event. A stream that
+    // produced nothing of these is an "empty stream" -- a known failure
+    // mode of Anthropic-compatible gateways under load (HTTP 200 with an
+    // SSE body that contains no events). Such a stream must not be treated
+    // as a valid empty response; it is surfaced as a transient ServerError
+    // so the existing retry/resume machinery (provider pool retry,
+    // plan-phase retry, user-initiated resend) can recover.
 
     loop {
         // Check cancellation between chunks.
@@ -487,10 +498,12 @@ async fn call_llm_streaming(
                 // Capture usage from the final chunk.
                 if let Some(u) = chunk.usage {
                     usage = u;
+                    usage_observed = true;
                 }
 
                 if let Some(fr) = chunk.finish_reason {
                     finish_reason = fr;
+                    finish_observed = true;
                 }
             }
             Some(Err(e)) => return Err(e),
@@ -509,6 +522,33 @@ async fn call_llm_streaming(
         finish_reason,
         &usage,
     );
+
+    // Detect an empty stream (200 OK but no SSE data). This happens under
+    // provider overload: the connection succeeds, the SSE body is empty, and
+    // the stream terminates without any content, tool calls, images, usage,
+    // or finish event. Treating this as success yields a "(no content)"
+    // response with zero usage -- the exact symptom reported. Classify it as
+    // a transient ServerError so retry logic engages.
+    let stream_was_empty = content.is_empty()
+        && reasoning_content.is_empty()
+        && tool_calls.is_empty()
+        && generated_images.is_empty()
+        && !usage_observed
+        && !finish_observed;
+    if stream_was_empty {
+        let provider_name = provider_id
+            .as_ref().map_or_else(|| "unknown".to_string(), std::string::ToString::to_string);
+        tracing::warn!(
+            provider_id = ?provider_id,
+            model = %model_name,
+            "LLM stream produced no events (empty SSE body); treating as transient server error"
+        );
+        return Err(ProviderError::ServerError {
+            provider: provider_name,
+            message: "LLM stream produced no content (empty SSE body; likely server overload)"
+                .to_string(),
+        });
+    }
 
     // If reasoning ended without any content delta (e.g. model produced
     // only reasoning), finalize the duration now.
@@ -1091,5 +1131,183 @@ mod tests {
 
         assert!(saw_partial);
         assert!(saw_complete);
+    }
+
+    /// A pool whose stream completes without emitting any chunks, content,
+    /// tool calls, usage, or finish event. This is the exact failure mode
+    /// observed under Anthropic-compatible gateway overload: HTTP 200 OK
+    /// with an empty SSE body.
+    struct EmptyStreamPool {
+        provider_id: ProviderId,
+        metadata: ProviderMetadata,
+    }
+
+    impl EmptyStreamPool {
+        fn new() -> Self {
+            let provider_id = ProviderId::from_string("empty-stream");
+            Self {
+                provider_id: provider_id.clone(),
+                metadata: ProviderMetadata {
+                    id: provider_id,
+                    provider_type: ProviderType::Anthropic,
+                    model: "claude-test".into(),
+                    tags: vec!["general".into()],
+                    capabilities: vec![ProviderCapability::Text],
+                    max_concurrency: 1,
+                    context_window: 1_000_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    tool_calling_mode: ToolCallingMode::Native,
+                    tool_dialect: y_core::provider::ToolDialect::default(),
+                },
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProviderPool for EmptyStreamPool {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            panic!("chat_completion should not be called in streaming tests");
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            // No chunks at all -- the stream terminates immediately.
+            let chunks: Vec<Result<ChatStreamChunk, ProviderError>> = vec![];
+            Ok(ChatStreamResponse {
+                stream: Box::pin(stream::iter(chunks)),
+                raw_request: Some(serde_json::json!({ "messages": [] })),
+                provider_id: Some(self.provider_id.clone()),
+                model: self.metadata.model.clone(),
+                context_window: self.metadata.context_window,
+            })
+        }
+
+        fn report_error(&self, _provider_id: &ProviderId, _error: &ProviderError) {}
+
+        async fn provider_statuses(&self) -> Vec<ProviderStatus> {
+            vec![]
+        }
+
+        async fn freeze(&self, _provider_id: &ProviderId, _reason: String) {}
+
+        async fn thaw(&self, _provider_id: &ProviderId) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_streaming_empty_stream_returns_server_error() {
+        // Regression: an Anthropic-compatible gateway under load can return
+        // 200 OK with an empty SSE body (no events). Previously this was
+        // silently treated as a valid empty response, producing a "(no
+        // content)" turn with zero usage. It must now surface as a
+        // transient ServerError so retry machinery can engage.
+        let pool = EmptyStreamPool::new();
+        let request = test_request();
+        let route = RouteRequest {
+            priority: RoutePriority::Normal,
+            ..Default::default()
+        };
+        let (tx, _rx) = crate::chat::TurnEventSender::channel();
+
+        let result = call_llm(
+            &pool,
+            &request,
+            &[route],
+            Some(&tx),
+            None,
+            "chat-turn",
+            &mut PartialStreamingContent::default(),
+        )
+        .await;
+
+        let err = result.expect_err("empty stream should surface as an error");
+        match err {
+            ProviderError::ServerError { provider, message } => {
+                assert_eq!(provider, "empty-stream");
+                assert!(
+                    message.contains("empty SSE body"),
+                    "error message should explain the empty SSE body: {message}"
+                );
+            }
+            other => panic!("expected ServerError for empty stream, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_streaming_finish_only_stream_is_not_empty() {
+        // A stream that emits only a finish event (no content/usage) is
+        // NOT an empty stream: the provider explicitly signalled
+        // completion, so the empty-stream guard must not fire.
+        struct FinishOnlyPool(EmptyStreamPool);
+        #[async_trait]
+        impl ProviderPool for FinishOnlyPool {
+            async fn chat_completion(
+                &self,
+                _r: &ChatRequest,
+                _route: &RouteRequest,
+            ) -> Result<ChatResponse, ProviderError> {
+                panic!()
+            }
+            async fn chat_completion_stream(
+                &self,
+                _r: &ChatRequest,
+                _route: &RouteRequest,
+            ) -> Result<ChatStreamResponse, ProviderError> {
+                let chunks = vec![Ok(ChatStreamChunk {
+                    delta_content: None,
+                    delta_reasoning_content: None,
+                    delta_tool_calls: vec![],
+                    usage: None,
+                    finish_reason: Some(FinishReason::Stop),
+                    delta_images: vec![],
+                })];
+                Ok(ChatStreamResponse {
+                    stream: Box::pin(stream::iter(chunks)),
+                    raw_request: Some(serde_json::json!({})),
+                    provider_id: Some(self.0.provider_id.clone()),
+                    model: self.0.metadata.model.clone(),
+                    context_window: self.0.metadata.context_window,
+                })
+            }
+            fn report_error(&self, _p: &ProviderId, _e: &ProviderError) {}
+            async fn provider_statuses(&self) -> Vec<ProviderStatus> {
+                vec![]
+            }
+            async fn freeze(&self, _p: &ProviderId, _r: String) {}
+            async fn thaw(&self, _p: &ProviderId) -> Result<(), ProviderError> {
+                Ok(())
+            }
+        }
+        let pool = FinishOnlyPool(EmptyStreamPool::new());
+        let request = test_request();
+        let route = RouteRequest {
+            priority: RoutePriority::Normal,
+            ..Default::default()
+        };
+        let (tx, _rx) = crate::chat::TurnEventSender::channel();
+
+        let (response, _) = call_llm(
+            &pool,
+            &request,
+            &[route],
+            Some(&tx),
+            None,
+            "chat-turn",
+            &mut PartialStreamingContent::default(),
+        )
+        .await
+        .expect("finish-only stream should not be treated as empty");
+
+        assert_eq!(response.content, None);
+        assert_eq!(response.finish_reason, FinishReason::Stop);
     }
 }

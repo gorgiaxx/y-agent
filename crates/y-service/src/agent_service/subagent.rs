@@ -15,7 +15,7 @@ use y_core::types::{Message, Role};
 
 use crate::container::ServiceContainer;
 
-use super::{AgentExecutionConfig, AgentService};
+use super::{AgentExecutionConfig, AgentExecutionError, AgentService};
 
 // ---------------------------------------------------------------------------
 // Sub-agent prompt augmentation
@@ -175,19 +175,61 @@ impl AgentRunner for ServiceAgentRunner {
 
         // Pick up the parent turn's interaction context (set at the `Task`
         // interception in tool_dispatch). When present, the sub-agent runs
-        // under the parent session so its tool permissions follow the active
-        // session's mode (incl. HITL), and progress/cancel are wired to the
-        // parent turn. When absent (internal/system delegations), the sub-agent
-        // stays detached as before.
+        // under a dedicated child session so its transcript is drill-in-able
+        // from the info panel -- mirroring the plan / loop orchestrators.
+        // Tool permissions follow the parent session's mode (incl. HITL), and
+        // progress / cancel are wired to the parent turn. When absent (internal
+        // / system delegations), the sub-agent stays detached as before.
         let interaction = crate::agent_service::delegation_ctx::DELEGATION_INTERACTION_CTX
             .try_with(Clone::clone)
             .ok();
-        let (session_id, session_uuid, progress, cancel) = match interaction {
+
+        // Resolve the child session for this delegation. When an interaction
+        // context is present (Task tool), create a SubAgent child session
+        // under the parent so the delegation is visible in the info panel and
+        // its transcript can be opened as a drill-in sub-chat. The child also
+        // inherits the parent's permission / operation modes so HITL and
+        // "allow all for session" behave identically.
+        let (session_id, session_uuid, progress, cancel, child_session_handle) = match interaction {
             Some(ctx) => {
-                let uuid = Uuid::parse_str(ctx.session_id.as_str()).unwrap_or_else(|_| Uuid::nil());
-                (Some(ctx.session_id), uuid, ctx.progress, ctx.cancel)
+                let parent_id = ctx.session_id.clone();
+
+                let child = self
+                    .container
+                    .session_manager
+                    .create_session(y_core::session::CreateSessionOptions {
+                        parent_id: Some(parent_id.clone()),
+                        session_type: y_core::session::SessionType::SubAgent,
+                        agent_id: Some(y_core::types::AgentId::from_string(&config.agent_name)),
+                        title: Some(config.agent_name.clone()),
+                    })
+                    .await
+                    .map_err(|e| DelegationError::DelegationFailed {
+                        message: format!(
+                            "failed to create sub-agent session for '{}': {e}",
+                            config.agent_name
+                        ),
+                    })?;
+
+                let child_uuid = Uuid::parse_str(child.id.as_str()).unwrap_or_else(|_| Uuid::nil());
+
+                // Inherit the parent's permission / operation modes so the
+                // sub-agent's tool gatekeeper resolves the same overrides the
+                // parent session has (e.g. BypassPermissions, FullAccess).
+                inherit_parent_modes(&self.container, &parent_id, &child.id).await;
+
+                (
+                    Some(child.id.clone()),
+                    child_uuid,
+                    ctx.progress,
+                    ctx.cancel,
+                    Some(ChildSessionHandle {
+                        id: child.id,
+                        user_query: user_content.clone(),
+                    }),
+                )
             }
-            None => (None, Uuid::nil(), None, None),
+            None => (None, Uuid::nil(), None, None, None),
         };
 
         let exec_config = AgentExecutionConfig {
@@ -223,14 +265,50 @@ impl AgentRunner for ServiceAgentRunner {
             inherited_constraints: None,
         };
 
-        let result = AgentService::execute(&self.container, &exec_config, progress, cancel)
-            .await
-            .map_err(|e| DelegationError::DelegationFailed {
-                message: format!(
-                    "AgentService execution failed for agent '{}': {e}",
-                    config.agent_name
-                ),
-            })?;
+        let result = AgentService::execute(&self.container, &exec_config, progress, cancel).await;
+
+        // When running under a child session, persist the transcript so the
+        // drill-in view is populated. The SubagentCompleted broadcast (which
+        // triggers info-panel child-session reload) is already emitted by the
+        // surrounding DiagnosticsAgentDelegator with the parent session's UUID.
+        if let Some(handle) = child_session_handle.as_ref() {
+            match &result {
+                Ok(exec_result) if exec_result.content.is_empty() => {
+                    persist_failed_subagent_turn(
+                        &self.container,
+                        handle,
+                        &AgentExecutionError::LlmError {
+                            message: format!(
+                                "agent '{}' returned empty response",
+                                config.agent_name
+                            ),
+                            provider_error: None,
+                            partial_messages: Vec::new(),
+                        },
+                    )
+                    .await;
+                }
+                Ok(exec_result) => {
+                    crate::chat::ChatService::persist_subagent_turn(
+                        &self.container,
+                        &handle.id,
+                        &handle.user_query,
+                        exec_result,
+                    )
+                    .await;
+                }
+                Err(err) => {
+                    persist_failed_subagent_turn(&self.container, handle, err).await;
+                }
+            }
+        }
+
+        let result = result.map_err(|e| DelegationError::DelegationFailed {
+            message: format!(
+                "AgentService execution failed for agent '{}': {e}",
+                config.agent_name
+            ),
+        })?;
 
         if result.content.is_empty() {
             return Err(DelegationError::DelegationFailed {
@@ -248,5 +326,319 @@ impl AgentRunner for ServiceAgentRunner {
             model_used: result.model,
             duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(0),
         })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Child-session finalisation helpers (Task delegation only)
+// ---------------------------------------------------------------------------
+
+/// Bookkeeping for a child session created for a Task delegation.
+struct ChildSessionHandle {
+    id: y_core::types::SessionId,
+    user_query: String,
+}
+
+/// Copy the parent session's permission and operation modes onto the child so
+/// the sub-agent's tool gatekeeper resolves the same overrides (e.g.
+/// `BypassPermissions`, `FullAccess`) without re-prompting the user.
+async fn inherit_parent_modes(
+    container: &ServiceContainer,
+    parent_id: &y_core::types::SessionId,
+    child_id: &y_core::types::SessionId,
+) {
+    if let Some(mode) =
+        crate::agent_service::tool_dispatch::session_permission_mode(container, parent_id).await
+    {
+        crate::agent_service::tool_dispatch::set_session_permission_mode(container, child_id, mode)
+            .await;
+    }
+    if let Some(mode) =
+        crate::agent_service::tool_dispatch::session_operation_mode(container, parent_id).await
+    {
+        let mut modes = container
+            .session_state
+            .session_operation_modes
+            .write()
+            .await;
+        modes.insert(child_id.clone(), mode);
+    }
+}
+
+/// Persist a failed delegation's partial transcript to the child session so
+/// the drill-in view shows what was accomplished before the error. Mirrors
+/// `persist_partial_subagent_turn` in the plan orchestrator.
+async fn persist_failed_subagent_turn(
+    container: &ServiceContainer,
+    handle: &ChildSessionHandle,
+    error: &AgentExecutionError,
+) {
+    use y_core::types::Role;
+    let user_msg = Message {
+        message_id: y_core::types::generate_message_id(),
+        role: Role::User,
+        content: handle.user_query.clone(),
+        tool_call_id: None,
+        tool_calls: vec![],
+        timestamp: y_core::types::now(),
+        metadata: serde_json::json!({}),
+    };
+    if let Err(e) = container
+        .session_manager
+        .append_message(&handle.id, &user_msg)
+        .await
+    {
+        tracing::warn!(error = %e, session_id = %handle.id, "failed to persist sub-agent prompt on error");
+    }
+
+    let empty: Vec<Message> = Vec::new();
+    let partial_messages: &[Message] = match error {
+        AgentExecutionError::LlmError {
+            partial_messages, ..
+        }
+        | AgentExecutionError::Cancelled {
+            partial_messages, ..
+        } => partial_messages,
+        _ => &empty,
+    };
+
+    if partial_messages.is_empty() {
+        let error_msg = Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: format!(
+                "[Sub-agent execution failed before any output was produced: {error}]"
+            ),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({
+                "error": format!("{error}"),
+                "partial": true,
+            }),
+        };
+        if let Err(e) = container
+            .session_manager
+            .append_message(&handle.id, &error_msg)
+            .await
+        {
+            tracing::warn!(error = %e, session_id = %handle.id, "failed to persist sub-agent error message");
+        }
+        return;
+    }
+
+    for msg in partial_messages {
+        if let Err(e) = container
+            .session_manager
+            .append_message(&handle.id, msg)
+            .await
+        {
+            tracing::warn!(error = %e, session_id = %handle.id, "failed to persist partial sub-agent message");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_service::delegation_ctx::{
+        DelegationInteractionCtx, DELEGATION_INTERACTION_CTX,
+    };
+    use crate::config::ServiceConfig;
+    use crate::container::ServiceContainer;
+    use tempfile::TempDir;
+    use y_core::permission_types::PermissionMode;
+    use y_core::session::{CreateSessionOptions, SessionState, SessionType};
+
+    async fn make_test_container() -> (ServiceContainer, TempDir) {
+        let tmpdir = tempfile::TempDir::new().expect("tempdir");
+        let mut config = ServiceConfig::default();
+        config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: tmpdir.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let container = ServiceContainer::from_config(&config)
+            .await
+            .expect("test container should build");
+        (container, tmpdir)
+    }
+
+    fn make_run_config(agent_name: &str, prompt: &str) -> AgentRunConfig {
+        AgentRunConfig {
+            agent_name: agent_name.to_string(),
+            system_prompt: "You are a helper.".to_string(),
+            input: serde_json::json!({ "task": prompt }),
+            preferred_models: vec![],
+            fallback_models: vec![],
+            provider_tags: vec![],
+            fallback_provider_tags: vec![],
+            temperature: None,
+            max_tokens: None,
+            timeout_secs: 30,
+            allowed_tools: vec![],
+            max_iterations: 1,
+            trust_tier: None,
+            trace_id: None,
+            prune_tool_history: false,
+            response_format: None,
+        }
+    }
+
+    /// A Task delegation (interaction context present) must create a SubAgent
+    /// child session under the parent so the InfoPanel can surface it.
+    #[tokio::test]
+    async fn task_delegation_creates_subagent_child_session() {
+        let (container, _tmp) = make_test_container().await;
+        let container = Arc::new(container);
+
+        // Parent session (the active chat session).
+        let parent = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Parent".into()),
+            })
+            .await
+            .unwrap();
+
+        let runner = ServiceAgentRunner::new(Arc::clone(&container));
+        let config = make_run_config("general-purpose", "do something");
+
+        // Run inside a Task-delegation interaction context.
+        let ctx = DelegationInteractionCtx {
+            session_id: parent.id.clone(),
+            progress: None,
+            cancel: None,
+        };
+        // The run fails (no provider configured), but the child session must
+        // still be created and persisted.
+        let _ = DELEGATION_INTERACTION_CTX
+            .scope(ctx, runner.run(config))
+            .await;
+
+        // A SubAgent child session must exist under the parent.
+        let children = container
+            .session_manager
+            .children(&parent.id)
+            .await
+            .unwrap();
+        let sub = children
+            .iter()
+            .find(|c| c.session_type == SessionType::SubAgent)
+            .expect("a SubAgent child session should be created");
+
+        assert_eq!(sub.parent_id, Some(parent.id.clone()));
+        assert_eq!(sub.state, SessionState::Active);
+        assert_eq!(sub.title.as_deref(), Some("general-purpose"));
+
+        // The child's transcript must contain the user prompt (persisted even
+        // on failure so the drill-in view is not blank).
+        let transcript = container
+            .session_manager
+            .read_transcript(&sub.id)
+            .await
+            .unwrap_or_default();
+        assert!(
+            transcript
+                .iter()
+                .any(|m| m.role == Role::User && m.content.contains("do something")),
+            "child transcript should contain the delegation prompt"
+        );
+    }
+
+    /// A Task delegation must inherit the parent session's permission mode so
+    /// HITL / "allow all for session" applies to the sub-agent's tools.
+    #[tokio::test]
+    async fn task_delegation_inherits_parent_permission_mode() {
+        let (container, _tmp) = make_test_container().await;
+        let container = Arc::new(container);
+
+        let parent = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Parent".into()),
+            })
+            .await
+            .unwrap();
+
+        // Set a bypass-permissions override on the parent session.
+        crate::agent_service::tool_dispatch::set_session_permission_mode(
+            &container,
+            &parent.id,
+            PermissionMode::BypassPermissions,
+        )
+        .await;
+        let runner = ServiceAgentRunner::new(Arc::clone(&container));
+        let config = make_run_config("general-purpose", "task");
+
+        let ctx = DelegationInteractionCtx {
+            session_id: parent.id.clone(),
+            progress: None,
+            cancel: None,
+        };
+        let _ = DELEGATION_INTERACTION_CTX
+            .scope(ctx, runner.run(config))
+            .await;
+
+        let children = container
+            .session_manager
+            .children(&parent.id)
+            .await
+            .unwrap();
+        let sub = children
+            .iter()
+            .find(|c| c.session_type == SessionType::SubAgent)
+            .expect("child session should exist");
+
+        let child_mode =
+            crate::agent_service::tool_dispatch::session_permission_mode(&container, &sub.id).await;
+        assert_eq!(
+            child_mode,
+            Some(PermissionMode::BypassPermissions),
+            "child session should inherit the parent's permission mode"
+        );
+    }
+
+    /// An internal delegation (no interaction context) must NOT create a child
+    /// session -- the detached behaviour is preserved for system agents.
+    #[tokio::test]
+    async fn internal_delegation_does_not_create_child_session() {
+        let (container, _tmp) = make_test_container().await;
+        let container = Arc::new(container);
+
+        let parent = container
+            .session_manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Parent".into()),
+            })
+            .await
+            .unwrap();
+
+        let runner = ServiceAgentRunner::new(Arc::clone(&container));
+        let config = make_run_config("title-generator", "summarise");
+
+        // No DELEGATION_INTERACTION_CTX scope -- simulates an internal call.
+        let _ = runner.run(config).await;
+
+        let children = container
+            .session_manager
+            .children(&parent.id)
+            .await
+            .unwrap();
+        assert!(
+            children.is_empty(),
+            "internal delegation must not create a child session"
+        );
     }
 }
