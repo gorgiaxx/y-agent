@@ -43,22 +43,21 @@ export function SessionItem({
       onMouseMove={onMouseMove}
       onContextMenu={onContextMenu}
     >
-      {isStreaming ? (
-        <span className="session-item-activity" aria-hidden="true" />
-      ) : isPinned || onPinToggle ? (
-        <button
-          className={`session-item-pin${isPinned ? ' session-item-pin--pinned' : ''}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onPinToggle?.(e);
-          }}
-          aria-label={isPinned ? 'Unpin session' : 'Pin session'}
-        >
-          <Pin size={12} />
-        </button>
-      ) : (
-        <span className="session-item-leading-placeholder" aria-hidden="true" />
-      )}
+      <span className="session-item-leading">
+        {isStreaming && <span className="session-item-activity" aria-hidden="true" />}
+        {(isPinned || onPinToggle) && (
+          <button
+            className={`session-item-pin${isPinned ? ' session-item-pin--pinned' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPinToggle?.(e);
+            }}
+            aria-label={isPinned ? 'Unpin session' : 'Pin session'}
+          >
+            <Pin size={12} />
+          </button>
+        )}
+      </span>
 
       <div className="session-item-content">
         <div className="session-item-title">

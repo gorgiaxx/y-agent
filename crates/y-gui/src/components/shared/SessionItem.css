@@ -27,6 +27,34 @@
   border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
 }
 
+.session-item-leading {
+  position: relative;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.session-item-activity,
+.session-item-pin {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* When both the activity indicator and the pin button are present (streaming),
+   the activity indicator shows by default and yields to the pin button on
+   hover, so the session stays pinnable mid-run. A pinned session always shows
+   the pin icon instead of the activity dot (streaming is still conveyed by the
+   border + "now" time label). */
+.session-item:hover .session-item-activity,
+.session-item-leading:has(.session-item-pin--pinned) .session-item-activity {
+  opacity: 0;
+}
 .session-item-activity {
   flex-shrink: 0;
   width: 12px;
@@ -36,6 +64,7 @@
   background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
   animation: busyDotBreathe 1.8s ease-in-out infinite;
+  transition: opacity 0.12s;
 }
 
 .session-item-leading-placeholder {
@@ -44,17 +73,11 @@
 
 /* Pin button */
 .session-item-pin {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
   background: none;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
   padding: 0;
-  flex-shrink: 0;
   border-radius: var(--radius-sm);
   opacity: 0;
   transition: opacity 0.12s, color 0.12s;
