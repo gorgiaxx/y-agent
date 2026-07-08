@@ -246,6 +246,14 @@ export function ChatView() {
     onReject: handlePlanReviewReject,
   }), [pendingReviewIds, handlePlanReviewApprove, handlePlanReviewRevise, handlePlanReviewReject]);
 
+  // A sub-agent child session (drilled-in from the info panel) is managed by
+  // its parent's orchestrator, not by `chat_resend`. Showing a Retry button
+  // there would truncate the child transcript and destroy the assistant's
+  // accumulated work. Retry is only safe on user-facing sessions (main/branch).
+  const isUserSession = sessionHooks.sessions.some(
+    (s) => s.id === sessionHooks.activeSessionId,
+  );
+
   return (
     <PlanReviewProvider value={planReviewContextValue}>
       {!viewRouting.inputExpanded && sessionHooks.activeSessionId && (
@@ -258,7 +266,7 @@ export function ChatView() {
             onEditMessage={handleEditMessage}
             onUndoMessage={handleUndoMessage}
             onResendMessage={handleResendMessage}
-            onRetryTurn={handleRetryTurn}
+            onRetryTurn={isUserSession ? handleRetryTurn : undefined}
             onForkMessage={handleForkMessage}
             onRestoreBranch={handleRestoreBranch}
             toolResults={chatHooks.toolResults}

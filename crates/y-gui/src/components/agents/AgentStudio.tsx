@@ -44,7 +44,7 @@ interface AgentStudioProps {
   onEditMessage: (content: string, messageId: string) => void;
   onUndoMessage: (messageId: string) => void;
   onResendMessage: (content: string, messageId: string) => void;
-  onRetryTurn: (content: string, messageId: string) => void;
+  onRetryTurn?: (content: string, messageId: string) => void;
   onRestoreBranch: (checkpointId: string) => void;
   onForkMessage: (messageIndex: number) => void;
   // InputArea callbacks

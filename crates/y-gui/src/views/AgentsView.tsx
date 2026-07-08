@@ -234,6 +234,14 @@ export function AgentsView() {
     sessionHooks.activeSessionId,
   );
 
+  // A sub-agent child session (drilled-in from the info panel) is managed by
+  // its parent's orchestrator, not by `chat_resend`. Showing a Retry button
+  // there would truncate the child transcript and destroy the assistant's
+  // accumulated work. Retry is only safe on user-facing sessions (main/branch).
+  const isAgentUserSession = agentSessions.some(
+    (s) => s.id === sessionHooks.activeSessionId,
+  );
+
   const chatHandlers = useChatHandlers({
     session: {
       activeSessionId: sessionHooks.activeSessionId,
@@ -407,7 +415,7 @@ export function AgentsView() {
                   onEditMessage={chatHandlers.handleEditMessage}
                   onUndoMessage={chatHandlers.handleUndoMessage}
                   onResendMessage={chatHandlers.handleResendMessage}
-                  onRetryTurn={chatHandlers.handleRetryTurn}
+                  onRetryTurn={isAgentUserSession ? chatHandlers.handleRetryTurn : undefined}
                   onRestoreBranch={chatHandlers.handleRestoreBranch}
                   provider={{
                     providers: providerHooks.providers,
