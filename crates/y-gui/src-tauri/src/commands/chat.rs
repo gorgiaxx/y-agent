@@ -38,10 +38,20 @@ pub struct ChatStarted {
 }
 
 /// Payload emitted on `chat:started` for `run_id` -> `session_id` mapping.
+///
+/// `kind` distinguishes the run source: `"chat"` for a normal LLM turn,
+/// `"plan_resume"` for a background plan-execution retry (no new assistant
+/// bubble should be created).
 #[derive(Debug, Serialize, Clone)]
 pub struct ChatStartedPayload {
     pub run_id: String,
     pub session_id: String,
+    #[serde(skip_serializing_if = "is_default_chat_kind")]
+    pub kind: String,
+}
+
+fn is_default_chat_kind(kind: &str) -> bool {
+    kind == "chat"
 }
 
 /// Payload emitted on `chat:complete`.
@@ -218,6 +228,7 @@ pub async fn chat_send(
         ChatStartedPayload {
             run_id: run_id.clone(),
             session_id: sid.0.clone(),
+            kind: "chat".to_string(),
         },
     );
 
@@ -260,6 +271,7 @@ impl EventSink for TauriEventSink {
             ChatStartedPayload {
                 run_id: run_id.to_owned(),
                 session_id: session_id.to_owned(),
+                kind: "chat".to_string(),
             },
         );
     }
@@ -805,6 +817,7 @@ pub async fn chat_resend(
         ChatStartedPayload {
             run_id: run_id.clone(),
             session_id: session_id.clone(),
+            kind: "chat".to_string(),
         },
     );
 
@@ -1316,6 +1329,7 @@ pub async fn resume_plan_execution(
         ChatStartedPayload {
             run_id: run_id.clone(),
             session_id: session_id.clone(),
+            kind: "plan_resume".to_string(),
         },
     );
 

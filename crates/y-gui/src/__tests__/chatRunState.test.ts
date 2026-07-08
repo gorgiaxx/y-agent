@@ -8,6 +8,8 @@ import {
   createChatRunState,
   getPendingRunIdForSession,
   hasPendingRunForSession,
+  isPlanResumeRun,
+  markSubSessionStreaming,
 } from '../hooks/chatRunState';
 
 describe('chatRunState', () => {
@@ -89,4 +91,65 @@ describe('chatRunState', () => {
     expect(state.runToSession['run-1']).toBeUndefined();
     expect(resolvedBefore).toBe('session-1');
   });
-});
+
+  it('marks a child session as streaming so the drill-in sub-chat shows running', () => {
+    let state = createChatRunState();
+    state = applyRunStarted(state, 'run-1', 'parent-1');
+    state = markSubSessionStreaming(state, 'child-1');
+
+    expect(state.streamingSessions.has('child-1')).toBe(true);
+    expect(state.streamingChildSessions.has('child-1')).toBe(true);
+    expect(state.streamingSessions.has('parent-1')).toBe(true);
+  });
+
+  it('cleans up child sessions from streaming when the parent run ends', () => {
+    let state = createChatRunState();
+    state = applyRunStarted(state, 'run-1', 'parent-1');
+    state = markSubSessionStreaming(state, 'child-1');
+    state = markSubSessionStreaming(state, 'child-2');
+
+    expect(state.streamingSessions.has('child-1')).toBe(true);
+    expect(state.streamingSessions.has('child-2')).toBe(true);
+
+    state = applyRunTerminal(state, 'run-1', 'parent-1');
+
+    expect(state.streamingSessions.has('parent-1')).toBe(false);
+    expect(state.streamingSessions.has('child-1')).toBe(false);
+    expect(state.streamingSessions.has('child-2')).toBe(false);
+    expect(state.streamingChildSessions.size).toBe(0);
+  });
+
+  it('does not clear child sessions if the parent still has pending runs', () => {
+    let state = createChatRunState();
+    state = applyRunStarted(state, 'run-1', 'parent-1');
+    state = applyRunStarted(state, 'run-2', 'parent-1');
+    state = markSubSessionStreaming(state, 'child-1');
+
+    state = applyRunTerminal(state, 'run-1', 'parent-1');
+
+    expect(state.streamingSessions.has('parent-1')).toBe(true);
+    expect(state.streamingSessions.has('child-1')).toBe(true);
+  });
+
+  it('tracks plan_resume kind so callers can distinguish background retries', () => {
+    let state = createChatRunState();
+    state = applyRunStarted(state, 'run-chat', 'session-1', 'chat');
+    state = applyRunStarted(state, 'run-resume', 'session-1', 'plan_resume');
+
+    expect(isPlanResumeRun(state, 'run-chat')).toBe(false);
+    expect(isPlanResumeRun(state, 'run-resume')).toBe(true);
+    // Absent kind defaults to chat (not plan_resume).
+    state = applyRunStarted(state, 'run-plain', 'session-1');
+    expect(isPlanResumeRun(state, 'run-plain')).toBe(false);
+  });
+
+  it('clears runKinds entry when the run terminates', () => {
+    let state = createChatRunState();
+    state = applyRunStarted(state, 'run-resume', 'session-1', 'plan_resume');
+    expect(isPlanResumeRun(state, 'run-resume')).toBe(true);
+
+    state = applyRunTerminal(state, 'run-resume', 'session-1');
+    expect(isPlanResumeRun(state, 'run-resume')).toBe(false);
+    expect(state.runKinds['run-resume']).toBeUndefined();
+  });
+ });

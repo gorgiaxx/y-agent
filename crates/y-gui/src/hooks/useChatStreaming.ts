@@ -21,6 +21,8 @@ import { CHAT_STUCK_TIMEOUT_MS, hasSessionActivityTimedOut } from './chatActivit
 import {
   hasAwaitingInteractionForSession,
   hasPendingRunForSession,
+  getPendingRunIdForSession,
+  isPlanResumeRun,
 } from './chatRunState';
 import {
   getCachedMessages,
@@ -111,44 +113,64 @@ export function useChatStreaming(
     setStreamingSessionIds(new Set(chatBusState.streamingSessions));
 
     const handler: ChatBusSubscriber = (event) => {
+      // Sync React state when a child (sub-agent) session starts streaming.
+      // `markSubSessionStreaming` (in chatBus.ts) already mutated the bus
+      // state before this subscriber runs; we just need to reflect it in the
+      // React `streamingSessionIds` so the drill-in sub-chat's input area
+      // shows the running state.
+      if ('sub_session' in event && event.sub_session && event.session_id) {
+        setStreamingSessionIds((prev) =>
+          prev.has(event.session_id)
+            ? prev
+            : new Set(chatBusState.streamingSessions),
+        );
+      }
       if (event.type === 'started') {
         markSessionActivity(event.session_id);
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
 
-        // Defensive: finalize any stale streaming message left by a previous
-        // run whose terminal event failed to resolve the session (e.g.,
-        // chat_cancel emitting session_id="").
-        const staleStreamingId = streamingAssistantMessageId(event.session_id);
-        const cachedMsgs = getCachedMessages(
-          refs.sessionMessagesRef.current,
-          event.session_id,
-        );
-        if (cachedMsgs.some((m) => m.id === staleStreamingId)) {
-          const prevRunId = activeRunIdRef.current;
-          setCachedMessages(
+        // plan_resume runs are background plan-execution retries. They must
+        // NOT create a new assistant bubble, clear existing tool results, or
+        // displace the current streaming message. The Plan tool-result events
+        // arriving on this run update the existing Plan card in-place.
+        const isPlanResume = event.kind === 'plan_resume';
+
+        if (!isPlanResume) {
+          // Defensive: finalize any stale streaming message left by a previous
+          // run whose terminal event failed to resolve the session (e.g.,
+          // chat_cancel emitting session_id="").
+          const staleStreamingId = streamingAssistantMessageId(event.session_id);
+          const cachedMsgs = getCachedMessages(
             refs.sessionMessagesRef.current,
             event.session_id,
-            (prev) => finalizeStreamingAssistantMessage(
-              prev,
-              event.session_id,
-              `orphaned-${prevRunId || Date.now()}`,
-              refs.toolResultsRef.current.get(event.session_id),
-              undefined,
-              refs.streamSegsRef.current.get(event.session_id),
-            ),
           );
-          syncVisible(event.session_id);
-        }
+          if (cachedMsgs.some((m) => m.id === staleStreamingId)) {
+            const prevRunId = activeRunIdRef.current;
+            setCachedMessages(
+              refs.sessionMessagesRef.current,
+              event.session_id,
+              (prev) => finalizeStreamingAssistantMessage(
+                prev,
+                event.session_id,
+                `orphaned-${prevRunId || Date.now()}`,
+                refs.toolResultsRef.current.get(event.session_id),
+                undefined,
+                refs.streamSegsRef.current.get(event.session_id),
+              ),
+            );
+            syncVisible(event.session_id);
+          }
 
-        activeRunIdRef.current = event.run_id;
-        setActiveRunId(event.run_id);
-        // Clear tool results and stream segments for the new run.
-        refs.toolResultsRef.current.set(event.session_id, []);
-        refs.streamSegsRef.current.set(event.session_id, []);
-        if (event.session_id === refs.activeSessionIdRef.current) {
-          setVisibleToolResults([]);
+          activeRunIdRef.current = event.run_id;
+          setActiveRunId(event.run_id);
+          // Clear tool results and stream segments for the new run.
+          refs.toolResultsRef.current.set(event.session_id, []);
+          refs.streamSegsRef.current.set(event.session_id, []);
+          if (event.session_id === refs.activeSessionIdRef.current) {
+            setVisibleToolResults([]);
+          }
         }
-        logger.debug('[chat] run started, run_id =', event.run_id, 'session =', event.session_id);
+        logger.debug('[chat] run started, run_id =', event.run_id, 'session =', event.session_id, 'kind =', event.kind);
       } else if (event.type === 'awaiting_interaction') {
         markSessionActivity(event.session_id);
         setStreamingSessionIds(new Set(chatBusState.streamingSessions));
@@ -321,9 +343,14 @@ export function useChatStreaming(
         const preparedSegs = completeStreamingReasoningSegments(segs);
         const nextSegments = upsertToolResultSegment(preparedSegs, record);
         refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
-        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
-          ensureStreamingAssistantMessage(prev, sid),
-        );
+        // During a plan_resume run, tool events update the existing Plan card
+        // in-place; do NOT create a streaming assistant bubble.
+        const pendingRunId = getPendingRunIdForSession(chatBusState, sid);
+        if (!pendingRunId || !isPlanResumeRun(chatBusState, pendingRunId)) {
+          setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
+            ensureStreamingAssistantMessage(prev, sid),
+          );
+        }
         setStreamSegsVersion((v) => v + 1);
         syncVisible(sid);
       } else if (event.type === 'complete') {
@@ -341,9 +368,24 @@ export function useChatStreaming(
         logger.debug(
           `[chat] complete: run_id=${payload.run_id}, session=${sessionId}, opStatus=${refs.opStatusRef.current}`,
         );
-
         if (sessionStillActive) {
           setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+          return;
+        }
+
+        // plan_resume: no assistant bubble was created, so skip the message
+        // reload and tool-result cleanup. The Plan card was already updated
+        // in-place by the tool_result events on this run. Only reflect the
+        // streaming-state change.
+        if (isPlanResumeRun(chatBusState, payload.run_id)) {
+          setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+          if (refs.activeSessionIdRef.current === sessionId) {
+            // Refresh persisted plan runs so the InfoPanel's plan card shows
+            // the final status after the retry.
+            startTransition(() => {
+              setVisibleMessages((prev) => [...prev]);
+            });
+          }
           return;
         }
 
@@ -526,6 +568,13 @@ export function useChatStreaming(
           return;
         }
 
+        // plan_resume: no assistant bubble to finalize; just reflect streaming
+        // state and return. The Plan card retains its last-known status.
+        if (isPlanResumeRun(chatBusState, payload.run_id)) {
+          setStreamingSessionIds(new Set(chatBusState.streamingSessions));
+          return;
+        }
+
         // Deduplicate cancel events.
         if (isCancelled && processedCancelledRuns.has(payload.run_id)) {
           setStreamingSessionIds(new Set(chatBusState.streamingSessions));
@@ -689,9 +738,14 @@ export function useChatStreaming(
         const preparedSegs = completeStreamingReasoningSegments(segs);
         const nextSegments = upsertToolResultSegment(preparedSegs, record);
         refs.streamSegsRef.current.set(sid, capSegments(nextSegments.segments));
-        setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
-          ensureStreamingAssistantMessage(prev, sid),
-        );
+        // During a plan_resume run, tool events update the existing Plan card
+        // in-place; do NOT create a streaming assistant bubble.
+        const pendingRunId = getPendingRunIdForSession(chatBusState, sid);
+        if (!pendingRunId || !isPlanResumeRun(chatBusState, pendingRunId)) {
+          setCachedMessages(refs.sessionMessagesRef.current, sid, (prev) =>
+            ensureStreamingAssistantMessage(prev, sid),
+          );
+        }
         setStreamSegsVersion((v) => v + 1);
         syncVisible(sid);
       } else if (event.type === 'heartbeat') {

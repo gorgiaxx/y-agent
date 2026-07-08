@@ -23,23 +23,20 @@ import {
   applyRunStarted,
   applyRunTerminal,
   createChatRunState,
+  markSubSessionStreaming,
+  type ChatRunState,
 } from './chatRunState';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ChatBusState {
-  runToSession: Record<string, string>;
-  streamingSessions: Set<string>;
-  pendingRuns: Set<string>;
-  awaitingInteractionRuns: Set<string>;
-}
+export type ChatBusState = ChatRunState;
 
 export type ChatBusSubscriber = (event: ChatBusEvent) => void;
 
 export type ChatBusEvent =
-  | { type: 'started'; run_id: string; session_id: string }
+  | { type: 'started'; run_id: string; session_id: string; kind?: string }
   | { type: 'awaiting_interaction'; run_id: string; session_id: string }
   | { type: 'interaction_resolved'; run_id: string; session_id: string }
   | { type: 'complete'; payload: ChatCompletePayload }
@@ -113,9 +110,9 @@ async function initialiseChatBus() {
   chatBusInitialised = true;
 
   const u0 = await transport.listen<ChatStartedPayload>('chat:started', (e) => {
-    const { run_id, session_id } = e.payload;
-    Object.assign(chatBusState, applyRunStarted(chatBusState, run_id, session_id));
-    notifyChatSubscribers({ type: 'started', run_id, session_id });
+    const { run_id, session_id, kind } = e.payload;
+    Object.assign(chatBusState, applyRunStarted(chatBusState, run_id, session_id, kind));
+    notifyChatSubscribers({ type: 'started', run_id, session_id, kind });
   });
   chatUnlistenFns.push(u0);
 
@@ -158,6 +155,11 @@ async function initialiseChatBus() {
     // sub-agents reuse the parent session id, so they are NOT sub-sessions and
     // remain subject to the main-chat agent filter.
     const subSession = isSubSessionEvent(childSession, parentSession);
+    // Mark the child session as streaming so the drill-in sub-chat's input
+    // area reflects the running state. Cleaned up when the parent run ends.
+    if (subSession && contentSession) {
+      Object.assign(chatBusState, markSubSessionStreaming(chatBusState, contentSession));
+    }
     if (
       event.type === 'user_interaction_request'
       || event.type === 'permission_request'

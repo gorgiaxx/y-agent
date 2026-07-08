@@ -27,7 +27,15 @@ use crate::state::AppState;
 #[serde(tag = "type", content = "data")]
 pub enum SseEvent {
     /// `chat:started` -- maps `run_id` to `session_id`.
-    ChatStarted { run_id: String, session_id: String },
+    ///
+    /// `kind` distinguishes the run source: `chat` for a normal LLM turn,
+    /// `plan_resume` for a background plan-execution retry.
+    ChatStarted {
+        run_id: String,
+        session_id: String,
+        #[serde(skip_serializing_if = "is_default_chat_kind")]
+        kind: String,
+    },
     /// `chat:progress` -- real-time turn diagnostics.
     ChatProgress {
         run_id: String,
@@ -91,6 +99,10 @@ pub enum SseEvent {
     },
     /// `kb:entry_ingested` -- after each successfully ingested file.
     KbEntryIngested(serde_json::Value),
+}
+
+fn is_default_chat_kind(kind: &str) -> bool {
+    kind == "chat"
 }
 
 impl SseEvent {

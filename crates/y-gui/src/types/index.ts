@@ -81,6 +81,8 @@ export interface ToolCallBrief {
 export interface ChatStarted {
   session_id: string;
   run_id: string;
+  /** Run source: `chat` (normal LLM turn) or `plan_resume` (background plan retry). */
+  kind?: string;
 }
 
 /** Payload from the `chat:started` Tauri event (identical to ChatStarted). */

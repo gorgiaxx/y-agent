@@ -3,6 +3,15 @@ export interface ChatRunState {
   streamingSessions: Set<string>;
   pendingRuns: Set<string>;
   awaitingInteractionRuns: Set<string>;
+  /** Child (sub-agent) session ids that received streaming events during an
+   *  active parent run. Tracked separately so they can be cleaned up from
+   *  `streamingSessions` when the parent run terminates (the parent is the
+   *  only entry `applyRunTerminal` knows about from `runToSession`). */
+  streamingChildSessions: Set<string>;
+  /** Run kind per run_id: `chat` (normal LLM turn) or `plan_resume`
+   *  (background plan-execution retry that must not create a new assistant
+   *  bubble). Absent == `chat`. */
+  runKinds: Record<string, string>;
 }
 
 export function createChatRunState(): ChatRunState {
@@ -11,6 +20,8 @@ export function createChatRunState(): ChatRunState {
     streamingSessions: new Set(),
     pendingRuns: new Set(),
     awaitingInteractionRuns: new Set(),
+    streamingChildSessions: new Set(),
+    runKinds: {},
   };
 }
 
@@ -51,6 +62,7 @@ export function applyRunStarted(
   state: ChatRunState,
   runId: string,
   sessionId: string,
+  kind?: string,
 ): ChatRunState {
   const pendingRuns = new Set(state.pendingRuns);
   pendingRuns.add(runId);
@@ -61,6 +73,10 @@ export function applyRunStarted(
   const streamingSessions = new Set(state.streamingSessions);
   streamingSessions.add(sessionId);
 
+  const runKinds = kind && kind !== 'chat'
+    ? { ...state.runKinds, [runId]: kind }
+    : state.runKinds;
+
   return {
     runToSession: {
       ...state.runToSession,
@@ -69,6 +85,34 @@ export function applyRunStarted(
     pendingRuns,
     streamingSessions,
     awaitingInteractionRuns,
+    streamingChildSessions: state.streamingChildSessions,
+    runKinds,
+  };
+}
+
+/// Whether `runId` is a background plan-execution retry (`plan_resume`).
+/// Such runs update the existing Plan card in-place without creating a new
+/// assistant bubble or reloading messages on completion.
+export function isPlanResumeRun(state: ChatRunState, runId: string): boolean {
+  return state.runKinds[runId] === 'plan_resume';
+}
+
+/// Mark a child (sub-agent) session as actively streaming so the drill-in
+/// sub-chat's input area reflects the running state. Called when a sub-session
+/// streaming event arrives during a parent run.
+export function markSubSessionStreaming(
+  state: ChatRunState,
+  childSessionId: string,
+): ChatRunState {
+  if (state.streamingSessions.has(childSessionId)) return state;
+  const streamingSessions = new Set(state.streamingSessions);
+  streamingSessions.add(childSessionId);
+  const streamingChildSessions = new Set(state.streamingChildSessions);
+  streamingChildSessions.add(childSessionId);
+  return {
+    ...state,
+    streamingSessions,
+    streamingChildSessions,
   };
 }
 
@@ -95,15 +139,33 @@ export function applyRunTerminal(
     }
   }
 
+  // When the parent session stops streaming (no remaining pending runs for
+  // it), clear all child sessions that were streaming under it. They cannot
+  // outlive the parent run.
+  if (sessionId && !streamingSessions.has(sessionId)) {
+    for (const childId of state.streamingChildSessions) {
+      streamingSessions.delete(childId);
+    }
+  }
+
   const remainingRunToSession = Object.fromEntries(
     Object.entries(state.runToSession).filter(([key]) => key !== runId),
   );
+
+  const streamingChildSessions = streamingSessions.has(sessionId ?? '')
+    ? state.streamingChildSessions
+    : new Set<string>();
+
+  const remainingRunKinds = { ...state.runKinds };
+  delete remainingRunKinds[runId];
 
   return {
     runToSession: remainingRunToSession,
     pendingRuns,
     streamingSessions,
     awaitingInteractionRuns,
+    streamingChildSessions,
+    runKinds: remainingRunKinds,
   };
 }
 
@@ -129,6 +191,8 @@ export function applyAwaitingInteraction(
     pendingRuns,
     streamingSessions,
     awaitingInteractionRuns,
+    streamingChildSessions: state.streamingChildSessions,
+    runKinds: state.runKinds,
   };
 }
 

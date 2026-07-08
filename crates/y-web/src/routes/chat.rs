@@ -57,10 +57,19 @@ pub struct ChatRequest {
 }
 
 /// Returned when an async chat turn is started.
+///
+/// `kind` distinguishes the run source: `chat` for a normal LLM turn,
+/// `plan_resume` for a background plan-execution retry.
 #[derive(Debug, Serialize)]
 pub struct ChatStarted {
     pub session_id: String,
     pub run_id: String,
+    #[serde(skip_serializing_if = "is_default_chat_kind")]
+    pub kind: String,
+}
+
+fn is_default_chat_kind(kind: &str) -> bool {
+    kind == "chat"
 }
 
 /// Synchronous chat response (kept for API compatibility).
@@ -188,6 +197,7 @@ impl EventSink for SseEventSink {
         let _ = self.0.send(SseEvent::ChatStarted {
             run_id: run_id.to_owned(),
             session_id: session_id.to_owned(),
+            kind: "chat".to_string(),
         });
     }
 
@@ -396,6 +406,7 @@ async fn chat_send(
     let _ = state.event_tx.send(SseEvent::ChatStarted {
         run_id: run_id.clone(),
         session_id: result_sid.clone(),
+        kind: "chat".to_string(),
     });
 
     // Register cancellation token.
@@ -418,6 +429,7 @@ async fn chat_send(
     Ok(Json(ChatStarted {
         session_id: result_sid,
         run_id: result_run_id,
+        kind: "chat".to_string(),
     }))
 }
 
@@ -434,6 +446,7 @@ async fn resume_plan(
     let _ = state.event_tx.send(SseEvent::ChatStarted {
         run_id: run_id.clone(),
         session_id: result_sid.clone(),
+        kind: "plan_resume".to_string(),
     });
 
     let cancel_token = CancellationToken::new();
@@ -499,6 +512,7 @@ async fn resume_plan(
     Ok(Json(ChatStarted {
         session_id: result_sid,
         run_id: result_run_id,
+        kind: "plan_resume".to_string(),
     }))
 }
 
@@ -601,6 +615,7 @@ async fn chat_resend(
     let _ = state.event_tx.send(SseEvent::ChatStarted {
         run_id: run_id.clone(),
         session_id: result_sid.clone(),
+        kind: "chat".to_string(),
     });
 
     let cancel_token = CancellationToken::new();
@@ -626,6 +641,7 @@ async fn chat_resend(
     Ok(Json(ChatStarted {
         session_id: result_sid,
         run_id: result_run_id,
+        kind: "chat".to_string(),
     }))
 }
 
