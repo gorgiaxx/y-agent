@@ -22,6 +22,7 @@ import {
   Share2,
   ThumbsUp,
   ThumbsDown,
+  GitBranch,
 } from 'lucide-react';
 import type { Message } from '../../../types';
 import { escapeThinkTags, extractThinkTags } from './messageUtils';
@@ -127,10 +128,14 @@ export interface ActionBarProps {
   content: string;
   /** Session ID for future feedback submission. */
   sessionId?: string;
+  /** Fork the conversation at this message index. */
+  onFork?: (messageIndex: number) => void;
+  /** 0-based index of this message in the display list (used for forking). */
+  messageIndex?: number;
 }
 
 /** Action bar shown on hover for assistant / system messages. */
-export function ActionBar({ content }: ActionBarProps) {
+export function ActionBar({ content, onFork, messageIndex }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
 
@@ -150,6 +155,12 @@ export function ActionBar({ content }: ActionBarProps) {
     }
   }, [content]);
 
+  const handleFork = useCallback(() => {
+    if (onFork && messageIndex !== undefined) {
+      onFork(messageIndex);
+    }
+  }, [onFork, messageIndex]);
+
   return (
     <div className="message-actions">
       <button className="action-btn" onClick={handleCopy} title="Copy message">
@@ -161,6 +172,13 @@ export function ActionBar({ content }: ActionBarProps) {
         <Share2 size={14} />
         <span className="action-label">Share</span>
       </button>
+
+      {onFork && messageIndex !== undefined && (
+        <button className="action-btn" onClick={handleFork} title="Fork conversation from here" aria-label="Fork conversation from here">
+          <GitBranch size={14} />
+          <span className="action-label">Fork</span>
+        </button>
+      )}
 
       <span className="action-divider" />
 
@@ -194,12 +212,18 @@ export function ActionBar({ content }: ActionBarProps) {
 export function AssistantMessageShell({
   message,
   copyContent,
+  onFork,
+  messageIndex,
   children,
 }: {
   message: Message;
   /** Text to copy when the user clicks the copy button.
    *  When omitted, falls back to strippedContent of message.content. */
   copyContent?: string;
+  /** Fork the conversation at this message index (assistant messages only). */
+  onFork?: (messageIndex: number) => void;
+  /** 0-based index of this message in the display list (used for forking). */
+  messageIndex?: number;
   children: React.ReactNode;
 }) {
   const isSystem = message.role === 'system';
@@ -226,7 +250,7 @@ export function AssistantMessageShell({
 
         {children}
 
-        <ActionBar content={effectiveCopyContent} />
+        <ActionBar content={effectiveCopyContent} onFork={onFork} messageIndex={messageIndex} />
 
         <div className="message-footer">
           <span className="message-time">

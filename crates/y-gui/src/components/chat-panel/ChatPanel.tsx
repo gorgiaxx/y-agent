@@ -80,8 +80,17 @@ function buildDisplayItems(
   error: string | null,
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
+  // The global `error` state and the message's `stream_error` may differ in
+  // their string representation: the chat:error event wraps the raw message in
+  // `TurnError::LlmError` (`"LLM error: {msg}"`), while the backend persists
+  // the raw `message` as `stream_error`. Check containment both ways so the
+  // error is not rendered twice (once in the bubble, once as a banner).
   const errorAlreadyRenderedInMessage = error
-    ? messages.some((message) => message.metadata?.stream_error === error)
+    ? messages.some((message) => {
+      const se = message.metadata?.stream_error;
+      if (typeof se !== 'string' || se.length === 0) return false;
+      return se === error || error.includes(se) || se.includes(error);
+    })
     : false;
 
   const segmentMap = new Map<number, TombstonedSegment>();
@@ -449,11 +458,9 @@ function ChatPanelInner({
           return (
             <UserBubble
               message={item.msg}
-              messageIndex={item.msgIdx >= 0 ? item.msgIdx : undefined}
               onEdit={(content) => onEditMessage?.(content, item.msg.id)}
               onUndo={onUndoMessage}
               onResend={(content) => onResendMessage?.(content, item.msg.id)}
-              onFork={onForkMessage}
               disabled={isStreaming}
             />
           );
@@ -461,8 +468,10 @@ function ChatPanelInner({
         return (
           <AssistantBubble
             message={item.msg}
+            messageIndex={item.msgIdx >= 0 ? item.msgIdx : undefined}
             toolResults={item.toolResults}
             getStreamSegments={getStreamSegments}
+            onFork={onForkMessage}
             onRetry={
               onRetryTurn
               && typeof item.msg.metadata?.stream_error === 'string'

@@ -23,15 +23,19 @@ export interface AssistantBubbleProps {
   getStreamSegments?: () => InterleavedSegment[] | null;
   /** Retry the turn that produced this errored reply (static/history messages only). */
   onRetry?: () => void;
+  /** Fork the conversation at this message index (static/history messages only). */
+  onFork?: (messageIndex: number) => void;
+  /** 0-based index of this message in the display list (used for forking). */
+  messageIndex?: number;
 }
 
 
 export const AssistantBubble = memo(function AssistantBubble(
-  { message, toolResults, getStreamSegments, onRetry }: AssistantBubbleProps,
+  { message, toolResults, getStreamSegments, onRetry, onFork, messageIndex }: AssistantBubbleProps,
 ) {
   if (isLiveStreamingAssistantMessage(message)) {
     const streamSegments = getStreamSegments?.() ?? null;
     return <StreamingBubble message={message} toolResults={toolResults} streamSegments={streamSegments} />;
   }
-  return <StaticBubble message={message} onRetry={onRetry} />;
+  return <StaticBubble message={message} onRetry={onRetry} onFork={onFork} messageIndex={messageIndex} />;
 });

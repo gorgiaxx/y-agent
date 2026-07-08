@@ -34,10 +34,14 @@ export interface StaticBubbleProps {
   message: Message;
   /** Retry the turn that produced this errored reply (provider errors only). */
   onRetry?: () => void;
+  /** Fork the conversation at this message index. */
+  onFork?: (messageIndex: number) => void;
+  /** 0-based index of this message in the display list (used for forking). */
+  messageIndex?: number;
 }
 
 
-export const StaticBubble = memo(function StaticBubble({ message, onRetry }: StaticBubbleProps) {
+export const StaticBubble = memo(function StaticBubble({ message, onRetry, onFork, messageIndex }: StaticBubbleProps) {
   const effectiveContent = message.content;
   const generatedImages = useMemo(
     () => extractGeneratedImages(message.metadata),
@@ -144,7 +148,7 @@ export const StaticBubble = memo(function StaticBubble({ message, onRetry }: Sta
   }, [message.metadata, historySegments, streamResult, effectiveContent]);
 
   return (
-    <AssistantMessageShell message={message} copyContent={copyContent}>
+    <AssistantMessageShell message={message} copyContent={copyContent} onFork={onFork} messageIndex={messageIndex}>
       {streamResult ? (
         /* Path 1: XML-parsed segments */
         <div className="message-content">
