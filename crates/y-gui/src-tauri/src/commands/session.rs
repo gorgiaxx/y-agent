@@ -130,6 +130,9 @@ pub struct ChildSessionInfo {
     pub agent_id: Option<String>,
     pub message_count: usize,
     pub created_at: String,
+    /// Last update time (RFC 3339). For a finished sub-agent this is the
+    /// completion time — set when the final transcript message is persisted.
+    pub updated_at: String,
 }
 
 /// List a session's direct child sessions (sub-agents), oldest first.
@@ -151,7 +154,7 @@ pub async fn session_list_children(
 
     Ok(children
         .into_iter()
-        .filter(|c| c.state == SessionState::Active)
+        .filter(|c| c.state == SessionState::Active && c.session_type.is_sub_agent())
         .map(|c| ChildSessionInfo {
             id: c.id.0,
             title: c.title,
@@ -159,6 +162,7 @@ pub async fn session_list_children(
             agent_id: c.agent_id.map(|a| a.0),
             message_count: c.message_count as usize,
             created_at: c.created_at.to_rfc3339(),
+            updated_at: c.updated_at.to_rfc3339(),
         })
         .collect())
 }

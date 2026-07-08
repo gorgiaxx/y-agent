@@ -563,6 +563,25 @@
   white-space: nowrap;
 }
 
+.info-subagent-status {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.info-subagent-status.status-running {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.info-subagent-status.status-completed {
+  background: rgba(111, 207, 151, 0.10);
+  color: var(--success);
+}
+
 .info-subagent-chevron {
   color: var(--text-muted);
   flex-shrink: 0;

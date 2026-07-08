@@ -29,6 +29,13 @@ export interface ChildSessionSummary {
   agentId: string | null;
   messageCount: number;
   createdAt: string;
+  /** Last update time (RFC 3339) from the backend; for a finished sub-agent
+   *  this is the completion time. Empty string when unavailable. */
+  updatedAt: string;
+  /** Derived display status: "running" while the parent turn is streaming and
+   *  no completion event has been received for this child, otherwise
+   *  "completed". */
+  status: 'running' | 'completed';
 }
 
 export interface UseInfoPanelReturn {
@@ -194,6 +201,16 @@ export function useInfoPanel(): UseInfoPanelReturn {
   // delegated sub-agents appear without a session switch).
   const [childSessions, setChildSessions] = useState<ChildSessionSummary[]>([]);
   const [childReloadTick, setChildReloadTick] = useState(0);
+  // Child session ids that have received a `subagent_completed` event during
+  // the current parent turn. Used to mark individual children as completed
+  // before the parent turn finishes streaming (so a finished phase shows
+  // "completed" while a later phase is still running). Tagged with the
+  // session id they belong to so a session switch naturally invalidates the
+  // set via the useMemo derivation below (no setState-in-effect cascade).
+  const [completedChildren, setCompletedChildren] = useState<{
+    sessionId: string;
+    ids: Set<string>;
+  }>({ sessionId: '', ids: new Set() });
   useEffect(() => {
     let cancelled = false;
     const load = async (): Promise<ChildSessionSummary[]> => {
@@ -210,6 +227,8 @@ export function useInfoPanel(): UseInfoPanelReturn {
           agentId: typeof r.agent_id === 'string' ? r.agent_id : null,
           messageCount: Number(r.message_count ?? 0),
           createdAt: String(r.created_at ?? ''),
+          updatedAt: typeof r.updated_at === 'string' ? r.updated_at : '',
+          status: 'completed' as const,
         })).filter((c) => c.id !== '');
       } catch {
         return [];
@@ -223,11 +242,13 @@ export function useInfoPanel(): UseInfoPanelReturn {
     };
   }, [activeSessionId, activeStreaming, childReloadTick]);
 
-  // Listen for subagent_completed broadcasts and bump the reload tick when one
-  // arrives for the active session. The backend emits this with the parent
-  // session's UUID, so a match means a sub-agent under this session finished
-  // (plan phase, loop round, or Task delegation) and the child list should
-  // refresh to surface it.
+  // Listen for subagent_completed broadcasts. The event's `session_id` is the
+  // child session UUID for plan phases / loop rounds / Task-delegated agents
+  // (emitted by the executor and the plan/loop orchestrators), and the parent
+  // session UUID for the duplicate event emitted by DiagnosticsAgentDelegator.
+  // We mark a known child as completed on a child-UUID match, and always bump
+  // the reload tick (on either match) so the backend's authoritative
+  // `updated_at` completion time is fetched.
   useEffect(() => {
     if (!activeSessionId) return;
     const unlisten = transport.listen<DiagSubagentCompleted>(
@@ -235,9 +256,29 @@ export function useInfoPanel(): UseInfoPanelReturn {
       (event) => {
         const ev = event.payload;
         if (ev.type !== 'subagent_completed') return;
-        if (ev.session_id && ev.session_id === activeSessionId) {
-          setChildReloadTick((t) => t + 1);
-        }
+        const sid = ev.session_id;
+        if (!sid) return;
+        // Mark the child as completed when the event carries its UUID
+        // directly (plan phase / loop round / Task-delegated agent). The
+        // duplicate event from DiagnosticsAgentDelegator carries the parent
+        // UUID and is handled by the reload below.
+        setChildSessions((prev) => {
+          if (!prev.some((c) => c.id === sid)) return prev;
+          setCompletedChildren((prev) =>
+            prev.sessionId === activeSessionId && prev.ids.has(sid)
+              ? prev
+              : {
+                  sessionId: activeSessionId,
+                  ids: new Set(
+                    prev.sessionId === activeSessionId ? prev.ids : [],
+                  ).add(sid),
+                },
+          );
+          return prev;
+        });
+        // Always reload to fetch the authoritative `updated_at` completion
+        // timestamp from the backend.
+        setChildReloadTick((t) => t + 1);
       },
     );
     return () => {
@@ -254,16 +295,32 @@ export function useInfoPanel(): UseInfoPanelReturn {
     const plans = mergePlans(persistedPlans, livePlans);
     const loopStatus = findLatestLoop(allRecords);
 
+    // Derive per-child status: a child is "running" only while the parent
+    // turn is streaming AND no completion event has arrived for it yet.
+    // Once the parent turn ends, all children are considered completed.
+    // The completed-ids set is only valid for the active session; a session
+    // switch naturally yields an empty set here.
+    const validCompletedIds = completedChildren.sessionId === activeSessionId
+      ? completedChildren.ids
+      : new Set<string>();
+    const childrenWithStatus = activeStreaming
+      ? childSessions.map((c) =>
+          validCompletedIds.has(c.id)
+            ? { ...c, status: 'completed' as const }
+            : { ...c, status: 'running' as const },
+        )
+      : childSessions.map((c) => ({ ...c, status: 'completed' as const }));
+
     return {
       modifiedFiles,
       plans,
       loopStatus,
-      childSessions,
+      childSessions: childrenWithStatus,
       hasActivity:
         modifiedFiles.length > 0
         || plans.length > 0
         || loopStatus !== null
-        || childSessions.length > 0,
+        || childrenWithStatus.length > 0,
     };
-  }, [messages, toolResults, persistedPlans, childSessions]);
+  }, [messages, toolResults, persistedPlans, childSessions, activeStreaming, completedChildren, activeSessionId]);
 }

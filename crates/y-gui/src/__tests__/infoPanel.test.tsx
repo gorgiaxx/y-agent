@@ -40,7 +40,7 @@ vi.mock('../components/ui', async () => {
 });
 
 import { InfoPanel } from '../components/observation/InfoPanel';
-import type { ModifiedFileEntry } from '../hooks/useInfoPanel';
+import type { ModifiedFileEntry, ChildSessionSummary } from '../hooks/useInfoPanel';
 import type { PlanWriterStageDisplay, PlanExecutionDisplay } from '../components/chat-panel/chat-box/planToolDisplay';
 import type { LoopRoundStageDisplay } from '../components/chat-panel/chat-box/toolCallUtils';
 
@@ -325,5 +325,91 @@ describe('InfoPanel', () => {
     );
     expect(html).not.toContain('info-backdrop');
     expect(html).not.toContain('info-expanded');
+  });
+
+  it('renders running status for a sub-agent whose status is running', () => {
+    const child: ChildSessionSummary = {
+      id: 'child-1',
+      title: 'plan-writer',
+      sessionType: 'sub_agent',
+      agentId: 'plan-writer',
+      messageCount: 0,
+      createdAt: '2026-07-08T10:00:00Z',
+      updatedAt: '',
+      status: 'running',
+    };
+    const html = renderToStaticMarkup(
+      <InfoPanel
+        modifiedFiles={[]}
+        plans={[]}
+        loopStatus={null}
+        childSessions={[child]}
+        expanded={false}
+        onToggleExpand={noopFn}
+        onClose={noopFn}
+      />,
+    );
+    expect(html).toContain('info-subagent-status');
+    expect(html).toContain('status-running');
+    expect(html).toContain('running');
+  });
+
+  it('renders completion time for a completed sub-agent', () => {
+    const child: ChildSessionSummary = {
+      id: 'child-1',
+      title: 'plan-phase-executor',
+      sessionType: 'sub_agent',
+      agentId: 'plan-phase-executor',
+      messageCount: 3,
+      createdAt: '2026-07-08T10:00:00Z',
+      updatedAt: '2026-07-08T10:05:30Z',
+      status: 'completed',
+    };
+    const html = renderToStaticMarkup(
+      <InfoPanel
+        modifiedFiles={[]}
+        plans={[]}
+        loopStatus={null}
+        childSessions={[child]}
+        expanded={false}
+        onToggleExpand={noopFn}
+        onClose={noopFn}
+      />,
+    );
+    expect(html).toContain('status-completed');
+    // The exact formatted time depends on the locale, but the component
+    // renders a non-empty HH:MM:SS string derived from updatedAt.
+    expect(html).toContain('info-subagent-status');
+    const match = html.match(/info-subagent-status[^<]*>([^<]+)</);
+    expect(match).not.toBeNull();
+    expect(match![1]).toMatch(/\d/);
+    // Ensure the fallback "done" is NOT used when updatedAt is present.
+    expect(match![1]).not.toBe('done');
+  });
+
+  it('shows done fallback for a completed sub-agent without a timestamp', () => {
+    const child: ChildSessionSummary = {
+      id: 'child-1',
+      title: 'loop-executor',
+      sessionType: 'sub_agent',
+      agentId: 'loop-executor',
+      messageCount: 2,
+      createdAt: '2026-07-08T10:00:00Z',
+      updatedAt: '',
+      status: 'completed',
+    };
+    const html = renderToStaticMarkup(
+      <InfoPanel
+        modifiedFiles={[]}
+        plans={[]}
+        loopStatus={null}
+        childSessions={[child]}
+        expanded={false}
+        onToggleExpand={noopFn}
+        onClose={noopFn}
+      />,
+    );
+    expect(html).toContain('status-completed');
+    expect(html).toContain('>done<');
   });
 });

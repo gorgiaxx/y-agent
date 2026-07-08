@@ -82,6 +82,14 @@ impl SessionType {
     pub fn is_internal(&self) -> bool {
         !self.is_user_facing()
     }
+
+    /// Whether this session type represents a sub-agent child session that
+    /// should surface in the info panel's sub-agents list. Excludes branches
+    /// (user-initiated forks) and ephemeral/canonical nodes.
+    #[must_use]
+    pub fn is_sub_agent(&self) -> bool {
+        matches!(self, Self::Child | Self::SubAgent)
+    }
 }
 
 /// Session lifecycle state.
@@ -310,8 +318,19 @@ mod tests {
         assert!(SessionType::SubAgent.is_internal());
         assert!(SessionType::Canonical.is_internal());
     }
-}
 
+    #[test]
+    fn test_session_type_sub_agent_boundary() {
+        assert!(SessionType::Child.is_sub_agent());
+        assert!(SessionType::SubAgent.is_sub_agent());
+
+        // Branches (user forks) must NOT appear as sub-agents in the info panel.
+        assert!(!SessionType::Branch.is_sub_agent());
+        assert!(!SessionType::Main.is_sub_agent());
+        assert!(!SessionType::Ephemeral.is_sub_agent());
+        assert!(!SessionType::Canonical.is_sub_agent());
+    }
+}
 // ---------------------------------------------------------------------------
 // Chat checkpoint types
 // ---------------------------------------------------------------------------

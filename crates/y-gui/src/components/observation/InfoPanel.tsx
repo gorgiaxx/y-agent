@@ -223,6 +223,16 @@ function LoopCard({ loop }: { loop: LoopDisplayMeta }) {
   return null;
 }
 
+/** Format a sub-agent's completion timestamp (RFC 3339) as HH:MM:SS for
+  display in the info panel. Returns an empty string when the timestamp is
+  missing or unparseable. */
+function formatCompletionTime(iso: string): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 interface InfoPanelProps {
   modifiedFiles: ModifiedFileEntry[];
   plans: PlanDisplayMeta[];
@@ -370,6 +380,11 @@ export function InfoPanel({
                         <Boxes size={12} className="info-subagent-icon" />
                         <span className="info-subagent-title">
                           {child.title ?? child.agentId ?? 'Sub-agent'}
+                        </span>
+                        <span className={`info-subagent-status status-${child.status}`}>
+                          {child.status === 'running'
+                            ? 'running'
+                            : formatCompletionTime(child.updatedAt) || 'done'}
                         </span>
                         <ChevronRight size={12} className="info-subagent-chevron" />
                       </button>
