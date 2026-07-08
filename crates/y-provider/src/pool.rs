@@ -220,6 +220,10 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
         let use_reasoning_effort = crate::providers::openai::provider_type_uses_reasoning_effort(
             cfg.provider_type.as_str(),
         );
+        // Only `provider_type = "openai"` uses the Responses API (`/responses`);
+        // all compatible types use the Chat Completions wire format.
+        let use_responses_api =
+            crate::providers::openai::provider_type_uses_responses_api(cfg.provider_type.as_str());
         let make_openai = |base: Option<String>| -> Arc<dyn LlmProvider> {
             Arc::new(
                 crate::providers::openai::OpenAiProvider::with_headers(
@@ -239,7 +243,8 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                 )
                 .with_include_usage(include_usage)
                 .with_use_max_completion_tokens(use_max_completion_tokens)
-                .with_use_reasoning_effort(use_reasoning_effort),
+                .with_use_reasoning_effort(use_reasoning_effort)
+                .with_use_responses_api(use_responses_api),
             ) as Arc<dyn LlmProvider>
         };
         let make_azure = || -> Arc<dyn LlmProvider> {

@@ -6,6 +6,7 @@
 
 use async_trait::async_trait;
 
+use crate::providers::responses::{ResponsesRequest, ResponsesText};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
@@ -31,6 +32,35 @@ pub struct OpenAiProvider {
     base_url: String,
     custom_headers: reqwest::header::HeaderMap,
     metadata: ProviderMetadata,
+    /// Wire-format flags resolved from the provider type at construction time.
+    wire: WireConfig,
+}
+
+/// Wire-format flags resolved from the provider type at construction time.
+///
+/// These flags select between the `OpenAI` Responses API and the
+/// OpenAI-compatible Chat Completions wire format, and control minor
+/// field-level differences between them. They are resolved once from the
+/// provider type at construction time and never change.
+#[derive(Debug, Clone, Copy, Default)]
+struct WireConfig {
+    /// Use the `OpenAI` Responses API (`/responses` endpoint) instead of the
+    /// OpenAI-compatible Chat Completions API (`/chat/completions`). Set to
+    /// `true` for `provider_type = "openai"`; `false` for `openai-compat` /
+    /// `custom` / `deepseek` which only implement the Chat Completions wire
+    /// format. The Responses API uses a typed `input` array, `max_output_tokens`,
+    /// `response.output[]` items, and SSE events like
+    /// `response.output_text.delta` / `response.completed`.
+    use_responses_api: bool,
+    /// Field-level wire-format tweaks for the Chat Completions API.
+    chat_completions: ChatCompletionsFlags,
+}
+
+/// Chat Completions API field-level configuration flags.
+///
+/// Only relevant when [`WireConfig::use_responses_api`] is `false`.
+#[derive(Debug, Clone, Copy, Default)]
+struct ChatCompletionsFlags {
     /// Send `stream_options.include_usage = true` on streaming requests.
     /// Defaults to `false` because many OpenAI-compatible backends reject
     /// the `stream_options` field. See [`crate::config::ProviderConfig`].
@@ -123,9 +153,7 @@ impl OpenAiProvider {
                 tool_calling_mode,
                 tool_dialect,
             },
-            include_usage: false,
-            use_max_completion_tokens: false,
-            use_reasoning_effort: false,
+            wire: WireConfig::default(),
         }
     }
 
@@ -134,7 +162,7 @@ impl OpenAiProvider {
     /// [`crate::config::ProviderConfig::include_usage`].
     #[must_use]
     pub fn with_include_usage(mut self, include_usage: bool) -> Self {
-        self.include_usage = include_usage;
+        self.wire.chat_completions.include_usage = include_usage;
         self
     }
 
@@ -143,7 +171,7 @@ impl OpenAiProvider {
     /// from [`crate::config::ProviderConfig::use_max_completion_tokens`].
     #[must_use]
     pub fn with_use_max_completion_tokens(mut self, use_max_completion_tokens: bool) -> Self {
-        self.use_max_completion_tokens = use_max_completion_tokens;
+        self.wire.chat_completions.use_max_completion_tokens = use_max_completion_tokens;
         self
     }
 
@@ -154,7 +182,17 @@ impl OpenAiProvider {
     /// `provider_type_uses_reasoning_effort`.
     #[must_use]
     pub fn with_use_reasoning_effort(mut self, use_reasoning_effort: bool) -> Self {
-        self.use_reasoning_effort = use_reasoning_effort;
+        self.wire.chat_completions.use_reasoning_effort = use_reasoning_effort;
+        self
+    }
+
+    /// Builder-style setter: use the `OpenAI` Responses API (`/responses`)
+    /// instead of the Chat Completions API (`/chat/completions`). Pool wiring
+    /// derives this from the provider type via
+    /// `provider_type_uses_responses_api`.
+    #[must_use]
+    pub fn with_use_responses_api(mut self, use_responses_api: bool) -> Self {
+        self.wire.use_responses_api = use_responses_api;
         self
     }
 
@@ -392,6 +430,196 @@ impl OpenAiProvider {
         })
     }
 
+    // -----------------------------------------------------------------------
+    // Responses API (`/responses` endpoint)
+    // -----------------------------------------------------------------------
+
+    /// Build a Responses API request body from a [`ChatRequest`].
+    fn build_responses_request_body(
+        &self,
+        request: &ChatRequest,
+        stream: bool,
+    ) -> ResponsesRequest {
+        use y_core::provider::ToolCallingMode;
+
+        let model = request.model.as_deref().unwrap_or(&self.metadata.model);
+
+        let tools = match request.tool_calling_mode {
+            ToolCallingMode::PromptBased => vec![],
+            ToolCallingMode::Native => {
+                crate::providers::responses::build_responses_tools(&request.tools)
+            }
+        };
+
+        let reasoning =
+            crate::providers::responses::build_responses_reasoning(request.thinking.as_ref());
+
+        let text = request.response_format.as_ref().and_then(|rf| {
+            let format = crate::providers::responses::build_responses_text_format(rf)?;
+            Some(ResponsesText {
+                format: Some(format),
+            })
+        });
+
+        ResponsesRequest {
+            model: model.to_string(),
+            input: crate::providers::responses::build_responses_input(&request.messages),
+            max_output_tokens: request.max_tokens,
+            temperature: request.temperature,
+            top_p: request.top_p,
+            stream,
+            tools,
+            reasoning,
+            text,
+            store: false,
+        }
+    }
+
+    /// Send a non-streaming request via the Responses API.
+    async fn chat_completion_responses(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<ChatResponse, ProviderError> {
+        let body = self.build_responses_request_body(request, false);
+        let raw_request = serde_json::to_value(&body).ok();
+
+        let mut request_builder = self.client.post(self.api_url("responses"));
+        request_builder =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json");
+
+        if !self.api_key.is_empty() {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
+
+        let status = response.status();
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(60u64);
+            return Err(ProviderError::RateLimited {
+                provider: self.metadata.id.to_string(),
+                retry_after_secs: retry_after,
+            });
+        }
+
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::AuthenticationFailed {
+                provider: self.metadata.id.to_string(),
+                message: error_body,
+            });
+        }
+
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(ProviderError::ServerError {
+                provider: self.metadata.id.to_string(),
+                message: format!("HTTP {status}: {error_body}"),
+            });
+        }
+
+        let response_text = response.text().await.map_err(|e| ProviderError::Other {
+            message: format!("read response body: {e}"),
+        })?;
+        let raw_response: serde_json::Value =
+            serde_json::from_str(&response_text).map_err(|e| ProviderError::Other {
+                message: format!("parse response JSON: {e}"),
+            })?;
+
+        let parsed = crate::providers::responses::parse_responses_response(&raw_response)
+            .map_err(|e| ProviderError::Other { message: e })?;
+
+        Ok(ChatResponse {
+            id: parsed.id,
+            model: parsed.model,
+            content: parsed.content,
+            reasoning_content: parsed.reasoning_content,
+            tool_calls: parsed.tool_calls,
+            usage: parsed.usage,
+            finish_reason: parsed.finish_reason,
+            raw_request,
+            raw_response: Some(raw_response),
+            provider_id: None,
+            generated_images: vec![],
+        })
+    }
+
+    /// Send a streaming request via the Responses API.
+    async fn chat_completion_responses_stream(
+        &self,
+        request: &ChatRequest,
+    ) -> Result<ChatStreamResponse, ProviderError> {
+        let body = self.build_responses_request_body(request, true);
+        let raw_request = serde_json::to_value(&body).ok();
+
+        let mut request_builder = self.client.post(self.api_url("responses"));
+        request_builder =
+            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream");
+
+        if !self.api_key.is_empty() {
+            request_builder =
+                request_builder.header("Authorization", format!("Bearer {}", self.api_key));
+        }
+
+        let response = request_builder
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| crate::net_error::network_error_from_reqwest(&e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok());
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                ProviderError::RateLimited {
+                    provider: self.metadata.id.to_string(),
+                    retry_after_secs: retry_after.unwrap_or(60),
+                }
+            } else if status == reqwest::StatusCode::UNAUTHORIZED {
+                ProviderError::AuthenticationFailed {
+                    provider: self.metadata.id.to_string(),
+                    message: error_body,
+                }
+            } else {
+                ProviderError::ServerError {
+                    provider: self.metadata.id.to_string(),
+                    message: format!("HTTP {status}: {error_body}"),
+                }
+            });
+        }
+
+        let byte_stream = response.bytes_stream();
+
+        Ok(ChatStreamResponse {
+            stream: crate::inter_stream_adapter::into_chat_stream(Box::pin(
+                build_responses_inter_stream(Box::pin(byte_stream), Some(status.as_u16())),
+            )),
+            raw_request,
+            provider_id: None,
+            model: String::new(),
+            context_window: 0,
+        })
+    }
+
     /// Build `OpenAI` message list from a `ChatRequest`.
     fn build_messages(request: &ChatRequest) -> Vec<OpenAiMessage> {
         request
@@ -497,11 +725,12 @@ impl OpenAiProvider {
             }
         };
 
-        let (max_tokens, max_completion_tokens) = if self.use_max_completion_tokens {
-            (None, request.max_tokens)
-        } else {
-            (request.max_tokens, None)
-        };
+        let (max_tokens, max_completion_tokens) =
+            if self.wire.chat_completions.use_max_completion_tokens {
+                (None, request.max_tokens)
+            } else {
+                (request.max_tokens, None)
+            };
 
         // Reasoning effort serializes either as the top-level `reasoning_effort`
         // string (OpenAI-compatible Chat Completions) or the nested
@@ -510,7 +739,7 @@ impl OpenAiProvider {
             .thinking
             .as_ref()
             .map(|tc| thinking_effort_str(tc.effort));
-        let (reasoning, reasoning_effort) = if self.use_reasoning_effort {
+        let (reasoning, reasoning_effort) = if self.wire.chat_completions.use_reasoning_effort {
             (None, effort)
         } else {
             (effort.map(|e| OpenAiReasoning { effort: e }), None)
@@ -524,7 +753,7 @@ impl OpenAiProvider {
             temperature: request.temperature,
             top_p: request.top_p,
             stream,
-            stream_options: if stream && self.include_usage {
+            stream_options: if stream && self.wire.chat_completions.include_usage {
                 Some(StreamOptions {
                     include_usage: true,
                 })
@@ -565,6 +794,10 @@ impl LlmProvider for OpenAiProvider {
     async fn chat_completion(&self, request: &ChatRequest) -> Result<ChatResponse, ProviderError> {
         if request.request_mode == RequestMode::ImageGeneration {
             return self.generate_images(request).await;
+        }
+
+        if self.wire.use_responses_api {
+            return self.chat_completion_responses(request).await;
         }
 
         let body = self.build_request_body(request, false);
@@ -698,6 +931,10 @@ impl LlmProvider for OpenAiProvider {
     ) -> Result<ChatStreamResponse, ProviderError> {
         if request.request_mode == RequestMode::ImageGeneration {
             return self.generate_images_stream(request).await;
+        }
+
+        if self.wire.use_responses_api {
+            return self.chat_completion_responses_stream(request).await;
         }
 
         let body = self.build_request_body(request, true);
@@ -875,6 +1112,203 @@ fn build_openai_inter_stream(
     )
 }
 
+/// Build an inter-stream from the `OpenAI` Responses API SSE byte stream.
+///
+/// Mirrors [`build_openai_inter_stream`] but parses Responses API SSE events
+/// (`response.output_text.delta`, `response.completed`, etc.) via
+/// [`crate::providers::responses::parse_responses_chunk`].
+fn build_responses_inter_stream(
+    byte_stream: crate::sse::ByteStream,
+    status: Option<u16>,
+) -> impl futures::Stream<Item = Result<crate::inter_stream::InterStreamEvent, ProviderError>> + Send
+{
+    use crate::inter_stream::InterStreamEvent;
+    use crate::providers::responses::{parse_responses_chunk, ResponsesStreamEvent};
+
+    futures::stream::unfold(
+        (
+            crate::sse::SseStreamState::with_status(byte_stream, status),
+            false, // has_function_call
+            VecDeque::<InterStreamEvent>::new(),
+        ),
+        |mut composite| async move {
+            let (ref mut state, ref mut has_function_call, ref mut pending) = composite;
+
+            if let Some(event) = pending.pop_front() {
+                return Some((Ok(event), composite));
+            }
+
+            if state.done {
+                return None;
+            }
+
+            loop {
+                if let Some(event) = crate::sse::extract_sse_data(&mut state.buffer) {
+                    let trimmed = event.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+
+                    // The Responses API does not send `[DONE]`; the terminal
+                    // event is `response.completed`/`response.incomplete`/
+                    // `response.failed`. But some relays append `[DONE]`
+                    // anyway — tolerate it.
+                    if trimmed == "[DONE]" {
+                        state.done = true;
+                        if let Some(event) = pending.pop_front() {
+                            return Some((Ok(event), composite));
+                        }
+                        return None;
+                    }
+
+                    let events = parse_responses_chunk(trimmed, *has_function_call);
+                    if events.is_empty() {
+                        continue;
+                    }
+
+                    // Track function-call state for finish-reason resolution.
+                    for ev in &events {
+                        if matches!(ev, ResponsesStreamEvent::FunctionCallDone { .. }) {
+                            *has_function_call = true;
+                        }
+                    }
+
+                    // Convert ResponsesStreamEvent -> InterStreamEvent.
+                    let mut inter_events: Vec<InterStreamEvent> = events
+                        .into_iter()
+                        .flat_map(|ev| match ev {
+                            ResponsesStreamEvent::TextDelta { delta } => {
+                                vec![InterStreamEvent::TextDelta(delta)]
+                            }
+                            ResponsesStreamEvent::ReasoningDelta { delta } => {
+                                vec![InterStreamEvent::ReasoningDelta(delta)]
+                            }
+                            ResponsesStreamEvent::FunctionCallDone {
+                                call_id,
+                                name,
+                                arguments,
+                            } => {
+                                let args = serde_json::from_str(&arguments)
+                                    .unwrap_or(serde_json::Value::String(arguments));
+                                vec![InterStreamEvent::ToolCall(ToolCallRequest {
+                                    id: call_id,
+                                    name,
+                                    arguments: args,
+                                })]
+                            }
+                            ResponsesStreamEvent::Completed {
+                                usage,
+                                finish_reason,
+                            } => {
+                                let mut v = Vec::new();
+                                if let Some(u) = usage {
+                                    v.push(InterStreamEvent::Usage(u));
+                                }
+                                v.push(InterStreamEvent::Finished(finish_reason));
+                                v
+                            }
+                            ResponsesStreamEvent::Failed { message }
+                            | ResponsesStreamEvent::Error { message } => {
+                                vec![InterStreamEvent::Finished(FinishReason::Unknown)]
+                                    .into_iter()
+                                    .chain(std::iter::once_with(|| {
+                                        tracing::warn!(
+                                            provider = %self_metadata_id(state),
+                                            "Responses API stream error: {message}"
+                                        );
+                                        InterStreamEvent::TextDelta(String::new())
+                                    }))
+                                    .collect()
+                            }
+                        })
+                        .collect();
+
+                    if inter_events.is_empty() {
+                        continue;
+                    }
+
+                    // Mark done on terminal events so the stream ends after
+                    // flushing pending events.
+                    if inter_events
+                        .iter()
+                        .any(|e| matches!(e, InterStreamEvent::Finished(_)))
+                    {
+                        state.done = true;
+                    }
+
+                    let first = inter_events.remove(0);
+                    pending.extend(inter_events);
+                    return Some((Ok(first), composite));
+                }
+
+                match state.read_next().await {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        // Drain remaining buffered events.
+                        while let Some(event) = crate::sse::extract_sse_data(&mut state.buffer) {
+                            let trimmed = event.trim();
+                            if trimmed.is_empty() || trimmed == "[DONE]" {
+                                continue;
+                            }
+                            let events = parse_responses_chunk(trimmed, *has_function_call);
+                            for ev in events {
+                                *has_function_call |=
+                                    matches!(ev, ResponsesStreamEvent::FunctionCallDone { .. });
+                                let inter = match ev {
+                                    ResponsesStreamEvent::TextDelta { delta } => {
+                                        InterStreamEvent::TextDelta(delta)
+                                    }
+                                    ResponsesStreamEvent::ReasoningDelta { delta } => {
+                                        InterStreamEvent::ReasoningDelta(delta)
+                                    }
+                                    ResponsesStreamEvent::FunctionCallDone {
+                                        call_id,
+                                        name,
+                                        arguments,
+                                    } => {
+                                        let args = serde_json::from_str(&arguments)
+                                            .unwrap_or(serde_json::Value::String(arguments));
+                                        InterStreamEvent::ToolCall(ToolCallRequest {
+                                            id: call_id,
+                                            name,
+                                            arguments: args,
+                                        })
+                                    }
+                                    ResponsesStreamEvent::Completed {
+                                        usage,
+                                        finish_reason,
+                                    } => {
+                                        if let Some(u) = usage {
+                                            pending.push_back(InterStreamEvent::Usage(u));
+                                        }
+                                        InterStreamEvent::Finished(finish_reason)
+                                    }
+                                    ResponsesStreamEvent::Failed { .. }
+                                    | ResponsesStreamEvent::Error { .. } => {
+                                        InterStreamEvent::Finished(FinishReason::Unknown)
+                                    }
+                                };
+                                pending.push_back(inter);
+                            }
+                        }
+                        if let Some(event) = pending.pop_front() {
+                            return Some((Ok(event), composite));
+                        }
+                        return None;
+                    }
+                    Err(e) => return Some((Err(e), composite)),
+                }
+            }
+        },
+    )
+}
+
+/// Helper to get a string reference for logging; avoids borrowing issues in
+/// the `Failed`/`Error` branch of the stream parser.
+fn self_metadata_id(_state: &crate::sse::SseStreamState) -> &'static str {
+    ""
+}
+
 fn map_to_inter_events(
     chunk: &OpenAiStreamChunk,
     tool_acc: &mut crate::tool_call_accumulator::ToolCallAccumulatorSet,
@@ -1010,6 +1444,14 @@ pub(crate) fn provider_type_uses_reasoning_effort(provider_type: &str) -> bool {
         provider_type,
         "openai-compat" | "openai_compatible" | "custom" | "deepseek"
     )
+}
+
+/// Whether a provider type uses the `OpenAI` Responses API (`/responses`
+/// endpoint with typed `input` array). Only `"openai"` does; all
+/// OpenAI-compatible types (`openai-compat`, `custom`, `deepseek`) use the
+/// Chat Completions wire format (`/chat/completions`).
+pub(crate) fn provider_type_uses_responses_api(provider_type: &str) -> bool {
+    matches!(provider_type, "openai")
 }
 
 /// `OpenAI` `response_format` for structured output.
@@ -2237,5 +2679,484 @@ mod tests {
             .collect();
         assert_eq!(texts, vec!["ok"]);
         assert!(events.iter().all(Result::is_ok));
+    }
+
+    // -----------------------------------------------------------------------
+    // Responses API tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn provider_type_uses_responses_api_mapping() {
+        assert!(
+            provider_type_uses_responses_api("openai"),
+            "openai should use the Responses API"
+        );
+        for ty in [
+            "openai-compat",
+            "openai_compatible",
+            "custom",
+            "deepseek",
+            "azure",
+        ] {
+            assert!(
+                !provider_type_uses_responses_api(ty),
+                "{ty} should NOT use the Responses API"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_api_request_body_uses_input_not_messages() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
+        )
+        .with_use_responses_api(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "Hello".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: Some(512),
+            temperature: Some(0.7),
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_responses_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+
+        // Responses API uses `input` array, not `messages`.
+        assert!(json.get("input").is_some(), "input field must be present");
+        assert!(json.get("messages").is_none(), "messages must be absent");
+
+        // Uses `max_output_tokens`, not `max_tokens` or `max_completion_tokens`.
+        assert_eq!(json["max_output_tokens"], 512);
+        assert!(json.get("max_tokens").is_none());
+        assert!(json.get("max_completion_tokens").is_none());
+
+        // `store` must be false (y-agent manages its own history).
+        assert_eq!(json["store"], false);
+
+        // The input array should contain the user message with `input_text` content.
+        let input = json["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"][0]["type"], "input_text");
+        assert_eq!(input[0]["content"][0]["text"], "Hello");
+
+        assert_eq!(json["temperature"], 0.7);
+        assert!(!json["stream"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn responses_api_request_body_with_reasoning() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "o3",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
+        )
+        .with_use_responses_api(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "Solve this".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: Some(y_core::provider::ThinkingConfig {
+                effort: y_core::provider::ThinkingEffort::High,
+            }),
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_responses_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["reasoning"]["effort"], "high");
+        assert_eq!(json["reasoning"]["summary"], "detailed");
+    }
+
+    #[test]
+    fn responses_api_request_body_with_tools() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            y_core::provider::ToolCallingMode::Native,
+            y_core::provider::ToolDialect::default(),
+        )
+        .with_use_responses_api(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "What's the weather?".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            })],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_responses_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+        let tools = json["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        // Responses API tool shape: { type, name, parameters, ... }
+        assert_eq!(tools[0]["type"], "function");
+        assert_eq!(tools[0]["name"], "get_weather");
+        assert!(tools[0]["parameters"].is_object());
+    }
+
+    #[test]
+    fn responses_api_request_body_prompt_based_omits_tools() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            y_core::provider::ToolCallingMode::PromptBased,
+            y_core::provider::ToolDialect::default(),
+        )
+        .with_use_responses_api(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![serde_json::json!({
+                "type": "function",
+                "function": {"name": "noop"}
+            })],
+            tool_calling_mode: y_core::provider::ToolCallingMode::PromptBased,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let body = provider.build_responses_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+        assert!(
+            json["tools"]
+                .as_array()
+                .map(|a| a.is_empty())
+                .unwrap_or(true),
+            "PromptBased mode must not send tools: {json}"
+        );
+    }
+
+    #[test]
+    fn responses_api_request_body_json_schema_format() {
+        let provider = OpenAiProvider::new(
+            "test",
+            "gpt-4o",
+            "sk-test".into(),
+            None,
+            None,
+            vec![],
+            vec![],
+            5,
+            128_000,
+            ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
+        )
+        .with_use_responses_api(true);
+
+        let request = ChatRequest {
+            messages: vec![y_core::types::Message {
+                message_id: "m1".into(),
+                role: y_core::types::Role::User,
+                content: "Return JSON".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({}),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: Some(y_core::provider::ResponseFormat::JsonSchema {
+                name: "result".into(),
+                schema: serde_json::json!({"type": "object"}),
+            }),
+            image_generation_options: None,
+        };
+
+        let body = provider.build_responses_request_body(&request, false);
+        let json = serde_json::to_value(&body).unwrap();
+        assert_eq!(json["text"]["format"]["type"], "json_schema");
+        assert_eq!(json["text"]["format"]["name"], "result");
+        assert_eq!(json["text"]["format"]["strict"], true);
+    }
+
+    /// Build a Responses API inter-stream over a fixed sequence of byte chunks.
+    fn responses_inter_stream_from_chunks(
+        chunks: Vec<&'static str>,
+    ) -> impl futures::Stream<Item = Result<crate::inter_stream::InterStreamEvent, ProviderError>> + Send
+    {
+        use bytes::Bytes;
+        let stream = futures::stream::iter(
+            chunks
+                .into_iter()
+                .map(|s| Ok::<_, reqwest::Error>(Bytes::from_static(s.as_bytes()))),
+        );
+        build_responses_inter_stream(Box::pin(stream), Some(200))
+    }
+
+    #[tokio::test]
+    async fn responses_stream_text_delta_and_completed() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        let stream = responses_inter_stream_from_chunks(vec![
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"Hello\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\" world\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(InterStreamEvent::TextDelta(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["Hello", " world"]);
+
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Ok(InterStreamEvent::Finished(FinishReason::Stop)))));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Ok(InterStreamEvent::Usage(_)))));
+    }
+
+    #[tokio::test]
+    async fn responses_stream_tool_call_and_finished() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        let stream = responses_inter_stream_from_chunks(vec![
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_abc\",\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"Paris\\\"}\",\"status\":\"completed\"}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        let tool_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Ok(InterStreamEvent::ToolCall(_))))
+            .collect();
+        assert_eq!(tool_events.len(), 1);
+        if let Ok(InterStreamEvent::ToolCall(tc)) = &tool_events[0] {
+            assert_eq!(tc.id, "call_abc");
+            assert_eq!(tc.name, "get_weather");
+            assert_eq!(tc.arguments, serde_json::json!({"city": "Paris"}));
+        } else {
+            panic!("expected ToolCall event");
+        }
+
+        // With a function call, finish reason should be ToolUse.
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Ok(InterStreamEvent::Finished(FinishReason::ToolUse)))));
+    }
+
+    #[tokio::test]
+    async fn responses_stream_reasoning_delta() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        let stream = responses_inter_stream_from_chunks(vec![
+            "data: {\"type\":\"response.reasoning_summary_text.delta\",\"item_id\":\"rs_1\",\"summary_index\":0,\"delta\":\"Thinking\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"Answer\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        let reasoning: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(InterStreamEvent::ReasoningDelta(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(reasoning, vec!["Thinking"]);
+
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(InterStreamEvent::TextDelta(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["Answer"]);
+    }
+
+    #[tokio::test]
+    async fn responses_stream_skips_unknown_events() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        let stream = responses_inter_stream_from_chunks(vec![
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"created_at\":123,\"model\":\"gpt-4o\"}}\n\n",
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\"}}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"ok\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":3}}}\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        assert!(events.iter().all(Result::is_ok));
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(InterStreamEvent::TextDelta(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["ok"]);
+    }
+
+    #[tokio::test]
+    async fn responses_stream_tolerates_malformed_events() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        let stream = responses_inter_stream_from_chunks(vec![
+            "data: not json\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"ok\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":3}}}\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        assert!(events.iter().all(Result::is_ok));
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Ok(InterStreamEvent::TextDelta(t)) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["ok"]);
+    }
+
+    #[tokio::test]
+    async fn responses_stream_tolerates_done_marker() {
+        use crate::inter_stream::InterStreamEvent;
+        use futures::StreamExt as _;
+
+        // Some relays append [DONE] after response.completed.
+        let stream = responses_inter_stream_from_chunks(vec![
+            "data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"ok\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":3}}}\n\n",
+            "data: [DONE]\n\n",
+        ]);
+
+        let events: Vec<_> = stream.collect().await;
+        assert!(events.iter().all(Result::is_ok));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, Ok(InterStreamEvent::Finished(FinishReason::Stop)))));
     }
 }
