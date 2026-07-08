@@ -279,3 +279,38 @@ describe('ChatPanel intra-turn failure', () => {
     expect(html).not.toContain('chat-error');
   });
 });
+
+describe('ChatPanel error dedup with prefix mismatch', () => {
+  it('suppresses the global error banner when stream_error lacks the "LLM error: " prefix that the error event adds', () => {
+    // The backend persists the raw message as stream_error, but the chat:error
+    // event wraps it in TurnError::LlmError ("LLM error: {msg}"). The dedup
+    // must still recognize them as the same error.
+    const rawError = 'server error from GLM-5.2: HTTP 500 Internal Server Error: failed to process request body';
+    const wrappedError = `LLM error: ${rawError}`;
+    const messages: Message[] = [
+      userMessage('user-1', 'write a function'),
+      {
+        id: 'error-run-1',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+        metadata: { stream_error: rawError },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ChatPanel
+        messages={messages}
+        isStreaming={false}
+        isLoading={false}
+        error={wrappedError}
+      />,
+    );
+
+    // The bubble shows the error.
+    expect(html).toContain('Provider error');
+    // No duplicate global error banner.
+    expect(html).not.toContain('chat-error');
+  });
+});
