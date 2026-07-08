@@ -996,7 +996,7 @@ impl PlanOrchestrator {
         max_parallel: usize,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
-        resume: Option<(HashSet<String>, Vec<serde_json::Value>)>,
+        resume: Option<(HashSet<String>, HashSet<String>, Vec<serde_json::Value>)>,
     ) -> Result<Vec<serde_json::Value>, ToolError> {
         let total_tasks = plan.tasks.len();
         let is_resumed = resume.is_some();
@@ -1027,8 +1027,7 @@ impl PlanOrchestrator {
             }
         };
 
-        let (mut completed, mut phase_results) = resume.unwrap_or_default();
-        let mut failed: HashSet<String> = HashSet::new();
+        let (mut completed, mut failed, mut phase_results) = resume.unwrap_or_default();
 
         // Emit initial state showing retained results (resume only).
         if is_resumed {
@@ -1314,13 +1313,17 @@ impl PlanOrchestrator {
         plan_run_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
-        resume: Option<(HashSet<String>, Vec<serde_json::Value>)>,
+        resume: Option<(HashSet<String>, HashSet<String>, Vec<serde_json::Value>)>,
     ) -> Result<Vec<serde_json::Value>, ToolError> {
         let total_tasks = plan.tasks.len();
         let is_resumed = resume.is_some();
-        let (pre_completed, mut phase_results) = match resume {
-            Some((c, r)) => (c, r),
-            None => (HashSet::new(), Vec::with_capacity(total_tasks)),
+        let (pre_completed, _pre_failed, mut phase_results) = match resume {
+            Some((c, f, r)) => (c, f, r),
+            None => (
+                HashSet::new(),
+                HashSet::new(),
+                Vec::with_capacity(total_tasks),
+            ),
         };
 
         let heartbeat_cancel = CancellationToken::new();
@@ -1556,15 +1559,28 @@ impl PlanOrchestrator {
             .update_run_status(plan_run_id, "running")
             .await;
 
-        // Pre-seed completed set and phase_results from retained steps.
+        // Pre-seed the completed set and phase_results from retained steps.
+        //
+        // Any task with a terminal status (completed/failed/skipped) that is
+        // NOT in the invalidated set is retained as-is: it already ran and
+        // should not be re-executed. Only the invalidated task and its
+        // downstream dependents are re-entered into the DAG. Without this,
+        // a parallel sibling that failed (or was skipped due to a failed
+        // dependency) would be picked up by `ready_tasks` again and
+        // re-executed alongside the targeted retry.
         let mut pre_completed: HashSet<String> = HashSet::new();
+        let mut pre_failed: HashSet<String> = HashSet::new();
         let mut pre_phase_results: Vec<serde_json::Value> = Vec::new();
         for step in &step_results {
             if invalidated.contains(&step.task_id) {
                 continue;
             }
-            if step.status == "completed" {
+            let is_terminal = matches!(step.status.as_str(), "completed" | "failed" | "skipped");
+            if is_terminal {
                 pre_completed.insert(step.task_id.clone());
+            }
+            if step.status == "failed" || step.status == "skipped" {
+                pre_failed.insert(step.task_id.clone());
             }
             let mut entry = serde_json::json!({
                 "task_id": step.task_id,
@@ -1572,7 +1588,7 @@ impl PlanOrchestrator {
                 "title": step.title,
                 "status": step.status,
             });
-            if let Some(ref output) = step.output_json {
+            if let Some(output) = &step.output_json {
                 if step.status == "completed" {
                     entry["summary"] = serde_json::Value::String(output.clone());
                 } else {
@@ -1592,7 +1608,7 @@ impl PlanOrchestrator {
             DEFAULT_MAX_PARALLEL_PHASES,
             progress,
             cancel.as_ref(),
-            Some((pre_completed, pre_phase_results)),
+            Some((pre_completed, pre_failed, pre_phase_results)),
         )
         .await?;
 

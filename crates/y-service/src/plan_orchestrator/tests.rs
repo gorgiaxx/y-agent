@@ -2066,3 +2066,147 @@ fn test_build_plan_execution_tool_content_includes_tasks() {
         "task status should be resolved from phase_results"
     );
 }
+
+#[tokio::test]
+async fn test_resume_plan_retains_non_invalidated_terminal_tasks() {
+    // Regression: when retrying from a specific task, parallel siblings that
+    // already ran (completed, failed, or skipped) must NOT be re-executed.
+    // Previously only "completed" tasks were pre-seeded into the skip set,
+    // so failed/skipped siblings were picked up by the DAG `ready_tasks`
+    // again and re-executed alongside the targeted retry.
+    let (container, _tmpdir) = make_test_container().await;
+    let session = SessionId("resume-parallel".into());
+
+    // Two independent parallel tasks (no depends_on) + one downstream of t1.
+    let mut plan = StructuredPlan {
+        plan_title: "Parallel Plan".into(),
+        plan_file: "/tmp/parallel-plan.md".into(),
+        estimated_effort: String::new(),
+        overview: String::new(),
+        scope_in: vec![],
+        scope_out: vec![],
+        guardrails: vec![],
+        execution_contract: PlanExecutionContract::default(),
+        tasks: vec![
+            PlanTask {
+                id: "t1".into(),
+                phase: 1,
+                title: "Task t1".into(),
+                description: String::new(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 1,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+            PlanTask {
+                id: "t2".into(),
+                phase: 1,
+                title: "Task t2".into(),
+                description: String::new(),
+                depends_on: vec![],
+                status: TaskStatus::Pending,
+                estimated_iterations: 1,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+            PlanTask {
+                id: "t3".into(),
+                phase: 2,
+                title: "Task t3".into(),
+                description: String::new(),
+                depends_on: vec!["t1".into()],
+                status: TaskStatus::Pending,
+                estimated_iterations: 1,
+                key_files: vec![],
+                acceptance_criteria: vec![],
+            },
+        ],
+    };
+    let plan_json = serde_json::to_string(&plan).unwrap();
+
+    container
+        .plan_run_store
+        .create_run_with_status(
+            "run-parallel",
+            session.as_str(),
+            &plan_json,
+            "/tmp/parallel-plan.md",
+            "partial_failure",
+        )
+        .await
+        .unwrap();
+
+    // t1 completed, t2 failed (parallel sibling), t3 pending.
+    container
+        .plan_run_store
+        .record_step_result(
+            "run-parallel",
+            "t1",
+            1,
+            "Task t1",
+            "completed",
+            Some("done"),
+        )
+        .await
+        .unwrap();
+    container
+        .plan_run_store
+        .record_step_result("run-parallel", "t2", 1, "Task t2", "failed", Some("error"))
+        .await
+        .unwrap();
+
+    // Simulate the resume_plan pre-seeding logic: retry from t1, which
+    // invalidates t1 and t3 (downstream). t2 is NOT invalidated.
+    let step_results = container
+        .plan_run_store
+        .load_step_results("run-parallel")
+        .await
+        .unwrap();
+
+    let invalidated = compute_downstream_tasks(&plan.tasks, "t1");
+    assert!(invalidated.contains("t1"));
+    assert!(invalidated.contains("t3"));
+    assert!(!invalidated.contains("t2"));
+
+    // Build pre_completed and pre_failed exactly as resume_plan does.
+    let mut pre_completed: HashSet<String> = HashSet::new();
+    let mut pre_failed: HashSet<String> = HashSet::new();
+    for step in &step_results {
+        if invalidated.contains(&step.task_id) {
+            continue;
+        }
+        let is_terminal = matches!(step.status.as_str(), "completed" | "failed" | "skipped");
+        if is_terminal {
+            pre_completed.insert(step.task_id.clone());
+        }
+        if step.status == "failed" || step.status == "skipped" {
+            pre_failed.insert(step.task_id.clone());
+        }
+    }
+
+    // t2 is terminal and not invalidated -> it must be in pre_completed
+    // (so ready_tasks skips it) AND pre_failed (so dependents are skipped).
+    assert!(pre_completed.contains("t2"));
+    assert!(pre_failed.contains("t2"));
+    // t1 and t3 are invalidated -> NOT in pre_completed.
+    assert!(!pre_completed.contains("t1"));
+    assert!(!pre_completed.contains("t3"));
+
+    // Verify the DAG ready_tasks would not return t2.
+    let dag = build_task_dag(&plan.tasks).unwrap();
+    let ready = dag.ready_tasks(&pre_completed);
+    let ready_ids: Vec<&str> = ready.iter().map(|n| n.id.as_str()).collect();
+    assert!(!ready_ids.contains(&"t2"), "t2 must not be re-executed");
+    assert!(
+        ready_ids.contains(&"t1"),
+        "t1 should be re-executed (retry target)"
+    );
+
+    // Verify t3 (depends on t1) would be skipped because t1 is in pre_failed
+    // once it fails again. But since t1 is not yet in pre_failed (it's
+    // invalidated), t3 is ready once t1 completes. This is correct: t3
+    // runs after t1 succeeds on retry.
+    plan.tasks[0].status = TaskStatus::Pending;
+    let _ = plan;
+}
