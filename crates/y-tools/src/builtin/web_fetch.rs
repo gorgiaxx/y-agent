@@ -138,7 +138,7 @@ impl Tool for WebFetchTool {
                         })?;
                 let wait_ms = input.arguments["wait_ms"].as_u64().or(Some(1000));
 
-                let text = self.browser.fetch_page_text(url, wait_ms).await?;
+                let text = self.browser.fetch_page_readable(url, wait_ms).await?;
                 // Best-effort page metadata for GUI rendering.
                 let (title, favicon) = self.browser.fetch_page_meta().await;
 

@@ -314,6 +314,56 @@ impl BrowserTool {
         Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
     }
 
+    /// Fetch a page and extract readable article text.
+    ///
+    /// Like `fetch_page_text` but uses `get_readable_text` which removes
+    /// navigation, ads, scripts, and other boilerplate before extracting
+    /// text. Dramatically reduces token waste for content-heavy pages.
+    pub async fn fetch_page_readable(
+        &self,
+        url: &str,
+        wait_ms: Option<u64>,
+    ) -> Result<String, ToolError> {
+        if !self.session.config().enabled {
+            return Err(ToolError::PermissionDenied {
+                name: "WebFetch".into(),
+                reason: "browser tool is disabled in configuration".into(),
+            });
+        }
+
+        self.session
+            .security()
+            .validate_url(url)
+            .map_err(|e| ToolError::PermissionDenied {
+                name: "WebFetch".into(),
+                reason: e.to_string(),
+            })?;
+
+        self.session.ensure_connected().await?;
+
+        self.session
+            .actions()
+            .navigate(url)
+            .await
+            .map_err(cdp_to_tool_error)?;
+
+        if let Some(ms) = wait_ms {
+            let ms = ms.min(10_000);
+            if ms > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            }
+        }
+
+        let text = self
+            .session
+            .actions()
+            .get_readable_text()
+            .await
+            .map_err(cdp_to_tool_error)?;
+
+        Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
+    }
+
     /// Fetch page metadata (title + favicon URL) for the currently loaded page.
     ///
     /// Best-effort: returns empty strings on failure. Call after navigation

@@ -746,6 +746,63 @@ impl BrowserActions {
         Ok(result.value.as_str().unwrap_or_default().to_string())
     }
 
+    /// Extract human-readable article text from the page.
+    ///
+    /// Runs a JavaScript content-extraction script that removes non-content
+    /// elements (navigation, footer, scripts, ads) and returns the main
+    /// article text. Falls back to `body.innerText` if extraction yields
+    /// nothing.
+    ///
+    /// This is a simplified Readability — no article scoring, just tag-based
+    /// removal of boilerplate elements. It dramatically reduces token waste
+    /// compared to raw `get_page_text` which includes nav menus, cookie
+    /// banners, and footer links.
+    pub async fn get_readable_text(&self) -> Result<String, CdpError> {
+        let script = r#"
+            (function() {
+                // Clone the body so we don't modify the live DOM.
+                var clone = document.body.cloneNode(true);
+
+                // Remove non-content elements.
+                var removeTags = ['script', 'style', 'noscript', 'nav', 'footer',
+                    'header', 'aside', 'iframe', 'svg', 'canvas', 'form',
+                    'button', 'input', 'select', 'textarea'];
+                removeTags.forEach(function(tag) {
+                    clone.querySelectorAll(tag).forEach(function(el) {
+                        el.remove();
+                    });
+                });
+
+                // Remove elements with common non-content class/id patterns.
+                var patterns = [/nav/i, /menu/i, /sidebar/i, /footer/i, /header/i,
+                    /banner/i, /cookie/i, /advert/i, /adsense/i, /social/i,
+                    /share/i, /comment/i, /popup/i, /modal/i];
+                clone.querySelectorAll('[class], [id]').forEach(function(el) {
+                    var attr = (el.className || '') + ' ' + (el.id || '');
+                    if (patterns.some(function(p) { return p.test(attr); })) {
+                        el.remove();
+                    }
+                });
+
+                // Remove hidden elements.
+                clone.querySelectorAll('[hidden], [aria-hidden="true"]').forEach(function(el) {
+                    el.remove();
+                });
+
+                var text = clone.innerText || clone.textContent || '';
+
+                // If extraction yielded too little, fall back to body text.
+                if (text.trim().length < 200) {
+                    return document.body ? document.body.innerText : '';
+                }
+
+                return text;
+            })()
+        "#;
+        let result = self.evaluate(script).await?;
+        Ok(result.value.as_str().unwrap_or_default().to_string())
+    }
+
     /// Get accessibility-tree text for the page.
     ///
     /// This is a convenience method that takes an accessibility snapshot
