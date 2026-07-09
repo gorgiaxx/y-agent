@@ -19,6 +19,7 @@ pub mod context_manager;
 pub mod context_status;
 pub mod enrichment;
 pub mod guard;
+pub mod handoff;
 pub mod inject_bootstrap;
 pub mod inject_memory;
 pub mod inject_skills;
@@ -43,6 +44,7 @@ pub use compaction::{
 pub use context_manager::{ContextManager, PreparedContext};
 pub use context_status::InjectContextStatus;
 pub use guard::{ContextWindowGuard, GuardMode, GuardVerdict, TokenBudget};
+pub use handoff::{HandoffGenerator, HandoffResult, HANDOFF_PROMPT_TEMPLATE};
 pub use inject_bootstrap::{BootstrapEntry, InjectBootstrap};
 pub use inject_memory::InjectMemory;
 pub use inject_skills::{InjectSkills, InjectSkillsStatic, SkillSummary, SkillTemplateVars};
