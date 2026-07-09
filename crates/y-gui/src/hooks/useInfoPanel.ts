@@ -211,6 +211,15 @@ export function useInfoPanel(): UseInfoPanelReturn {
     sessionId: string;
     ids: Set<string>;
   }>({ sessionId: '', ids: new Set() });
+
+  // Child session IDs that existed BEFORE the current streaming turn started.
+  // These are children from prior turns (already finished) and must never show
+  // as "running" even while the parent is streaming. Populated whenever child
+  // sessions are fetched while NOT streaming (at which point every loaded
+  // child is by definition pre-existing).
+  const [preStreamingChildIds, setPreStreamingChildIds] = useState<Set<string>>(
+    new Set(),
+  );
   useEffect(() => {
     let cancelled = false;
     const load = async (): Promise<ChildSessionSummary[]> => {
@@ -235,7 +244,14 @@ export function useInfoPanel(): UseInfoPanelReturn {
       }
     };
     load().then((rows) => {
-      if (!cancelled) setChildSessions(rows);
+      if (!cancelled) {
+        // When NOT streaming, every loaded child pre-dates the next streaming
+        // turn. Snapshot them so they stay "completed" once streaming starts.
+        if (!activeStreaming) {
+          setPreStreamingChildIds(new Set(rows.map((c) => c.id)));
+        }
+        setChildSessions(rows);
+      }
     });
     return () => {
       cancelled = true;
@@ -296,19 +312,33 @@ export function useInfoPanel(): UseInfoPanelReturn {
     const loopStatus = findLatestLoop(allRecords);
 
     // Derive per-child status: a child is "running" only while the parent
-    // turn is streaming AND no completion event has arrived for it yet.
+    // turn is streaming AND the child was NOT already present when streaming
+    // started (i.e. it was created during this turn) AND no completion event
+    // has arrived for it yet. Children from prior turns (pre-streaming
+    // snapshot) are always "completed" — their `subagent_completed` event
+    // already fired in a previous turn and will not re-arrive.
     // Once the parent turn ends, all children are considered completed.
     // The completed-ids set is only valid for the active session; a session
     // switch naturally yields an empty set here.
     const validCompletedIds = completedChildren.sessionId === activeSessionId
       ? completedChildren.ids
       : new Set<string>();
+    const preExistingIds = preStreamingChildIds;
     const childrenWithStatus = activeStreaming
-      ? childSessions.map((c) =>
-          validCompletedIds.has(c.id)
-            ? { ...c, status: 'completed' as const }
-            : { ...c, status: 'running' as const },
-        )
+      ? childSessions.map((c) => {
+          const isCompleted = validCompletedIds.has(c.id)
+            || preExistingIds.has(c.id)
+            // A child with a persisted transcript (messageCount > 0) already
+            // finished — its `subagent_completed` event has fired, even if it
+            // was from a prior turn. This also covers the edge case where the
+            // session was opened while already streaming (snapshot not yet
+            // populated).
+            || c.messageCount > 0;
+          return {
+            ...c,
+            status: (isCompleted ? 'completed' : 'running') as 'completed' | 'running',
+          };
+        })
       : childSessions.map((c) => ({ ...c, status: 'completed' as const }));
 
     return {
@@ -322,5 +352,5 @@ export function useInfoPanel(): UseInfoPanelReturn {
         || loopStatus !== null
         || childrenWithStatus.length > 0,
     };
-  }, [messages, toolResults, persistedPlans, childSessions, activeStreaming, completedChildren, activeSessionId]);
+  }, [messages, toolResults, persistedPlans, childSessions, activeStreaming, completedChildren, activeSessionId, preStreamingChildIds]);
 }
