@@ -155,14 +155,75 @@ impl Tool for FileReadTool {
         let range = ReadRange::from_arguments(&input.arguments)?;
         let include_line_numbers =
             parse_bool_arg(&input.arguments, "include_line_numbers")?.unwrap_or(false);
-        if !range.explicit_range && metadata.len() > MAX_FILE_READ_SIZE_BYTES {
-            return Err(ToolError::Other {
-                message: format!(
-                    "File content ({}) exceeds maximum allowed size ({}). {RANGE_OR_SEARCH_HINT}",
-                    format_file_size(metadata.len()),
-                    format_file_size(MAX_FILE_READ_SIZE_BYTES)
-                ),
-            });
+
+        // Structural summary path: when no explicit line range is requested,
+        // try a tree-sitter structural summary before falling back to fixed
+        // truncation. This lets the agent see the full file skeleton (all
+        // function signatures, type definitions, key control flow) in one
+        // call, with `…` markers for elided bodies and a footer telling it
+        // exactly which line ranges to re-read for details.
+        if !range.explicit_range {
+            // Read the full file content for summary (up to a reasonable cap).
+            let file_content = if metadata.len() <= MAX_FILE_READ_SIZE_BYTES * 4 {
+                tokio::fs::read_to_string(&canonical).await.ok()
+            } else {
+                None
+            };
+
+            if let Some(source) = file_content {
+                if let Some(summary) = super::code_summary::summarize_code(&source, &canonical) {
+                    if summary.elided {
+                        let footer = super::code_summary::format_elision_footer(
+                            &canonical.display().to_string(),
+                            &summary.elided_ranges,
+                            summary.elided_lines,
+                        );
+                        let content = if footer.is_empty() {
+                            summary.text
+                        } else {
+                            format!("{}\n\n{footer}", summary.text)
+                        };
+                        let token_count = estimate_output_tokens(&content);
+                        if token_count <= MAX_OUTPUT_TOKENS {
+                            return Ok(ToolOutput {
+                                success: true,
+                                content: serde_json::json!({
+                                    "path": canonical.display().to_string(),
+                                    "content": content,
+                                    "lines": summary.total_lines - summary.elided_lines,
+                                    "total_lines": summary.total_lines,
+                                    "line_offset": 0,
+                                    "limit": summary.total_lines,
+                                    "encoding": "utf-8",
+                                    "total_bytes": metadata.len(),
+                                    "read_bytes": metadata.len(),
+                                    "has_more_lines": false,
+                                    "default_limit_applied": false,
+                                    "line_numbers": false,
+                                    "structural_summary": true,
+                                    "elided_lines": summary.elided_lines,
+                                    "elided_ranges": summary.elided_ranges,
+                                }),
+                                warnings: Vec::new(),
+                                metadata: serde_json::json!({}),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Fallback: if summary didn't apply (unsupported language, no
+            // elidable bodies, or too large), use the original path with
+            // size guard.
+            if metadata.len() > MAX_FILE_READ_SIZE_BYTES {
+                return Err(ToolError::Other {
+                    message: format!(
+                        "File content ({}) exceeds maximum allowed size ({}). {RANGE_OR_SEARCH_HINT}",
+                        format_file_size(metadata.len()),
+                        format_file_size(MAX_FILE_READ_SIZE_BYTES)
+                    ),
+                });
+            }
         }
 
         let read = read_file_range_as_utf8_impl(&canonical, &metadata, range).await?;

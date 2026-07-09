@@ -111,6 +111,16 @@ grep-searcher = "0.1"
 grep-regex = "0.1"
 grep-matcher = "0.1"
 starlark = "0.14"
+# tree-sitter for structural code summaries (FileReadTool auto-summary)
+tree-sitter = "0.25"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-go = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.23"
+tree-sitter-c = "0.23"
+tree-sitter-cpp = "0.23"
 multimap = "0.10"
 
 # CLI
