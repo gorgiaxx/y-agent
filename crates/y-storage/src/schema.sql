@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS session_metadata (
     compaction_count INTEGER NOT NULL DEFAULT 0,
     context_reset_index INTEGER,
     custom_system_prompt TEXT,
+    branch_summary   TEXT,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -167,6 +168,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     context_window  INTEGER,
     parent_message_id TEXT,
     pruning_group_id TEXT,
+    has_tool_calls   INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

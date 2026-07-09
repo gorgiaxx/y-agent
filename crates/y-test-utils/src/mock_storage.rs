@@ -178,6 +178,7 @@ impl SessionStore for MockSessionStore {
             message_count: 0,
             last_compaction: None,
             compaction_count: 0,
+            branch_summary: None,
             created_at: y_core::types::now(),
             updated_at: y_core::types::now(),
         };
@@ -322,6 +323,14 @@ impl SessionStore for MockSessionStore {
     ) -> Result<(), SessionError> {
         Ok(())
     }
+
+    async fn set_branch_summary(
+        &self,
+        _id: &SessionId,
+        _summary: Option<String>,
+    ) -> Result<(), SessionError> {
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -392,6 +401,21 @@ impl TranscriptStore for MockTranscriptStore {
         let removed = msgs.len() - keep_count;
         msgs.truncate(keep_count);
         Ok(removed)
+    }
+
+    async fn update_message(
+        &self,
+        session_id: &SessionId,
+        message_id: &str,
+        updated: &Message,
+    ) -> Result<bool, SessionError> {
+        let mut map = self.transcripts.write().unwrap();
+        let msgs = map.entry(session_id.to_string()).or_default();
+        if let Some(msg) = msgs.iter_mut().find(|m| m.message_id == message_id) {
+            *msg = updated.clone();
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

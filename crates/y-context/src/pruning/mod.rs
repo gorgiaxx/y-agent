@@ -16,7 +16,7 @@ pub mod progressive;
 pub mod report;
 pub mod retry;
 pub mod strategy;
-
+pub mod superseded;
 pub use config::{PruningConfig, PruningStrategyMode};
 pub use detector::PruningDetector;
 pub use engine::PruningEngine;
@@ -25,3 +25,6 @@ pub use progressive::ProgressivePruning;
 pub use report::PruningReport;
 pub use retry::RetryPruning;
 pub use strategy::{PruningCandidate, PruningReason, PruningStrategy};
+pub use superseded::{
+    prune_tool_outputs, supersede_key, ToolOutputPruneConfig, ToolOutputPruneResult,
+};

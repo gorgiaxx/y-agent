@@ -43,6 +43,11 @@ pub struct SessionNode {
     pub last_compaction: Option<Timestamp>,
     /// Number of compactions performed on this session.
     pub compaction_count: u32,
+    /// Summary generated when this branch session was archived/abandoned.
+    /// Captures what was explored and why it was abandoned, so the parent
+    /// session can reference it without re-reading the full transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_summary: Option<String>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }
@@ -195,6 +200,17 @@ pub trait SessionStore: Send + Sync {
         title: Option<String>,
     ) -> Result<(), SessionError>;
 
+    /// Set or clear the branch summary for a session.
+    ///
+    /// Called when a branch session is archived/abandoned — the summary
+    /// captures what was explored and why, so the parent session can
+    /// reference it without the full transcript.
+    async fn set_branch_summary(
+        &self,
+        id: &SessionId,
+        summary: Option<String>,
+    ) -> Result<(), SessionError>;
+
     /// Hard-delete a session and all its data from storage.
     ///
     /// This permanently removes the session metadata row. Transcript files
@@ -263,6 +279,20 @@ pub trait TranscriptStore: Send + Sync {
         session_id: &SessionId,
         keep_count: usize,
     ) -> Result<usize, SessionError>;
+
+    /// Update a single message in-place by its `message_id`.
+    ///
+    /// Used by tool output pruning to blank superseded/useless tool results
+    /// without rewriting the entire transcript — preserving the prompt cache
+    /// prefix for messages before the updated one.
+    ///
+    /// Returns `true` if a message was found and updated, `false` otherwise.
+    async fn update_message(
+        &self,
+        session_id: &SessionId,
+        message_id: &str,
+        updated: &Message,
+    ) -> Result<bool, SessionError>;
 }
 
 /// Append-only transcript for GUI display.
@@ -415,6 +445,12 @@ pub struct ChatMessageRecord {
     pub parent_message_id: Option<String>,
     /// Logical grouping identifier for batch pruning operations.
     pub pruning_group_id: Option<String>,
+    /// Whether this assistant message originated native tool calls.
+    /// Pruning uses this to protect load-bearing call+result pairs from
+    /// tombstoning — the same protection the intra-turn pruner already
+    /// enforces but the post-turn detector previously lacked.
+    #[serde(default)]
+    pub has_tool_calls: bool,
     pub created_at: Timestamp,
 }
 

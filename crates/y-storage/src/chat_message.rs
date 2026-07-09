@@ -23,8 +23,8 @@ impl ChatMessageStore for SqliteChatMessageStore {
         sqlx::query(
             "INSERT INTO chat_messages (id, session_id, role, content, status, checkpoint_id, \
              model, input_tokens, output_tokens, cost_usd, context_window, \
-             parent_message_id, pruning_group_id, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             parent_message_id, pruning_group_id, has_tool_calls, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&record.id)
         .bind(record.session_id.as_str())
@@ -39,6 +39,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         .bind(record.context_window)
         .bind(&record.parent_message_id)
         .bind(&record.pruning_group_id)
+        .bind(record.has_tool_calls)
         .bind(record.created_at.to_rfc3339())
         .execute(&self.pool)
         .await
@@ -55,7 +56,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         let rows: Vec<ChatMessageRow> = sqlx::query_as(
             "SELECT id, session_id, role, content, status, checkpoint_id, \
              model, input_tokens, output_tokens, cost_usd, context_window, \
-             parent_message_id, pruning_group_id, created_at \
+             parent_message_id, pruning_group_id, has_tool_calls, created_at \
              FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC",
         )
         .bind(session_id.as_str())
@@ -74,7 +75,7 @@ impl ChatMessageStore for SqliteChatMessageStore {
         let rows: Vec<ChatMessageRow> = sqlx::query_as(
             "SELECT id, session_id, role, content, status, checkpoint_id, \
              model, input_tokens, output_tokens, cost_usd, context_window, \
-             parent_message_id, pruning_group_id, created_at \
+             parent_message_id, pruning_group_id, has_tool_calls, created_at \
              FROM chat_messages WHERE session_id = ? AND status = 'active' \
              ORDER BY created_at ASC",
         )
@@ -273,6 +274,7 @@ struct ChatMessageRow {
     context_window: Option<i64>,
     parent_message_id: Option<String>,
     pruning_group_id: Option<String>,
+    has_tool_calls: bool,
     created_at: String,
 }
 
@@ -308,6 +310,7 @@ impl ChatMessageRow {
             context_window: self.context_window,
             parent_message_id: self.parent_message_id,
             pruning_group_id: self.pruning_group_id,
+            has_tool_calls: self.has_tool_calls,
             created_at,
         }
     }
@@ -352,6 +355,7 @@ mod tests {
                 context_window INTEGER,
                 parent_message_id TEXT,
                 pruning_group_id TEXT,
+                has_tool_calls INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             )",
         )
@@ -382,6 +386,7 @@ mod tests {
             context_window: None,
             parent_message_id: None,
             pruning_group_id: None,
+            has_tool_calls: false,
             created_at: chrono::Utc::now(),
         }
     }

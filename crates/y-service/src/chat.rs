@@ -1915,6 +1915,7 @@ impl ChatService {
             context_window: context_window.map(|v| i64::try_from(v).unwrap_or(i64::MAX)),
             parent_message_id: None,
             pruning_group_id: None,
+            has_tool_calls: !msg.tool_calls.is_empty(),
             created_at: msg.timestamp,
         };
 

@@ -5,17 +5,26 @@
 //! (operating on `Vec<Message>`).
 
 /// Error indicator patterns in tool result content.
+///
+/// These are matched as **prefix-oriented** patterns: a result is considered
+/// error-bearing only when the pattern appears at the start of the content or
+/// immediately after a short preamble (JSON key). This prevents false
+/// positives like `FAILED: test_foo` (a test *result*, not a tool failure) or
+/// `error: this feature requires X` (an informative finding the agent needs).
 pub const ERROR_PATTERNS: &[&str] = &[
     "\"error\":",
     "\"error_type\":",
     "error:",
     "Error:",
-    "FAILED",
-    "failed to",
     "parameter validation failed",
-    "not found",
     "permission denied",
 ];
+
+/// Patterns that are only treated as errors when they appear at the very
+/// start of the content (first 10 chars). These are too generic for
+/// substring matching — `FAILED` inside a test output is a legitimate
+/// result, not a tool failure.
+pub const ERROR_PREFIX_PATTERNS: &[&str] = &["FAILED", "failed to", "not found"];
 
 /// Patterns indicating empty or unhelpful tool results.
 pub const EMPTY_RESULT_PATTERNS: &[&str] = &[
@@ -35,7 +44,12 @@ pub const EMPTY_RESULT_PATTERNS: &[&str] = &[
 pub const EMPTY_RESULT_MAX_LEN: usize = 200;
 
 /// Minimum content similarity ratio to consider two messages as repeats.
-pub const SIMILARITY_THRESHOLD: f64 = 0.8;
+///
+/// Raised from 0.8 to 0.9: the naive character-position comparison inflates
+/// similarity for structurally-alike but semantically-different messages
+/// (e.g. "Let me check the documentation for X" vs "...for Y"). 0.9 keeps
+/// genuine retries while sparing legitimate progressive calls.
+pub const SIMILARITY_THRESHOLD: f64 = 0.9;
 
 /// Maximum distance (in message indices) between assistant messages
 /// to consider them as repeated calls.
@@ -43,11 +57,24 @@ pub const MAX_ADJACENT_DISTANCE: usize = 3;
 
 pub use crate::token_utils::estimate_tokens;
 
-/// Check if content matches any built-in or extra error patterns.
+/// Check if content matches error patterns.
+///
+/// `ERROR_PATTERNS` (JSON keys, `error:`, `permission denied`) are matched
+/// as substrings — they are specific enough that a substring hit is
+/// reliable. `ERROR_PREFIX_PATTERNS` (`FAILED`, `failed to`, `not found`)
+/// are only matched at the start of the content (first 10 chars) to avoid
+/// false positives like `FAILED: test_foo` deep inside a test report.
+///
+/// Extra patterns from agent config are matched as substrings for backward
+/// compatibility.
 pub fn matches_error_patterns(content: &str, extra_patterns: &[String]) -> bool {
     let builtin = ERROR_PATTERNS.iter().any(|p| content.contains(p));
+    let prefix = {
+        let head = content.get(..content.len().min(10)).unwrap_or(content);
+        ERROR_PREFIX_PATTERNS.iter().any(|p| head.starts_with(p))
+    };
     let extra = extra_patterns.iter().any(|p| content.contains(p.as_str()));
-    builtin || extra
+    builtin || prefix || extra
 }
 
 /// Check if content matches empty-result patterns (short content only).
@@ -95,9 +122,22 @@ mod tests {
 
     #[test]
     fn test_matches_error_patterns_builtin() {
+        // JSON-key patterns match as substring.
         assert!(matches_error_patterns("{\"error\": \"bad request\"}", &[]));
-        assert!(matches_error_patterns("FAILED to connect", &[]));
         assert!(matches_error_patterns("permission denied", &[]));
+        // Prefix-only patterns: match at start.
+        assert!(matches_error_patterns("not found: config.toml", &[]));
+        assert!(matches_error_patterns("FAILED to connect", &[]));
+        // Prefix-only patterns: do NOT match mid-content (regression: test output).
+        assert!(!matches_error_patterns(
+            "running tests...\nFAILED: test_foo\npassed: 3",
+            &[]
+        ));
+        assert!(!matches_error_patterns(
+            "the file was not found in /etc",
+            &[]
+        ));
+        // Non-error content.
         assert!(!matches_error_patterns("success: true", &[]));
     }
 

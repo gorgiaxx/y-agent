@@ -28,6 +28,12 @@ pub struct OptimizationReport {
     pub messages_pruned: usize,
     /// Estimated tokens saved by pruning.
     pub pruning_tokens_saved: u32,
+    /// Whether tool output pruning ran (superseded/useless elision).
+    pub tool_output_pruned: bool,
+    /// Tool results blanked by superseded/useless elision.
+    pub tool_outputs_pruned: usize,
+    /// Tokens saved by tool output pruning.
+    pub tool_output_tokens_saved: u32,
     /// Whether compaction was triggered.
     pub compaction_triggered: bool,
     /// Messages compacted (if compaction ran).
@@ -44,6 +50,9 @@ impl OptimizationReport {
             pruning_ran: false,
             messages_pruned: 0,
             pruning_tokens_saved: 0,
+            tool_output_pruned: false,
+            tool_outputs_pruned: 0,
+            tool_output_tokens_saved: 0,
             compaction_triggered: false,
             messages_compacted: 0,
             compaction_tokens_saved: 0,
@@ -90,7 +99,8 @@ fn estimate_tokens(text: &str) -> u32 {
 pub struct ContextOptimizationService;
 
 impl ContextOptimizationService {
-    /// Post-turn optimization: conditional pruning, then conditional compaction.
+    /// Post-turn optimization: tool output pruning, then conditional pruning,
+    /// then conditional compaction.
     ///
     /// Fire-and-forget from the caller's perspective -- errors are logged
     /// but never block the turn result.
@@ -104,15 +114,22 @@ impl ContextOptimizationService {
     ) -> Result<OptimizationReport, OptimizationError> {
         let mut report = OptimizationReport::empty();
 
+        // Step 0: Tool output pruning — blank superseded/useless tool results.
+        // Runs first because it's zero-cost (no LLM call, no tombstone) and
+        // reduces the token count that gates the subsequent steps.
+        Self::run_tool_output_pruning(container, session_id, &mut report).await;
+
         // Step 1: Pruning -- gated by token growth delta.
         Self::run_pruning_if_needed(container, session_id, &mut report).await?;
 
         // Step 2: Compaction -- gated by percentage of context window.
         Self::run_compaction_if_needed(container, session_id, context_window, &mut report).await?;
 
-        if report.pruning_ran || report.compaction_triggered {
+        if report.pruning_ran || report.compaction_triggered || report.tool_output_pruned {
             tracing::info!(
                 session_id = %session_id,
+                tool_outputs_pruned = report.tool_outputs_pruned,
+                tool_output_tokens_saved = report.tool_output_tokens_saved,
                 messages_pruned = report.messages_pruned,
                 pruning_tokens_saved = report.pruning_tokens_saved,
                 compaction_triggered = report.compaction_triggered,
@@ -165,6 +182,68 @@ impl ContextOptimizationService {
         );
 
         Ok(report)
+    }
+
+    // -----------------------------------------------------------------------
+    // Tool output pruning helpers
+    // -----------------------------------------------------------------------
+
+    /// Blank superseded and useless tool results in the context transcript.
+    ///
+    /// This is a zero-cost (no LLM call, no tombstone) optimization that
+    /// replaces old/empty tool result content with short placeholders. It
+    /// runs before pruning and compaction to reduce the token count that
+    /// gates those more expensive steps.
+    ///
+    /// The transcript is rewritten via truncate + append (same pattern as
+    /// `sync_transcript_after_pruning`). The display transcript is never
+    /// touched.
+    async fn run_tool_output_pruning(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        report: &mut OptimizationReport,
+    ) {
+        let transcript = match container.session_manager.read_transcript(session_id).await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to read transcript for tool output pruning");
+                return;
+            }
+        };
+
+        if transcript.is_empty() {
+            return;
+        }
+
+        let mut messages = transcript;
+        let config = y_context::pruning::ToolOutputPruneConfig::default();
+        let result = y_context::pruning::prune_tool_outputs(&mut messages, &config);
+
+        if result.pruned_count == 0 {
+            return;
+        }
+
+        report.tool_output_pruned = true;
+        report.tool_outputs_pruned = result.pruned_count;
+        report.tool_output_tokens_saved = result.tokens_saved;
+
+        // In-place update: only rewrite the modified messages, preserving the
+        // prompt cache prefix for all unchanged messages before them.
+        let transcript_store = container.session_manager.transcript_store();
+        for msg in &messages {
+            if result.modified_message_ids.contains(&msg.message_id) {
+                let _ = transcript_store
+                    .update_message(session_id, &msg.message_id, msg)
+                    .await;
+            }
+        }
+
+        tracing::info!(
+            session_id = %session_id,
+            pruned_count = result.pruned_count,
+            tokens_saved = result.tokens_saved,
+            "tool output pruning applied"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -238,14 +317,21 @@ impl ContextOptimizationService {
         // Actually run pruning.
         Self::run_pruning_inner(container, &messages, session_id, report).await?;
 
-        // Update watermark to current tokens (post-pruning token count may
-        // differ, but using current_tokens is correct because the next delta
-        // should measure from this checkpoint, not from the post-pruned count).
+        // Update watermark to the post-prune token count. Pruning reduced
+        // the active message set, so the next delta should measure growth
+        // from the reduced baseline — otherwise the delta stays artificially
+        // small and noise accumulates until the next trigger.
+        let post_prune_tokens: u32 = container
+            .chat_message_store
+            .list_active(session_id)
+            .await
+            .map(|msgs| msgs.iter().map(|m| estimate_tokens(&m.content)).sum())
+            .unwrap_or(current_tokens);
         container
             .pruning_watermarks
             .write()
             .await
-            .insert(session_id.clone(), current_tokens);
+            .insert(session_id.clone(), post_prune_tokens);
 
         Ok(())
     }
@@ -447,10 +533,123 @@ impl ContextOptimizationService {
             total_tokens,
             threshold_tokens,
             threshold_pct,
-            "compaction threshold reached, triggering compaction"
+            "compaction threshold reached, trying handoff first"
         );
 
+        // Try handoff first: generate a structured state document and
+        // replace the transcript with it + recent messages. This preserves
+        // decision rationale (Goal/Decisions/Progress) that flat compaction
+        // loses — the core amnesia fix for long sessions.
+        if let Some(handoff_gen) = &container.handoff_generator {
+            match Self::run_handoff(container, handoff_gen, session_id, report).await {
+                Ok(true) => return Ok(()), // handoff succeeded
+                Ok(false) => {
+                    // handoff returned no document, fall through
+                    tracing::info!("handoff returned no document; falling back to compaction");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "handoff failed; falling back to compaction"
+                    );
+                }
+            }
+        }
+
+        // Fallback: traditional compaction.
         Self::run_compaction(container, session_id, report, None).await
+    }
+
+    /// Generate a handoff document and replace the transcript with it.
+    ///
+    /// Returns `Ok(true)` if the handoff succeeded and the transcript was
+    /// rewritten, `Ok(false)` if the handoff generator returned no document
+    /// (caller should fall back to compaction).
+    async fn run_handoff(
+        container: &ServiceContainer,
+        handoff_gen: &y_context::HandoffGenerator,
+        session_id: &SessionId,
+        report: &mut OptimizationReport,
+    ) -> Result<bool, OptimizationError> {
+        // Detect any existing compaction summary to pass as context.
+        let transcript = container
+            .session_manager
+            .read_transcript(session_id)
+            .await
+            .map_err(|e| OptimizationError::CompactionFailed(e.to_string()))?;
+
+        let previous_summary: Option<String> = transcript.iter().find_map(|m| {
+            if m.role == y_core::types::Role::System
+                && m.metadata.get("type").and_then(|v| v.as_str()) == Some("compaction_summary")
+            {
+                Some(m.content.clone())
+            } else {
+                None
+            }
+        });
+
+        let result = handoff_gen
+            .generate(
+                container.chat_message_store.as_ref(),
+                session_id,
+                previous_summary.as_deref(),
+                None,
+            )
+            .await
+            .ok_or_else(|| {
+                OptimizationError::CompactionFailed("handoff generation failed".into())
+            })?;
+
+        if result.document.is_empty() {
+            return Ok(false);
+        }
+        // Retain the most recent messages (same window as compaction).
+        let retain_window = container.compaction_engine.config.retain_window;
+        let retained_count = transcript.len().saturating_sub(retain_window);
+        let retained = &transcript[retained_count.min(transcript.len())..];
+
+        // Rewrite the transcript: handoff doc as system message + retained recent messages.
+        let _ = container
+            .session_manager
+            .transcript_store()
+            .truncate(session_id, 0)
+            .await;
+
+        let handoff_msg = y_core::types::Message {
+            message_id: y_core::types::generate_message_id(),
+            role: y_core::types::Role::System,
+            content: result.document.clone(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({ "type": "handoff" }),
+        };
+        let _ = container
+            .session_manager
+            .transcript_store()
+            .append(session_id, &handoff_msg)
+            .await;
+
+        for msg in retained {
+            let _ = container
+                .session_manager
+                .transcript_store()
+                .append(session_id, msg)
+                .await;
+        }
+
+        report.compaction_triggered = true;
+        report.compaction_summary.clone_from(&result.document);
+        report.compaction_tokens_saved = 0; // handoff doesn't save tokens, it restructures them
+
+        tracing::info!(
+            session_id = %session_id,
+            messages_compacted = retained_count,
+            retained_count = retained.len(),
+            "handoff document generated and transcript rewritten"
+        );
+
+        Ok(true)
     }
 
     /// Execute compaction on the context transcript.
@@ -458,6 +657,11 @@ impl ContextOptimizationService {
     /// When `retain_window_override` is `Some(n)`, the compaction engine keeps
     /// only the last `n` messages instead of the configured default. This lets
     /// manual `/compact` work on short conversations.
+    ///
+    /// Uses `serialize_for_compaction` to preserve message structure
+    /// (`tool_calls`, `tool_call_id` pairing) instead of flat string formatting.
+    /// When a prior compaction summary exists in the transcript, passes it
+    /// as `previous_summary` so the LLM merges rather than regenerates.
     async fn run_compaction(
         container: &ServiceContainer,
         session_id: &SessionId,
@@ -470,24 +674,47 @@ impl ContextOptimizationService {
             .await
             .map_err(|e| OptimizationError::CompactionFailed(e.to_string()))?;
 
+        // Structured serialization: preserves tool_calls and tool_call_id
+        // pairing instead of flat "[Role] content" strings.
         let message_strings: Vec<String> = transcript
             .iter()
-            .map(|m| format!("[{:?}] {}", m.role, m.content))
+            .map(y_context::compaction::serialize_for_compaction)
             .collect();
 
         if message_strings.is_empty() {
             return Ok(());
         }
 
+        // Detect a previous compaction summary in the transcript so the
+        // LLM can merge rather than regenerate (prevents summary-of-summary
+        // quality degradation across multiple compaction cycles).
+        let previous_summary: Option<String> = transcript.iter().find_map(|m| {
+            if m.role == y_core::types::Role::System
+                && m.metadata.get("type").and_then(|v| v.as_str()) == Some("compaction_summary")
+            {
+                Some(m.content.clone())
+            } else {
+                None
+            }
+        });
+
         let result = if let Some(retain) = retain_window_override {
             container
                 .compaction_engine
-                .compact_async_with_retain(&message_strings, retain)
+                .compact_async_with_retain_and_previous(
+                    &message_strings,
+                    retain,
+                    previous_summary.as_deref(),
+                )
                 .await
         } else {
             container
                 .compaction_engine
-                .compact_async(&message_strings)
+                .compact_async_with_retain_and_previous(
+                    &message_strings,
+                    container.compaction_engine.config.retain_window,
+                    previous_summary.as_deref(),
+                )
                 .await
         };
 

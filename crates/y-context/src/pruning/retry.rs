@@ -167,6 +167,7 @@ mod tests {
             context_window: None,
             parent_message_id: None,
             pruning_group_id: None,
+            has_tool_calls: false,
             created_at: chrono::Utc::now(),
         }
     }

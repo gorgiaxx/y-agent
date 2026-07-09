@@ -40,6 +40,7 @@ const REQUIRED_SESSION_COLUMNS: &[&str] = &[
     "manual_title",
     "context_reset_index",
     "custom_system_prompt",
+    "branch_summary",
 ];
 const REQUIRED_SCHEDULE_COLUMNS: &[&str] = &[
     "missed_policy",
@@ -47,7 +48,8 @@ const REQUIRED_SCHEDULE_COLUMNS: &[&str] = &[
     "max_executions_per_hour",
     "last_fire",
 ];
-const REQUIRED_CHAT_MESSAGE_COLUMNS: &[&str] = &["parent_message_id", "pruning_group_id"];
+const REQUIRED_CHAT_MESSAGE_COLUMNS: &[&str] =
+    &["parent_message_id", "pruning_group_id", "has_tool_calls"];
 const REQUIRED_TRACE_COLUMNS: &[&str] = &["tags", "replay_context"];
 
 /// Prepare an on-disk database before normal pool creation.

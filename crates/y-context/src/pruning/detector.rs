@@ -56,6 +56,13 @@ impl PruningDetector {
     }
 
     /// Signal 1: Detect tool results containing error indicators.
+    ///
+    /// Skips tool results whose parent assistant has `has_tool_calls = true`.
+    /// An error result for a real tool call (e.g. `read` on a missing path)
+    /// is load-bearing context — removing it makes the LLM re-issue the same
+    /// call. This mirrors the protection the intra-turn pruner already
+    /// enforces (`intra_turn.rs:196-203`) but the post-turn detector
+    /// previously lacked.
     fn detect_error_status(
         &self,
         messages: &[ChatMessageRecord],
@@ -63,6 +70,12 @@ impl PruningDetector {
     ) {
         for (i, msg) in messages.iter().enumerate() {
             if msg.role != "tool" {
+                continue;
+            }
+
+            // Never prune a tool result whose parent assistant carries
+            // tool_calls: the call + result pair is load-bearing context.
+            if i > 0 && messages[i - 1].role == "assistant" && messages[i - 1].has_tool_calls {
                 continue;
             }
 
@@ -87,6 +100,14 @@ impl PruningDetector {
     }
 
     /// Signal 2: Detect repeated identical tool calls (same tool name, similar args).
+    ///
+    /// Skips assistant messages with `has_tool_calls = true`: a real tool
+    /// invocation whose result is referenced by later messages is
+    /// load-bearing. Dropping it (and its paired tool result) would leave
+    /// the LLM with no record of the call and trigger re-invocation.
+    /// Also skips when both messages have empty content — two empty
+    /// strings have `content_similarity` of 1.0, which would incorrectly
+    /// classify legitimate progressive calls as duplicates.
     fn detect_repeated_calls(
         messages: &[ChatMessageRecord],
         candidates: &mut Vec<PruningCandidate>,
@@ -115,6 +136,21 @@ impl PruningDetector {
                 continue;
             }
 
+            // Never prune an assistant that actually invoked tools.
+            if msg_a.has_tool_calls {
+                i += 1;
+                continue;
+            }
+
+            // Skip the similarity check when both messages have empty text
+            // content. Two empty strings have `content_similarity` of 1.0,
+            // which would incorrectly classify legitimate progressive calls
+            // as duplicates.
+            if msg_a.content.trim().is_empty() && msg_b.content.trim().is_empty() {
+                i += 1;
+                continue;
+            }
+
             let similarity = content_similarity(&msg_a.content, &msg_b.content);
             if similarity > SIMILARITY_THRESHOLD {
                 // Mark the earlier one (and its tool result) as a candidate.
@@ -139,12 +175,23 @@ impl PruningDetector {
     }
 
     /// Signal 3: Detect tool results with empty or unhelpful content.
+    ///
+    /// Same safety rule as Signal 1: never prune a tool result whose parent
+    /// assistant carries `tool_calls`. An empty result (e.g. `Glob` with no
+    /// matches) is meaningful context; dropping it causes the LLM to re-issue
+    /// the same search.
     fn detect_empty_results(
         messages: &[ChatMessageRecord],
         candidates: &mut Vec<PruningCandidate>,
     ) {
         for (i, msg) in messages.iter().enumerate() {
             if msg.role != "tool" {
+                continue;
+            }
+
+            // Never prune a tool result whose parent assistant carries
+            // tool_calls: the call + result pair is load-bearing context.
+            if i > 0 && messages[i - 1].role == "assistant" && messages[i - 1].has_tool_calls {
                 continue;
             }
 
@@ -194,6 +241,7 @@ mod tests {
             context_window: None,
             parent_message_id: None,
             pruning_group_id: None,
+            has_tool_calls: false,
             created_at: chrono::Utc::now(),
         }
     }
@@ -281,5 +329,58 @@ mod tests {
         let detector = PruningDetector::with_patterns(vec!["CUSTOM_FAILURE_CODE".to_string()]);
         let candidates = detector.detect_failures(&messages);
         assert!(!candidates.is_empty());
+    }
+
+    #[test]
+    fn test_protects_tool_calls_bearing_assistant() {
+        // Assistant with has_tool_calls=true must NOT be pruned even if the
+        // tool result matches error patterns. This is the core fix for the
+        // post-turn detector's amnesia bug.
+        let mut m2 = make_msg("m2", "assistant", "calling FileRead");
+        m2.has_tool_calls = true;
+        let messages = vec![
+            make_msg("m1", "user", "read config"),
+            m2,
+            make_msg("m3", "tool", "error: file not found"),
+        ];
+
+        let detector = PruningDetector::new();
+        let candidates = detector.detect_failures(&messages);
+
+        // No candidates should be generated — the tool result is "error:"
+        // but its parent assistant has tool_calls, so the pair is protected.
+        let error_candidate = candidates
+            .iter()
+            .find(|c| c.reason == PruningReason::ErrorStatus);
+        assert!(
+            error_candidate.is_none(),
+            "tool result with tool_calls-bearing parent must be protected from pruning"
+        );
+    }
+
+    #[test]
+    fn test_protects_tool_calls_from_repeated_call_detection() {
+        // Two similar assistant messages, but the first has tool_calls.
+        // The similarity detector must skip it.
+        let mut m2 = make_msg("m2", "assistant", "calling ToolSearch(query='X')");
+        m2.has_tool_calls = true;
+        let messages = vec![
+            make_msg("m1", "user", "search for X"),
+            m2,
+            make_msg("m3", "tool", "no results found"),
+            make_msg("m4", "assistant", "calling ToolSearch(query='X')"),
+            make_msg("m5", "tool", "{\"results\": [\"found\"]}"),
+        ];
+
+        let detector = PruningDetector::new();
+        let candidates = detector.detect_failures(&messages);
+
+        let repeated = candidates
+            .iter()
+            .find(|c| c.reason == PruningReason::RepeatedCalls);
+        assert!(
+            repeated.is_none(),
+            "assistant with tool_calls must be protected from repeated-call pruning"
+        );
     }
 }

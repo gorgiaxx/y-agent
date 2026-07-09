@@ -191,6 +191,58 @@ impl TranscriptStore for JsonlTranscriptStore {
 
         Ok(removed)
     }
+
+    #[instrument(skip(self, updated), fields(session_id = %session_id, message_id = %message_id))]
+    async fn update_message(
+        &self,
+        session_id: &SessionId,
+        message_id: &str,
+        updated: &Message,
+    ) -> Result<bool, SessionError> {
+        let all = self.read_all(session_id).await?;
+
+        let mut found = false;
+        let mut content = String::new();
+        for msg in &all {
+            if msg.message_id == message_id {
+                let line =
+                    serde_json::to_string(updated).map_err(|e| SessionError::TranscriptError {
+                        message: format!("serialize updated message: {e}"),
+                    })?;
+                content.push_str(&line);
+                found = true;
+            } else {
+                let line =
+                    serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
+                        message: format!("serialize message: {e}"),
+                    })?;
+                content.push_str(&line);
+            }
+            content.push('\n');
+        }
+
+        if !found {
+            return Ok(false);
+        }
+
+        // Atomic rewrite: write to temp file, then rename.
+        let path = self.transcript_path(session_id);
+        let tmp_path = path.with_extension("jsonl.tmp");
+
+        tokio::fs::write(&tmp_path, content.as_bytes())
+            .await
+            .map_err(|e| SessionError::TranscriptError {
+                message: format!("write temp transcript: {e}"),
+            })?;
+
+        tokio::fs::rename(&tmp_path, &path)
+            .await
+            .map_err(|e| SessionError::TranscriptError {
+                message: format!("rename temp transcript: {e}"),
+            })?;
+
+        Ok(true)
+    }
 }
 
 /// Read all messages from a JSONL file.

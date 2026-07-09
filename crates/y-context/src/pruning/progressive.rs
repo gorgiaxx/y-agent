@@ -110,15 +110,68 @@ impl ProgressivePruning {
     }
 
     /// Build structured input for the pruning-summarizer subagent.
+    ///
+    /// Includes the candidate messages **plus surrounding context**: the
+    /// user message that initiated the workflow (so the summarizer knows
+    /// *why* the tools were called) and the conclusion assistant message
+    /// that followed (so it knows *what was concluded*). Without this
+    /// context the summarizer produces a flat "explored X, Y, Z" list that
+    /// loses the decision rationale — the root cause of task-amnesia.
     fn build_delegation_input(
         messages: &[ChatMessageRecord],
         candidate: &PruningCandidate,
     ) -> serde_json::Value {
-        let workflow_messages: Vec<serde_json::Value> = messages
+        let candidate_set: std::collections::HashSet<&str> =
+            candidate.message_ids.iter().map(String::as_str).collect();
+
+        // Find the index range of the candidate sequence in the full message list.
+        let first_idx = messages
             .iter()
-            .filter(|m| candidate.message_ids.contains(&m.id))
-            .map(|m| serde_json::json!({ "role": m.role, "content": m.content }))
-            .collect();
+            .position(|m| candidate_set.contains(m.id.as_str()));
+        let last_idx = messages
+            .iter()
+            .rposition(|m| candidate_set.contains(m.id.as_str()));
+
+        let mut workflow_messages: Vec<serde_json::Value> = Vec::new();
+
+        // Include the preceding user message as context (the "why").
+        if let Some(first) = first_idx {
+            if first > 0 {
+                for lookback in (1..=first.min(3)).rev() {
+                    let prev = &messages[first - lookback];
+                    if prev.role == "user" {
+                        workflow_messages.push(serde_json::json!({
+                            "role": "user",
+                            "content": prev.content,
+                            "_context": "preceding_user_instruction"
+                        }));
+                        break;
+                    }
+                }
+            }
+        }
+
+        // The candidate messages themselves.
+        for m in messages
+            .iter()
+            .filter(|m| candidate_set.contains(m.id.as_str()))
+        {
+            workflow_messages.push(serde_json::json!({ "role": m.role, "content": m.content }));
+        }
+
+        // Include the following assistant conclusion as context (the "what was concluded").
+        if let Some(last) = last_idx {
+            if last + 1 < messages.len() {
+                let next = &messages[last + 1];
+                if next.role == "assistant" {
+                    workflow_messages.push(serde_json::json!({
+                        "role": "assistant",
+                        "content": next.content,
+                        "_context": "conclusion"
+                    }));
+                }
+            }
+        }
 
         serde_json::json!({ "messages": workflow_messages })
     }
@@ -223,6 +276,7 @@ impl PruningStrategy for ProgressivePruning {
                     context_window: None,
                     parent_message_id: None,
                     pruning_group_id: None,
+                    has_tool_calls: false,
                     created_at: chrono::Utc::now(),
                 };
                 store.insert(&summary_record).await?;
@@ -279,6 +333,7 @@ mod tests {
             context_window: None,
             parent_message_id: None,
             pruning_group_id: None,
+            has_tool_calls: false,
             created_at: chrono::Utc::now(),
         }
     }
@@ -329,10 +384,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_delegation_input() {
+    fn test_build_delegation_input_includes_context() {
         let messages = vec![
+            make_msg("u1", "user", "do task A"),
             make_msg("m1", "assistant", "calling tool A"),
             make_msg("m2", "tool", "result A"),
+            make_msg("m3", "assistant", "Task A found issue: missing config"),
         ];
         let candidate = PruningCandidate {
             message_ids: vec!["m1".into(), "m2".into()],
@@ -341,8 +398,13 @@ mod tests {
         };
         let input = ProgressivePruning::build_delegation_input(&messages, &candidate);
         let msgs = input["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 2);
-        assert_eq!(msgs[0]["role"], "assistant");
-        assert_eq!(msgs[1]["role"], "tool");
+        // 1 preceding user + 2 candidate + 1 conclusion = 4
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["_context"], "preceding_user_instruction");
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert_eq!(msgs[2]["role"], "tool");
+        assert_eq!(msgs[3]["role"], "assistant");
+        assert_eq!(msgs[3]["_context"], "conclusion");
     }
 }

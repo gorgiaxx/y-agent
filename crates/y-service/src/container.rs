@@ -169,6 +169,10 @@ pub struct ServiceContainer {
     /// Compaction engine for older history summarization.
     pub compaction_engine: CompactionEngine,
 
+    /// Handoff generator for structured session transitions.
+    /// When `compaction.strategy = "handoff"`, the optimization service
+    /// tries handoff before falling back to compaction.
+    pub handoff_generator: Option<y_context::HandoffGenerator>,
     /// Compaction trigger threshold as a percentage of `context_window`.
     pub compaction_threshold_pct: u32,
 
@@ -365,13 +369,14 @@ impl ServiceContainer {
                 diag.broadcast_tx.clone(),
             );
 
-        // 13. Pruning + compaction.
+        // 13. Pruning + compaction + handoff.
         let pruning_engine =
             PruningEngine::with_delegator(config.pruning.clone(), Arc::clone(&agent_delegator));
         let compaction_llm: Box<dyn CompactionLlm> =
             Box::new(DelegatingCompactionLlm(Arc::clone(&agent_delegator)));
         let compaction_engine =
             CompactionEngine::with_llm(CompactionConfig::default(), compaction_llm);
+        let handoff_generator = y_context::HandoffGenerator::new(Arc::clone(&agent_delegator));
 
         // 14. Provider metrics.
         let provider_metrics_store = SqliteProviderMetricsStore::new(pool.clone());
@@ -409,6 +414,7 @@ impl ServiceContainer {
             knowledge_service,
             pruning_engine,
             compaction_engine,
+            handoff_generator: Some(handoff_generator),
             compaction_threshold_pct: config.session.compaction_threshold_pct,
             pruning_watermarks: RwLock::new(HashMap::new()),
             provider_metrics_store,

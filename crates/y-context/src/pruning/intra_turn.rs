@@ -26,6 +26,9 @@ pub struct IntraTurnPruningReport {
     pub tokens_saved: u32,
     /// Whether pruning was skipped (below threshold or iteration gate).
     pub skipped: bool,
+    /// Messages that were pruned, preserved for potential restoration.
+    /// Empty when `skipped` is true.
+    pub pruned_messages: Vec<Message>,
 }
 
 impl IntraTurnPruningReport {
@@ -34,9 +37,16 @@ impl IntraTurnPruningReport {
             messages_removed: 0,
             tokens_saved: 0,
             skipped: true,
+            pruned_messages: Vec::new(),
         }
     }
 }
+
+/// Maximum number of messages a single intra-turn pruning pass may remove.
+/// Prevents a cascade of detections from stripping too much working history
+/// in one iteration — each removed message reduces context the LLM needs to
+/// decide its next step.
+const MAX_DELETIONS_PER_PASS: usize = 5;
 
 /// Prunes failed tool call branches from in-memory working history.
 ///
@@ -121,7 +131,6 @@ impl IntraTurnPruner {
             &mut remove_ids,
             &mut candidate_tokens,
         );
-
         if remove_ids.is_empty() || candidate_tokens < self.token_threshold {
             return IntraTurnPruningReport::skipped();
         }
@@ -131,20 +140,40 @@ impl IntraTurnPruner {
         // remove the parent assistant.
         Self::ensure_structural_integrity(working_history, &mut remove_ids);
 
-        // Recalculate tokens after structural integrity adjustments.
-        let tokens_saved: u32 = working_history
-            .iter()
-            .filter(|m| remove_ids.contains(&m.message_id))
-            .map(|m| estimate_tokens(&m.content))
-            .sum();
+        // Cap single-pass deletions to prevent stripping too much context in
+        // one iteration. Excess candidates remain for the next pass.
+        if remove_ids.len() > MAX_DELETIONS_PER_PASS {
+            let excess: Vec<String> = remove_ids
+                .iter()
+                .skip(MAX_DELETIONS_PER_PASS)
+                .cloned()
+                .collect();
+            for id in excess {
+                remove_ids.remove(&id);
+            }
+        }
 
-        let messages_removed = remove_ids.len();
-        working_history.retain(|m| !remove_ids.contains(&m.message_id));
+        // Partition: collect pruned messages for potential restoration, then
+        // retain only non-pruned messages in working_history.
+        let mut pruned_messages = Vec::new();
+        let mut tokens_saved: u32 = 0;
+        let mut messages_removed = 0;
+        let mut i = 0;
+        while i < working_history.len() {
+            if remove_ids.contains(&working_history[i].message_id) {
+                tokens_saved += estimate_tokens(&working_history[i].content);
+                messages_removed += 1;
+                pruned_messages.push(working_history.remove(i));
+            } else {
+                i += 1;
+            }
+        }
 
         IntraTurnPruningReport {
             messages_removed,
             tokens_saved,
             skipped: false,
+            pruned_messages,
         }
     }
 
@@ -682,9 +711,11 @@ mod tests {
 
         let report = pruner.prune_working_history(&mut history, 5);
         assert!(!report.skipped);
-        // a1+t1, a2+t2, a3+t3 should be pruned. a4+t4 preserved (last pair).
-        assert_eq!(report.messages_removed, 6);
-        assert_eq!(history.len(), 3); // u1, a4, t4
+        // a1+t1, a2+t2, a3+t3 are candidates (6 msgs), but MAX_DELETIONS_PER_PASS
+        // caps a single pass to 5. a4+t4 preserved (last pair).
+        assert_eq!(report.messages_removed, 5);
+        assert_eq!(history.len(), 4); // u1 + 1 remaining candidate + a4, t4
+        assert_eq!(report.pruned_messages.len(), 5);
         let ids: Vec<&str> = history.iter().map(|m| m.message_id.as_str()).collect();
         assert!(ids.contains(&"u1"));
         assert!(ids.contains(&"a4"));
@@ -814,5 +845,26 @@ mod tests {
         let ids: Vec<&str> = history.iter().map(|m| m.message_id.as_str()).collect();
         assert!(ids.contains(&"a1"), "earlier FileRead call must survive");
         assert!(ids.contains(&"t1"), "earlier error result must survive");
+    }
+
+    #[test]
+    fn test_pruned_messages_preserved_for_restoration() {
+        let pruner = IntraTurnPruner::from_config(&default_config());
+        let mut history = vec![
+            make_msg("u1", Role::User, "search"),
+            make_msg("a1", Role::Assistant, "try 1"),
+            make_msg("t1", Role::Tool, "{\"error\": \"fail 1\"}"),
+            make_msg("a2", Role::Assistant, "success"),
+        ];
+
+        let report = pruner.prune_working_history(&mut history, 5);
+        if !report.skipped {
+            // Pruned messages are preserved in the report for restoration.
+            assert_eq!(report.pruned_messages.len(), report.messages_removed);
+            // All pruned messages should be in the report.
+            for msg in &report.pruned_messages {
+                assert!(!history.iter().any(|m| m.message_id == msg.message_id));
+            }
+        }
     }
 }
