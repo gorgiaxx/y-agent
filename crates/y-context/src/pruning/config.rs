@@ -121,7 +121,7 @@ fn default_min_iteration() -> u32 {
 }
 
 fn default_intra_turn_token_threshold() -> u32 {
-    1000
+    3000
 }
 
 fn default_true() -> bool {
@@ -142,7 +142,7 @@ mod tests {
         assert!(config.progressive.preserve_identifiers);
         assert!(config.intra_turn.enabled);
         assert_eq!(config.intra_turn.min_iteration, 3);
-        assert_eq!(config.intra_turn.token_threshold, 1000);
+        assert_eq!(config.intra_turn.token_threshold, 3000);
     }
 
     #[test]
@@ -158,7 +158,7 @@ mod tests {
         let config: IntraTurnPruningConfig = serde_json::from_str("{}").unwrap();
         assert!(config.enabled);
         assert_eq!(config.min_iteration, 3);
-        assert_eq!(config.token_threshold, 1000);
+        assert_eq!(config.token_threshold, 3000);
     }
 
     #[test]
