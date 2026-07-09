@@ -451,6 +451,83 @@ impl SessionManager {
         Ok(title)
     }
 
+    /// Branch summary prompt, loaded from config at compile time.
+    const BRANCH_SUMMARY_PROMPT: &str = include_str!("../../../config/prompts/branch_summary.txt");
+
+    /// Generate a summary for a branch session being archived/abandoned.
+    ///
+    /// Reads the branch's context transcript, delegates to the
+    /// `branch-summarizer` agent, and stores the result via
+    /// `set_branch_summary`. The summary captures what was explored, what
+    /// was found, and why the branch was abandoned — so the parent session
+    /// can reference it without re-reading the full transcript.
+    ///
+    /// Returns the generated summary, or an error if generation fails.
+    pub async fn generate_branch_summary(
+        &self,
+        delegator: &dyn AgentDelegator,
+        session_id: &SessionId,
+    ) -> Result<String, SessionManagerError> {
+        let messages = self
+            .transcript_store
+            .read_all(session_id)
+            .await
+            .map_err(|e| SessionManagerError::Transcript {
+                message: e.to_string(),
+            })?;
+
+        if messages.is_empty() {
+            return Err(SessionManagerError::Other {
+                message: "cannot summarize an empty branch".into(),
+            });
+        }
+
+        let context: Vec<_> = messages
+            .iter()
+            .map(|m| serde_json::json!({ "role": format!("{:?}", m.role), "content": m.content }))
+            .collect();
+
+        let input = serde_json::json!({
+            "prompt": Self::BRANCH_SUMMARY_PROMPT,
+            "messages": context,
+        });
+
+        let session_uuid = uuid::Uuid::parse_str(&session_id.0).ok();
+
+        let output = delegator
+            .delegate(
+                "branch-summarizer",
+                input,
+                ContextStrategyHint::None,
+                session_uuid,
+            )
+            .await
+            .map_err(|e| SessionManagerError::Other {
+                message: format!("branch summary delegation failed: {e}"),
+            })?;
+
+        let summary = output.text.trim().to_string();
+
+        if summary.is_empty() {
+            return Err(SessionManagerError::Other {
+                message: "branch-summarizer agent returned empty summary".into(),
+            });
+        }
+
+        // Persist the summary.
+        self.session_store
+            .set_branch_summary(session_id, Some(summary.clone()))
+            .await?;
+
+        tracing::info!(
+            session_id = %session_id,
+            summary_len = summary.len(),
+            "branch summary generated and stored"
+        );
+
+        Ok(summary)
+    }
+
     /// Get a reference to the underlying context transcript store.
     pub fn transcript_store(&self) -> &dyn TranscriptStore {
         &*self.transcript_store

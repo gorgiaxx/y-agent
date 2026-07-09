@@ -1,0 +1,12 @@
+Summarize this conversation branch for future reference.
+The summary MUST capture what was explored, what was found, and why the branch was abandoned or archived.
+Output ONLY the summary. No preamble, no commentary.
+
+Capture:
+- What the user was trying to accomplish in this branch
+- Key findings, decisions, and partial work
+- Why this branch was abandoned (if apparent from the conversation)
+- File paths, error messages, and test results that future work should be aware of
+- Anything that should NOT be retried (failed approaches)
+
+Conversation:

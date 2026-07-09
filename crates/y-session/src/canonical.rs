@@ -370,6 +370,13 @@ mod tests {
         ) -> Result<(), SessionError> {
             Ok(())
         }
+        async fn set_branch_summary(
+            &self,
+            _id: &SessionId,
+            _summary: Option<String>,
+        ) -> Result<(), SessionError> {
+            Ok(())
+        }
     }
 
     #[async_trait::async_trait]
@@ -400,6 +407,14 @@ mod tests {
             _keep_count: usize,
         ) -> Result<usize, SessionError> {
             Ok(0)
+        }
+        async fn update_message(
+            &self,
+            _session_id: &SessionId,
+            _message_id: &str,
+            _updated: &Message,
+        ) -> Result<bool, SessionError> {
+            Ok(false)
         }
     }
 

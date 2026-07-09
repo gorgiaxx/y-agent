@@ -83,7 +83,7 @@ impl SessionStore for SqliteSessionStore {
     async fn get(&self, id: &SessionId) -> Result<SessionNode, SessionError> {
         let row: Option<SessionRow> = sqlx::query_as(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, created_at, updated_at
+                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE id = ?1",
         )
         .bind(id.as_str())
@@ -103,7 +103,7 @@ impl SessionStore for SqliteSessionStore {
     async fn list(&self, filter: &SessionFilter) -> Result<Vec<SessionNode>, SessionError> {
         let mut sql = String::from(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, created_at, updated_at
+                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE 1=1",
         );
         let mut binds: Vec<String> = Vec::new();
@@ -208,7 +208,7 @@ impl SessionStore for SqliteSessionStore {
     async fn children(&self, id: &SessionId) -> Result<Vec<SessionNode>, SessionError> {
         let rows: Vec<SessionRow> = sqlx::query_as(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, created_at, updated_at
+                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE parent_id = ?1 ORDER BY created_at ASC",
         )
         .bind(id.as_str())
@@ -235,7 +235,7 @@ impl SessionStore for SqliteSessionStore {
         let placeholders: Vec<String> = (1..=node.path.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, created_at, updated_at
+                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE id IN ({})",
             placeholders.join(", ")
         );
@@ -426,6 +426,33 @@ impl SessionStore for SqliteSessionStore {
 
         Ok(())
     }
+
+    #[instrument(skip(self, summary), fields(session_id = %id, has_summary = summary.is_some()))]
+    async fn set_branch_summary(
+        &self,
+        id: &SessionId,
+        summary: Option<String>,
+    ) -> Result<(), SessionError> {
+        let result = sqlx::query(
+            r"UPDATE session_metadata
+              SET branch_summary = ?1,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              WHERE id = ?2",
+        )
+        .bind(summary.as_deref())
+        .bind(id.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionError::StorageError {
+            message: e.to_string(),
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionError::NotFound { id: id.to_string() });
+        }
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -446,6 +473,7 @@ struct SessionRow {
     manual_title: Option<String>,
     token_count: i64,
     message_count: i64,
+    branch_summary: Option<String>,
     created_at: String,
     updated_at: String,
 }
@@ -484,6 +512,7 @@ impl SessionRow {
             message_count: u32::try_from(self.message_count).unwrap_or(0),
             last_compaction: None,
             compaction_count: 0,
+            branch_summary: self.branch_summary,
             created_at,
             updated_at,
         })
