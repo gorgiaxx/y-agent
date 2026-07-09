@@ -217,6 +217,22 @@ impl CompactionEngine {
         messages: &[String],
         retain_window: usize,
     ) -> CompactionResult {
+        self.compact_async_with_retain_and_previous(messages, retain_window, None)
+            .await
+    }
+
+    /// Compact with a custom retain window and an optional previous summary.
+    ///
+    /// When `previous_summary` is `Some`, the summarizer merges the new
+    /// messages into the existing summary instead of generating a fresh one.
+    /// This prevents summary-of-summary quality degradation across multiple
+    /// compaction cycles.
+    pub async fn compact_async_with_retain_and_previous(
+        &self,
+        messages: &[String],
+        retain_window: usize,
+        previous_summary: Option<&str>,
+    ) -> CompactionResult {
         if messages.len() <= retain_window {
             return CompactionResult {
                 summary: String::new(),
@@ -235,7 +251,10 @@ impl CompactionEngine {
         };
 
         let summary = match &self.config.strategy {
-            CompactionStrategy::Summarize => self.summarize_all(llm.as_ref(), compacted).await,
+            CompactionStrategy::Summarize => {
+                self.summarize_all(llm.as_ref(), compacted, previous_summary)
+                    .await
+            }
             CompactionStrategy::SegmentedSummarize => {
                 self.segmented_summarize(llm.as_ref(), compacted).await
             }
@@ -255,8 +274,19 @@ impl CompactionEngine {
     }
 
     /// Strategy: Summarize — single LLM call for all messages.
-    async fn summarize_all(&self, llm: &dyn CompactionLlm, messages: &[String]) -> String {
-        let prompt = build_summarize_prompt(messages);
+    ///
+    /// When `previous_summary` is `Some`, uses the update prompt to merge
+    /// rather than replace.
+    async fn summarize_all(
+        &self,
+        llm: &dyn CompactionLlm,
+        messages: &[String],
+        previous_summary: Option<&str>,
+    ) -> String {
+        let prompt = match previous_summary {
+            Some(prev) if !prev.is_empty() => build_update_summarize_prompt(messages, prev),
+            _ => build_summarize_prompt(messages),
+        };
         self.call_with_retry_and_validate(llm, &prompt, messages)
             .await
     }
@@ -436,26 +466,119 @@ impl Default for CompactionEngine {
 
 pub use crate::token_utils::estimate_tokens;
 
-/// Build a summarization prompt.
+/// Maximum chars of tool result content to include in compaction serialization.
+/// Longer results are truncated head+tail to preserve start/end context.
+const TOOL_RESULT_MAX_CHARS: usize = 2000;
+
+/// Serialize a `Message` for compaction, preserving structural information
+/// that the previous `format!("[{:?}] {}", m.role, m.content)` flat string
+/// discarded.
+///
+/// Preserves:
+/// - `tool_calls` on assistant messages (function name + arguments)
+/// - `tool_call_id` linking tool results to their originating call
+/// - Truncation of verbose tool results (head+tail, preserving both ends)
+///
+/// This lets the summarizer LLM understand call↔result pairing and tool
+/// invocation structure, producing much higher-quality summaries.
+pub fn serialize_for_compaction(msg: &y_core::types::Message) -> String {
+    use y_core::types::Role;
+    match msg.role {
+        Role::Assistant => {
+            let mut parts = String::new();
+            if !msg.content.is_empty() {
+                parts.push_str(&msg.content);
+            }
+            if !msg.tool_calls.is_empty() {
+                for tc in &msg.tool_calls {
+                    if !parts.is_empty() {
+                        parts.push('\n');
+                    }
+                    let _ = write!(parts, "  [tool_call: {}({})]", tc.name, tc.arguments);
+                }
+            }
+            format!("[Assistant] {parts}")
+        }
+        Role::Tool => {
+            let content = truncate_tool_result(&msg.content);
+            let id = msg.tool_call_id.as_deref().unwrap_or("?");
+            format!("[ToolResult id={id}] {content}")
+        }
+        Role::User => {
+            format!("[User] {}", msg.content)
+        }
+        Role::System => {
+            format!("[System] {}", msg.content)
+        }
+    }
+}
+
+/// Truncate tool result content to `TOOL_RESULT_MAX_CHARS`, keeping both
+/// head and tail so the summarizer sees the beginning (what was queried)
+/// and the end (final status/error).
+fn truncate_tool_result(content: &str) -> String {
+    if content.len() <= TOOL_RESULT_MAX_CHARS {
+        return content.to_string();
+    }
+    let head_chars = TOOL_RESULT_MAX_CHARS * 3 / 5;
+    let tail_chars = TOOL_RESULT_MAX_CHARS - head_chars;
+    let head: String = content.chars().take(head_chars).collect();
+    let tail: String = content
+        .chars()
+        .rev()
+        .take(tail_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{head}\n[…truncated…]\n{tail}")
+}
+
+const COMPACTION_SUMMARY_PROMPT: &str =
+    include_str!("../../../config/prompts/compaction_summary.txt");
+const COMPACTION_UPDATE_SUMMARY_PROMPT: &str =
+    include_str!("../../../config/prompts/compaction_update_summary.txt");
+const COMPACTION_SEGMENT_PROMPT: &str =
+    include_str!("../../../config/prompts/compaction_segment.txt");
+
+/// Build a summarization prompt with structured messages.
+///
+/// Instructs the summarizer to preserve user decisions, direction changes,
+/// and file operations — the information most commonly lost in flat
+/// compaction.
 fn build_summarize_prompt(messages: &[String]) -> String {
-    let mut prompt = String::from(
-        "Summarize the following conversation messages concisely. \
-         Preserve all important details, decisions, code references, \
-         file paths, URLs, and identifiers:\n\n",
-    );
+    let mut prompt = String::from(COMPACTION_SUMMARY_PROMPT);
+    prompt.push('\n');
     for (i, msg) in messages.iter().enumerate() {
-        let _ = writeln!(prompt, "Message {}: {msg}", i + 1);
+        let _ = writeln!(prompt, "{msg}");
+        if i < messages.len() - 1 {
+            prompt.push('\n');
+        }
     }
     prompt.push_str("\nSummary:");
     prompt
 }
 
+/// Build a summarization prompt that merges with a previous summary.
+///
+/// When a compaction summary already exists (from a prior compaction cycle),
+/// the new summary should update and extend it rather than replace it —
+/// avoiding summary-of-summary quality degradation.
+fn build_update_summarize_prompt(messages: &[String], previous_summary: &str) -> String {
+    let mut prompt = String::from(COMPACTION_UPDATE_SUMMARY_PROMPT);
+    prompt.push('\n');
+    prompt.push_str(previous_summary);
+    prompt.push_str("\n\nNew messages to incorporate:\n\n");
+    for msg in messages {
+        let _ = writeln!(prompt, "{msg}");
+    }
+    prompt.push_str("\nUpdated summary:");
+    prompt
+}
+
 /// Build a segment summarization prompt.
 fn build_segment_prompt(messages: &[String], segment_num: usize) -> String {
-    let mut prompt = format!(
-        "Summarize segment {segment_num} of a conversation. \
-         Preserve key details, identifiers, and decisions:\n\n"
-    );
+    let mut prompt = format!("{COMPACTION_SEGMENT_PROMPT}\nSegment {segment_num}:\n\n");
     for msg in messages {
         let _ = writeln!(prompt, "- {msg}");
     }

@@ -1,0 +1,2 @@
+Summarize a segment of a conversation.
+Preserve key details, identifiers, decisions, and tool results:

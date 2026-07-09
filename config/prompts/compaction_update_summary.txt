@@ -1,0 +1,9 @@
+Update the existing summary with the new conversation messages below.
+
+CRITICAL — preserve in the updated summary:
+- All user decisions and direction changes from BOTH the prior summary and new messages
+- File paths read or modified
+- Test results, error messages, and their resolutions
+- Key conclusions reached by the assistant
+
+Previous summary:

@@ -1,0 +1,10 @@
+Summarize the following conversation messages concisely.
+
+CRITICAL — preserve these in the summary:
+- All user decisions and direction changes (e.g. "don't do X, do Y instead")
+- File paths read or modified, and what was found/changed
+- Test results, error messages, and their resolutions
+- Key conclusions reached by the assistant
+- Tool call → result pairings (what was called and what happened)
+
+Messages:
