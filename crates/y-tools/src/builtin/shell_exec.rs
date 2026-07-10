@@ -196,7 +196,9 @@ impl ShellExecTool {
                 "duration_ms": duration.as_millis(),
             }),
             warnings: vec![],
-            metadata: serde_json::json!({}),
+            // Expose process_id in metadata so the tool dispatch layer can
+            // build a correlation_id for UI card reuse across poll/write/kill.
+            metadata: serde_json::json!({ "process_id": handle.id }),
         }
     }
 }

@@ -74,7 +74,7 @@ pub(crate) async fn handle_native_tool_calls(
     ctx.new_messages.push(assistant_msg);
 
     for tc in &response.tool_calls {
-        let (_success, result_content) =
+        let (_success, result_content, tool_meta) =
             tool_dispatch::execute_and_record_tool(container, config, tc, progress, ctx).await;
 
         let tool_msg = Message {
@@ -84,7 +84,7 @@ pub(crate) async fn handle_native_tool_calls(
             tool_call_id: Some(tc.id.clone()),
             tool_calls: vec![],
             timestamp: y_core::types::now(),
-            metadata: serde_json::Value::Null,
+            metadata: tool_meta,
         };
         ctx.working_history.push(tool_msg.clone());
         ctx.new_messages.push(tool_msg);
@@ -197,7 +197,7 @@ pub(crate) async fn handle_prompt_based_tool_calls(
         // Native mode: execute each tool and send results as Role::Tool
         // messages with tool_call_id, matching handle_native_tool_calls.
         for tc in &tool_call_requests {
-            let (_success, result_content) =
+            let (_success, result_content, tool_meta) =
                 tool_dispatch::execute_and_record_tool(container, config, tc, progress, ctx).await;
 
             let tool_msg = Message {
@@ -207,7 +207,7 @@ pub(crate) async fn handle_prompt_based_tool_calls(
                 tool_call_id: Some(tc.id.clone()),
                 tool_calls: vec![],
                 timestamp: y_core::types::now(),
-                metadata: serde_json::Value::Null,
+                metadata: tool_meta,
             };
             ctx.working_history.push(tool_msg.clone());
             ctx.new_messages.push(tool_msg);
@@ -217,9 +217,8 @@ pub(crate) async fn handle_prompt_based_tool_calls(
         // Role::User message (original behavior).
         let mut result_blocks = Vec::new();
         for tc in &tool_call_requests {
-            let (tool_success, result_content) =
+            let (tool_success, result_content, _tool_meta) =
                 tool_dispatch::execute_and_record_tool(container, config, tc, progress, ctx).await;
-
             let result_value: serde_json::Value = serde_json::from_str(&result_content)
                 .unwrap_or(serde_json::Value::String(result_content));
             result_blocks.push(format_tool_result_dialect(

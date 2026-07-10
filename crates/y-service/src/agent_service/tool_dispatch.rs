@@ -17,14 +17,14 @@ use crate::user_interaction_orchestrator::INTERACTION_TIMEOUT;
 
 /// Execute a single tool call, record it, and emit progress events.
 ///
-/// Returns `(success, result_content)`.
+/// Returns `(success, result_content, metadata)`.
 pub(crate) async fn execute_and_record_tool(
     container: &ServiceContainer,
     config: &AgentExecutionConfig,
     tc: &ToolCallRequest,
     progress: Option<&TurnEventSender>,
     ctx: &mut ToolExecContext,
-) -> (bool, String) {
+) -> (bool, String, serde_json::Value) {
     let tool_start = std::time::Instant::now();
 
     if ctx
@@ -43,7 +43,7 @@ pub(crate) async fn execute_and_record_tool(
             None,
             None,
         );
-        return (false, error_content);
+        return (false, error_content, serde_json::Value::Null);
     }
 
     if ctx.tool_calls_executed.len() >= config.max_tool_calls {
@@ -71,7 +71,7 @@ pub(crate) async fn execute_and_record_tool(
             None,
             None,
         );
-        return (false, error_content);
+        return (false, error_content, serde_json::Value::Null);
     }
 
     // (Plan-mode tool blocking removed -- the new Plan tool orchestrator
@@ -170,7 +170,7 @@ pub(crate) async fn execute_and_record_tool(
                 None,
             );
 
-            return (false, error_content);
+            return (false, error_content, serde_json::Value::Null);
         }
         y_guardrails::PermissionAction::Ask => {
             // Pause and ask the user for approval via HITL.
@@ -276,7 +276,7 @@ pub(crate) async fn execute_and_record_tool(
                         None,
                     );
 
-                    return (false, error_content);
+                    return (false, error_content, serde_json::Value::Null);
                 }
             }
         }
@@ -358,11 +358,10 @@ pub(crate) async fn execute_and_record_tool(
         tool_metadata.clone(),
     );
 
+    // Build correlation metadata before tool_metadata is consumed by emit_tool_result.
+    let final_meta = build_tool_correlation_metadata(tc, tool_metadata.as_ref());
+
     // Emit ToolResult progress event.
-    // Use the full (unstripped) result for url_meta extraction and GUI
-    // preview, but the stripped version is what the LLM sees.
-    // Limit must be large enough to keep structured JSON (e.g. Grep results)
-    // intact -- matches the persisted metadata limit in build_tool_results_metadata.
     emit_tool_result(
         progress,
         tc,
@@ -378,7 +377,7 @@ pub(crate) async fn execute_and_record_tool(
     // presentation layer delivers an answer via `PendingInteractions`.
     if tool_success && tc.name == "AskUser" {
         if let Some(answer) = intercept_ask_user(tc, progress, ctx, config, tool_start).await {
-            return (true, answer);
+            return (true, answer, serde_json::Value::Null);
         }
     }
 
@@ -387,7 +386,66 @@ pub(crate) async fn execute_and_record_tool(
         maybe_auto_register_agent(container, &tc.arguments).await;
     }
 
-    (tool_success, result_content)
+    (tool_success, result_content, final_meta)
+}
+
+/// Build tool message metadata with a correlation ID for related tool calls.
+///
+/// When a tool call is part of a multi-call sequence (e.g. `ShellExec`
+/// `start`/`poll`/`write`/`kill` for the same `process_id`, or Plan updates),
+/// the `correlation_id` field lets the UI group these calls and update the
+/// existing card instead of creating a new one for each iteration.
+///
+/// Currently correlates by:
+/// - `ShellExec` `start`/`poll`/`write`/`kill`: `process_id` from result or args
+/// - Other tools: no correlation (each call gets a unique card)
+fn build_tool_correlation_metadata(
+    tc: &ToolCallRequest,
+    tool_metadata: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut meta = tool_metadata.cloned().unwrap_or(serde_json::Value::Null);
+
+    // Extract correlation ID for ShellExec background process operations.
+    if tc.name == "ShellExec" {
+        let action = tc
+            .arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("run");
+
+        if matches!(action, "start" | "poll" | "write" | "kill") {
+            // Try to get process_id from arguments (poll/write/kill) or
+            // from the tool result metadata (start returns a new process_id).
+            let process_id = tc
+                .arguments
+                .get("process_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| {
+                    meta.get("process_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                });
+
+            if let Some(pid) = process_id {
+                if meta.is_null() {
+                    meta = serde_json::json!({});
+                }
+                if let Some(obj) = meta.as_object_mut() {
+                    obj.insert(
+                        "correlation_id".to_string(),
+                        serde_json::Value::String(format!("shellexec:{pid}")),
+                    );
+                    obj.insert(
+                        "correlation_action".to_string(),
+                        serde_json::Value::String(action.to_string()),
+                    );
+                }
+            }
+        }
+    }
+
+    meta
 }
 
 fn tool_arguments_preview(tc: &ToolCallRequest) -> String {
