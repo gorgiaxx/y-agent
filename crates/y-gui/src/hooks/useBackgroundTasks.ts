@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 
 import { logger, transport } from '../lib';
+import { chatBusSubscribers, type ChatBusEvent } from './chatBus';
 
 export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'unknown';
 
@@ -98,6 +99,16 @@ function taskFromSnapshot(
     error: snapshot.error,
     duration_ms: snapshot.duration_ms,
   };
+}
+
+function mapStatusString(status: unknown): BackgroundTaskStatus {
+  if (typeof status !== 'string') return 'unknown';
+  switch (status) {
+    case 'running': return 'running';
+    case 'completed': return 'completed';
+    case 'failed': return 'failed';
+    default: return 'unknown';
+  }
 }
 
 export function useBackgroundTasks(sessionId: string | null) {
@@ -210,13 +221,48 @@ export function useBackgroundTasks(sessionId: string | null) {
     },
   ), [runSnapshotAction, sessionId]);
 
+  // Bridge: when the LLM calls ShellExec poll/write/kill, the tool_result
+  // event carries the process snapshot in result_preview. Forward it to
+  // the background tasks panel so logs update in real-time even when the
+  // panel wasn't manually polling.
   useEffect(() => {
-    sessionIdRef.current = sessionId;
-    setTasks([]);
-    setLogs({});
-    setError(null);
-    setBusyProcessId(null);
-  }, [sessionId]);
+    if (!sessionId) return;
+
+    const handler = (event: ChatBusEvent) => {
+      if (event.type !== 'tool_result') return;
+      if (event.session_id !== sessionId) return;
+
+      const meta = event.metadata;
+      if (!meta || typeof meta.correlation_id !== 'string') return;
+
+      // Parse the ShellExec result JSON from result_preview.
+      const correlationId = meta.correlation_id as string;
+      if (!correlationId.startsWith('shellexec:')) return;
+
+      const processId = correlationId.slice('shellexec:'.length);
+      try {
+        const parsed = JSON.parse(event.result_preview);
+        const snapshot: BackgroundTaskSnapshot = {
+          process_id: processId,
+          backend: parsed.backend ?? 'local',
+          status: mapStatusString(parsed.status),
+          exit_code: parsed.exit_code ?? null,
+          error: parsed.error ?? null,
+          stdout: parsed.stdout ?? '',
+          stderr: parsed.stderr ?? '',
+          duration_ms: parsed.duration_ms ?? 0,
+        };
+        applySnapshot(snapshot);
+      } catch {
+        // result_preview might not be valid JSON in some edge cases.
+      }
+    };
+
+    chatBusSubscribers.add(handler);
+    return () => {
+      chatBusSubscribers.delete(handler);
+    };
+  }, [sessionId, applySnapshot]);
 
   useEffect(() => {
     void refresh();
