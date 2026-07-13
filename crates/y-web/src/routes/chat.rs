@@ -158,6 +158,12 @@ pub struct AnswerPlanReviewRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct RequestPlanRevisionRequest {
+    pub plan_run_id: String,
+    pub feedback: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct RestorePendingReviewsRequest {
     pub session_id: String,
 }
@@ -402,13 +408,6 @@ async fn chat_send(
     let result_sid = prepared.session_id.0.clone();
     let result_run_id = run_id.clone();
 
-    // Emit chat:started.
-    let _ = state.event_tx.send(SseEvent::ChatStarted {
-        run_id: run_id.clone(),
-        session_id: result_sid.clone(),
-        kind: "chat".to_string(),
-    });
-
     // Register cancellation token.
     let cancel_token = CancellationToken::new();
     if let Ok(mut runs) = state.pending_runs.lock() {
@@ -551,12 +550,8 @@ async fn chat_cancel(
         tok.cancel();
     }
 
-    let _ = state.event_tx.send(SseEvent::ChatError {
-        run_id: body.run_id,
-        session_id: String::new(),
-        error: "Cancelled".to_string(),
-    });
-
+    // The worker emits the authoritative terminal event after its progress
+    // forwarder drains, avoiding a cancellation/event-order race in the UI.
     Ok(Json(serde_json::json!({"message": "cancelled"})))
 }
 
@@ -611,12 +606,6 @@ async fn chat_resend(
     let run_id = uuid::Uuid::new_v4().to_string();
     let result_sid = body.session_id.clone();
     let result_run_id = run_id.clone();
-
-    let _ = state.event_tx.send(SseEvent::ChatStarted {
-        run_id: run_id.clone(),
-        session_id: result_sid.clone(),
-        kind: "chat".to_string(),
-    });
 
     let cancel_token = CancellationToken::new();
     if let Ok(mut runs) = state.pending_runs.lock() {
@@ -942,6 +931,27 @@ async fn answer_plan_review(
     Ok(Json(serde_json::json!({ "delivered": delivered })))
 }
 
+/// `POST /api/v1/chat/request-plan-revision`
+async fn request_plan_revision(
+    State(state): State<AppState>,
+    Json(body): Json<RequestPlanRevisionRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    if body.feedback.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "plan revision feedback must not be empty".to_string(),
+        ));
+    }
+
+    let delivered = PlanOrchestrator::request_execution_revision(
+        &body.plan_run_id,
+        body.feedback,
+        &state.container.session_state.active_plan_executions,
+    )
+    .await;
+
+    Ok(Json(serde_json::json!({ "delivered": delivered })))
+}
+
 /// `POST /api/v1/chat/restore-pending-reviews`
 async fn restore_pending_reviews(
     State(state): State<AppState>,
@@ -1129,8 +1139,8 @@ pub struct FollowUpDeleteRequest {
 }
 
 /// Broadcast a session's current follow-up queue over SSE so all clients sync.
-async fn broadcast_follow_up_queue(state: &AppState, session_id: &SessionId) {
-    let queue = ChatService::list_follow_ups(&state.container, session_id).await;
+fn broadcast_follow_up_queue(state: &AppState, session_id: &SessionId) {
+    let queue = ChatService::list_follow_ups(&state.container, session_id);
     let _ = state.event_tx.send(SseEvent::FollowUpQueueUpdated {
         session_id: session_id.0.clone(),
         queue: serde_json::to_value(&queue).unwrap_or_else(|_| serde_json::Value::Array(vec![])),
@@ -1149,8 +1159,9 @@ async fn follow_up_add(
         ));
     }
     let sid = SessionId(body.session_id);
-    let msg = ChatService::add_follow_up(&state.container, &sid, text.to_string()).await;
-    broadcast_follow_up_queue(&state, &sid).await;
+    let msg = ChatService::add_follow_up(&state.container, &sid, text.to_string())
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    broadcast_follow_up_queue(&state, &sid);
     Ok(Json(msg))
 }
 
@@ -1160,8 +1171,8 @@ async fn follow_up_delete(
     Json(body): Json<FollowUpDeleteRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let sid = SessionId(body.session_id);
-    let deleted = ChatService::delete_follow_up(&state.container, &sid, &body.follow_up_id).await;
-    broadcast_follow_up_queue(&state, &sid).await;
+    let deleted = ChatService::delete_follow_up(&state.container, &sid, &body.follow_up_id);
+    broadcast_follow_up_queue(&state, &sid);
     Ok(Json(serde_json::json!({ "deleted": deleted })))
 }
 
@@ -1171,7 +1182,7 @@ async fn follow_up_list(
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let sid = SessionId(session_id);
-    let follow_ups = ChatService::list_follow_ups(&state.container, &sid).await;
+    let follow_ups = ChatService::list_follow_ups(&state.container, &sid);
     Ok(Json(follow_ups))
 }
 
@@ -1201,6 +1212,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/chat/answer-question", post(answer_question))
         .route("/api/v1/chat/answer-permission", post(answer_permission))
         .route("/api/v1/chat/answer-plan-review", post(answer_plan_review))
+        .route(
+            "/api/v1/chat/request-plan-revision",
+            post(request_plan_revision),
+        )
         .route("/api/v1/chat/resume-plan", post(resume_plan))
         .route(
             "/api/v1/chat/restore-pending-reviews",

@@ -221,17 +221,6 @@ pub async fn chat_send(
 
     apply_prepared_prompt_context(&state, &sid, &mut prepared).await;
 
-    // Emit chat:started so the frontend can map run_id -> session_id
-    // before any chat:progress events arrive.
-    let _ = app.emit(
-        "chat:started",
-        ChatStartedPayload {
-            run_id: run_id.clone(),
-            session_id: sid.0.clone(),
-            kind: "chat".to_string(),
-        },
-    );
-
     // Create a cancellation token for this run and register it so chat_cancel
     // can trigger it for immediate mid-LLM-call termination.
     let cancel_token = CancellationToken::new();
@@ -487,14 +476,10 @@ fn normalize_directory(path: Option<String>) -> Option<String> {
 
 /// Abort an in-flight LLM run by run ID.
 ///
-/// Emits `chat:error` with the error string "Cancelled" so the frontend
-/// correctly finalises its streaming state for this run.
+/// The worker emits the terminal event after cancellation has propagated and
+/// its progress stream has drained.
 #[tauri::command]
-pub async fn chat_cancel(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    run_id: String,
-) -> Result<(), String> {
+pub async fn chat_cancel(state: State<'_, AppState>, run_id: String) -> Result<(), String> {
     tracing::info!(run_id = %run_id, "chat_cancel: received");
 
     let token = {
@@ -518,19 +503,9 @@ pub async fn chat_cancel(
     } else {
         tracing::warn!(run_id = %run_id, "chat_cancel: no token found -- run may have already completed");
     }
-    // Notify frontend regardless of whether a token was found so the UI
-    // streaming state is always cleared.
-    // For cancel, the session_id is not easily recoverable from the backend
-    // side (the run_id→session mapping lives in the frontend's ChatBus).
-    // We send an empty string; the frontend falls back to its own mapping.
-    let _ = app.emit(
-        "chat:error",
-        ChatErrorPayload {
-            run_id,
-            session_id: String::new(),
-            error: "Cancelled".to_string(),
-        },
-    );
+    // The worker emits the single authoritative terminal event after all
+    // progress events have drained. Emitting one here would race the worker
+    // and can split one Plan run across duplicate assistant bubbles.
     Ok(())
 }
 
@@ -611,8 +586,8 @@ pub struct FollowUpQueuePayload {
 }
 
 /// Emit the current follow-up queue for a session so the UI stays in sync.
-async fn emit_follow_up_queue(app: &AppHandle, state: &AppState, session_id: &SessionId) {
-    let queue = ChatService::list_follow_ups(&state.container, session_id).await;
+fn emit_follow_up_queue(app: &AppHandle, state: &AppState, session_id: &SessionId) {
+    let queue = ChatService::list_follow_ups(&state.container, session_id);
     let _ = app.emit(
         "chat:follow_up_queue",
         FollowUpQueuePayload {
@@ -635,8 +610,9 @@ pub async fn chat_add_follow_up(
         return Err("follow-up text must not be empty".to_string());
     }
     let sid = SessionId(session_id);
-    let msg = ChatService::add_follow_up(&state.container, &sid, trimmed.to_string()).await;
-    emit_follow_up_queue(&app, &state, &sid).await;
+    let msg = ChatService::add_follow_up(&state.container, &sid, trimmed.to_string())
+        .map_err(|error| error.to_string())?;
+    emit_follow_up_queue(&app, &state, &sid);
     Ok(msg)
 }
 
@@ -649,8 +625,8 @@ pub async fn chat_delete_follow_up(
     follow_up_id: String,
 ) -> Result<bool, String> {
     let sid = SessionId(session_id);
-    let deleted = ChatService::delete_follow_up(&state.container, &sid, &follow_up_id).await;
-    emit_follow_up_queue(&app, &state, &sid).await;
+    let deleted = ChatService::delete_follow_up(&state.container, &sid, &follow_up_id);
+    emit_follow_up_queue(&app, &state, &sid);
     Ok(deleted)
 }
 
@@ -661,7 +637,7 @@ pub async fn chat_list_follow_ups(
     session_id: String,
 ) -> Result<Vec<FollowUpMessage>, String> {
     let sid = SessionId(session_id);
-    Ok(ChatService::list_follow_ups(&state.container, &sid).await)
+    Ok(ChatService::list_follow_ups(&state.container, &sid))
 }
 
 // ---------------------------------------------------------------------------
@@ -811,15 +787,6 @@ pub async fn chat_resend(
 
     let prepared_session_id = prepared.session_id.clone();
     apply_prepared_prompt_context(&state, &prepared_session_id, &mut prepared).await;
-
-    let _ = app.emit(
-        "chat:started",
-        ChatStartedPayload {
-            run_id: run_id.clone(),
-            session_id: session_id.clone(),
-            kind: "chat".to_string(),
-        },
-    );
 
     // Register cancellation token.
     let cancel_token = CancellationToken::new();
@@ -1223,6 +1190,28 @@ pub async fn chat_answer_plan_review(
     }
 
     Ok(delivered)
+}
+
+/// Interrupt active plan phases and return the same plan run to drafting and
+/// manual review with user-supplied revision feedback.
+#[tauri::command]
+pub async fn chat_request_plan_revision(
+    state: State<'_, AppState>,
+    plan_run_id: String,
+    feedback: String,
+) -> Result<bool, String> {
+    if feedback.trim().is_empty() {
+        return Err("plan revision feedback must not be empty".to_string());
+    }
+
+    Ok(
+        y_service::plan_orchestrator::PlanOrchestrator::request_execution_revision(
+            &plan_run_id,
+            feedback,
+            &state.container.session_state.active_plan_executions,
+        )
+        .await,
+    )
 }
 
 /// Restore any plan reviews stuck in `awaiting_approval` for a session.
