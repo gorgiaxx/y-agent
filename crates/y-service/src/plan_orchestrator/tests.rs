@@ -20,6 +20,103 @@ async fn make_test_container() -> (crate::container::ServiceContainer, TempDir) 
 }
 
 #[test]
+fn test_plan_lifecycle_interrupts_execution_for_revision_then_returns_to_drafting() {
+    let mut lifecycle = PlanLifecycle::default();
+    lifecycle
+        .transition(PlanLifecycleEvent::DraftCompleted)
+        .unwrap();
+    lifecycle.transition(PlanLifecycleEvent::Approved).unwrap();
+    lifecycle
+        .transition(PlanLifecycleEvent::ExecutionRevisionRequested)
+        .unwrap();
+    assert_eq!(lifecycle.state, PlanLifecycleState::InterruptingForRevision);
+
+    lifecycle
+        .transition(PlanLifecycleEvent::ExecutionInterrupted)
+        .unwrap();
+    assert_eq!(lifecycle.state, PlanLifecycleState::Drafting);
+}
+
+#[test]
+fn test_plan_lifecycle_stop_is_terminal_not_a_new_review() {
+    let mut lifecycle = PlanLifecycle::default();
+    lifecycle
+        .transition(PlanLifecycleEvent::DraftCompleted)
+        .unwrap();
+    lifecycle.transition(PlanLifecycleEvent::Approved).unwrap();
+    lifecycle.transition(PlanLifecycleEvent::Stopped).unwrap();
+
+    assert_eq!(lifecycle.state, PlanLifecycleState::Cancelled);
+    assert!(lifecycle
+        .transition(PlanLifecycleEvent::ExecutionInterrupted)
+        .is_err());
+}
+
+#[tokio::test]
+async fn test_request_execution_revision_delivers_feedback_once() {
+    let pending = crate::chat_types::ActivePlanExecutions::default();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    pending.lock().await.insert(
+        "plan-run-1".into(),
+        crate::chat_types::ActivePlanExecution::new(SessionId("session-1".into()), sender),
+    );
+
+    assert!(
+        PlanOrchestrator::request_execution_revision(
+            "plan-run-1",
+            "add migration rollback".into(),
+            &pending,
+        )
+        .await
+    );
+    assert_eq!(receiver.await.unwrap(), "add migration rollback");
+    assert!(
+        !PlanOrchestrator::request_execution_revision(
+            "plan-run-1",
+            "second request".into(),
+            &pending,
+        )
+        .await
+    );
+}
+
+#[tokio::test]
+async fn test_plan_review_wait_is_cancelled_by_root_stop() {
+    let (container, _tmpdir) = make_test_container().await;
+    let plan = make_simple_plan(vec!["t1"]);
+    let session = SessionId("review-cancel-session".into());
+    let plan_path = std::path::Path::new("/tmp/review-cancel.md");
+    let (progress, _receiver) = TurnEventSender::channel();
+    let cancel = CancellationToken::new();
+
+    let review = PlanOrchestrator::resolve_plan_review(
+        &plan,
+        plan_path,
+        PlanReviewMode::Manual,
+        &session,
+        Some(&progress),
+        &container.session_state.pending_plan_reviews,
+        &container,
+        None,
+        Some(&cancel),
+    );
+    let stop = async {
+        tokio::task::yield_now().await;
+        cancel.cancel();
+    };
+    let (outcome, ()) = tokio::join!(review, stop);
+
+    assert_eq!(outcome.status, "review_cancelled");
+    assert!(!outcome.approved);
+    assert!(container
+        .session_state
+        .pending_plan_reviews
+        .lock()
+        .await
+        .is_empty());
+}
+
+#[test]
 fn test_slug_from_request() {
     assert_eq!(
         slug_from_request("Refactor the plan mode"),

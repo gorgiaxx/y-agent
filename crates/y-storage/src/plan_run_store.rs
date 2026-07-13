@@ -191,6 +191,58 @@ impl SqlitePlanRunStore {
         Ok(())
     }
 
+    /// Replace an existing run with a newly drafted revision while preserving
+    /// its stable identity. Old step rows refer to the superseded task graph,
+    /// so the plan replacement and step cleanup are committed atomically.
+    #[instrument(skip(self, plan_json))]
+    pub async fn replace_run_for_revision(
+        &self,
+        plan_run_id: &str,
+        plan_json: &str,
+        plan_path: &str,
+    ) -> Result<(), StorageError> {
+        let mut transaction = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| StorageError::Database {
+                message: format!("begin plan revision '{plan_run_id}': {e}"),
+            })?;
+
+        sqlx::query(
+            r"UPDATE plan_runs
+              SET plan_json = ?1,
+                  plan_path = ?2,
+                  status = 'awaiting_approval',
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              WHERE id = ?3",
+        )
+        .bind(plan_json)
+        .bind(plan_path)
+        .bind(plan_run_id)
+        .execute(&mut *transaction)
+        .await
+        .map_err(|e| StorageError::Database {
+            message: format!("replace plan run for revision '{plan_run_id}': {e}"),
+        })?;
+
+        sqlx::query("DELETE FROM plan_step_results WHERE plan_run_id = ?1")
+            .bind(plan_run_id)
+            .execute(&mut *transaction)
+            .await
+            .map_err(|e| StorageError::Database {
+                message: format!("clear superseded plan steps '{plan_run_id}': {e}"),
+            })?;
+
+        transaction
+            .commit()
+            .await
+            .map_err(|e| StorageError::Database {
+                message: format!("commit plan revision '{plan_run_id}': {e}"),
+            })?;
+        Ok(())
+    }
+
     #[instrument(skip(self))]
     pub async fn load_run(&self, plan_run_id: &str) -> Result<Option<PlanRunRow>, StorageError> {
         let row: Option<DbPlanRunRow> = sqlx::query_as(
@@ -386,5 +438,36 @@ mod tests {
         let store = setup().await;
         let runs = store.list_runs_for_session("nobody").await.unwrap();
         assert!(runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_replace_run_for_revision_updates_plan_and_clears_old_steps() {
+        let store = setup().await;
+        store
+            .create_run("run-1", "sess-a", r#"{"plan_title":"Old"}"#, "/old.md")
+            .await
+            .unwrap();
+        store
+            .record_step_result(
+                "run-1",
+                "old-task",
+                1,
+                "Old task",
+                "completed",
+                Some("done"),
+            )
+            .await
+            .unwrap();
+
+        store
+            .replace_run_for_revision("run-1", r#"{"plan_title":"Revised"}"#, "/revised.md")
+            .await
+            .unwrap();
+
+        let run = store.load_run("run-1").await.unwrap().unwrap();
+        assert_eq!(run.plan_json, r#"{"plan_title":"Revised"}"#);
+        assert_eq!(run.plan_path, "/revised.md");
+        assert_eq!(run.status, "awaiting_approval");
+        assert!(store.load_step_results("run-1").await.unwrap().is_empty());
     }
 }

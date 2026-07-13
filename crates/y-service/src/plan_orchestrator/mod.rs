@@ -26,7 +26,10 @@ use y_guardrails::PlanReviewMode;
 
 use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentService};
 use crate::chat::{TurnEvent, TurnEventSender};
-use crate::chat_types::{OperationMode, PendingPlanReviews, PlanReviewDecision};
+use crate::chat_types::{
+    ActivePlanExecution, ActivePlanExecutions, OperationMode, PendingPlanReviews,
+    PlanReviewDecision,
+};
 use crate::container::ServiceContainer;
 
 const PLAN_CANCELLED_MESSAGE: &str = "Cancelled";
@@ -187,6 +190,80 @@ impl RestoredPlanReview {
 /// Orchestrates the plan-mode workflow triggered by the `Plan` tool.
 pub struct PlanOrchestrator;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum PlanLifecycleState {
+    #[default]
+    Drafting,
+    AwaitingApproval,
+    Executing,
+    InterruptingForRevision,
+    Completed,
+    Cancelled,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanLifecycleEvent {
+    DraftCompleted,
+    RevisionRequested,
+    Approved,
+    Rejected,
+    ExecutionRevisionRequested,
+    ExecutionInterrupted,
+    ExecutionCompleted,
+    Stopped,
+}
+
+#[derive(Debug, Default)]
+struct PlanLifecycle {
+    state: PlanLifecycleState,
+}
+
+impl PlanLifecycle {
+    fn transition(&mut self, event: PlanLifecycleEvent) -> Result<(), String> {
+        let previous = self.state;
+        let next = match (self.state, event) {
+            (PlanLifecycleState::Drafting, PlanLifecycleEvent::DraftCompleted) => {
+                PlanLifecycleState::AwaitingApproval
+            }
+            (PlanLifecycleState::AwaitingApproval, PlanLifecycleEvent::RevisionRequested) => {
+                PlanLifecycleState::Drafting
+            }
+            (PlanLifecycleState::AwaitingApproval, PlanLifecycleEvent::Approved) => {
+                PlanLifecycleState::Executing
+            }
+            (PlanLifecycleState::AwaitingApproval, PlanLifecycleEvent::Rejected) => {
+                PlanLifecycleState::Rejected
+            }
+            (PlanLifecycleState::Executing, PlanLifecycleEvent::ExecutionRevisionRequested) => {
+                PlanLifecycleState::InterruptingForRevision
+            }
+            (
+                PlanLifecycleState::InterruptingForRevision,
+                PlanLifecycleEvent::ExecutionInterrupted,
+            ) => PlanLifecycleState::Drafting,
+            (PlanLifecycleState::Executing, PlanLifecycleEvent::ExecutionCompleted) => {
+                PlanLifecycleState::Completed
+            }
+            (
+                PlanLifecycleState::Drafting
+                | PlanLifecycleState::AwaitingApproval
+                | PlanLifecycleState::Executing
+                | PlanLifecycleState::InterruptingForRevision,
+                PlanLifecycleEvent::Stopped,
+            ) => PlanLifecycleState::Cancelled,
+            (current, requested) => {
+                return Err(format!(
+                    "invalid plan lifecycle transition: {current:?} + {requested:?}"
+                ));
+            }
+        };
+        self.state = next;
+        tracing::debug!(?previous, ?event, ?next, "plan lifecycle transition");
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ResolvedAgentConfig {
     system_prompt: String,
@@ -208,6 +285,11 @@ struct PlanReviewOutcome {
     status: String,
     feedback: String,
     plan_run_id: Option<String>,
+}
+
+enum PlanExecutionAttempt {
+    Finished(Result<Vec<serde_json::Value>, ToolError>),
+    RevisionRequested(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,20 +387,16 @@ impl PlanOrchestrator {
             });
         }
 
-        // A plan spawned while executing an already-approved plan's phases
-        // auto-approves: the top-level plan is the sole human approval gate.
-        // This prevents concurrent sub-plan reviews that the user cannot see
-        // and that do not pause the main agent.
-        let review_mode = resolve_review_mode_for_handle(container, parent_session_id).await;
-
+        // A nested plan still auto-approves, but an explicit execution
+        // revision below always switches the next draft back to manual review.
+        let mut review_mode = resolve_review_mode_for_handle(container, parent_session_id).await;
         let max_parallel = resolve_max_parallel_phases(arguments);
-
-        // Plan-write -> review loop. On `Revise`, the user's feedback is fed
-        // back into plan-writer for another iteration. `Approve` exits the
-        // loop into execution; `Reject` / timeout / cancel returns immediately.
+        let mut lifecycle = PlanLifecycle::default();
         let mut revision_feedback: Option<String> = None;
-        let mut revision_count: usize = 0;
-        let (structured_plan, review) = loop {
+        let mut revision_count = 0_usize;
+        let mut existing_plan_run_id: Option<String> = None;
+
+        loop {
             tracing::info!(
                 request = %request,
                 revision = revision_count,
@@ -336,6 +414,9 @@ impl PlanOrchestrator {
                 cancel.as_ref(),
             )
             .await?;
+            lifecycle
+                .transition(PlanLifecycleEvent::DraftCompleted)
+                .map_err(plan_lifecycle_error)?;
 
             let review = Self::resolve_plan_review(
                 &structured_plan,
@@ -345,6 +426,8 @@ impl PlanOrchestrator {
                 progress,
                 &container.session_state.pending_plan_reviews,
                 container,
+                existing_plan_run_id.as_deref(),
+                cancel.as_ref(),
             )
             .await;
 
@@ -361,178 +444,158 @@ impl PlanOrchestrator {
                         feedback: review.feedback,
                         plan_run_id: review.plan_run_id,
                     };
-                    break (structured_plan, exhausted);
+                    lifecycle
+                        .transition(PlanLifecycleEvent::Rejected)
+                        .map_err(plan_lifecycle_error)?;
+                    return Ok(build_plan_rejected_tool_output(
+                        &plan_path,
+                        &structured_plan,
+                        &exhausted,
+                    ));
                 }
+                lifecycle
+                    .transition(PlanLifecycleEvent::RevisionRequested)
+                    .map_err(plan_lifecycle_error)?;
+                existing_plan_run_id.clone_from(&review.plan_run_id);
                 revision_feedback = Some(review.feedback);
                 continue;
             }
 
-            break (structured_plan, review);
-        };
-
-        let total_tasks = structured_plan.tasks.len();
-
-        if !review.approved {
-            return Ok(build_plan_rejected_tool_output(
-                &plan_path,
-                &structured_plan,
-                &review,
-            ));
-        }
-
-        // Dependency-aware parallel execution after explicit human approval.
-        tracing::info!(
-            total_tasks,
-            max_parallel,
-            "plan orchestrator: starting phase execution"
-        );
-
-        let plan_run_id = if let Some(id) = review.plan_run_id.clone() {
-            id
-        } else {
-            let id = Uuid::new_v4().to_string();
-            let plan_json = serde_json::to_string(&structured_plan).unwrap_or_default();
-            let _ = container
-                .plan_run_store
-                .create_run(
-                    &id,
-                    parent_session_id.as_str(),
-                    &plan_json,
-                    &plan_path.display().to_string(),
-                )
-                .await;
-            id
-        };
-
-        let phase_results = Box::pin(plan_execution_ctx::scoped(Self::execute_phases(
-            container,
-            parent_session_id,
-            &structured_plan,
-            &plan_path,
-            &plan_run_id,
-            max_parallel,
-            progress,
-            cancel.as_ref(),
-            None,
-        )))
-        .await;
-
-        // Cancellation is not an error from the caller's perspective: the
-        // user asked to stop, so we return a partial ToolOutput with whatever
-        // phases completed before the cancel. The plan run is marked
-        // "cancelled" in the DB so it can be detected and resumed later.
-        let phase_results = match phase_results {
-            Ok(results) => results,
-            Err(e) if is_cancelled_tool_error(&e) => {
-                let _ = container
-                    .plan_run_store
-                    .update_run_status(&plan_run_id, "cancelled")
-                    .await;
-                // Load whatever step results were persisted before the cancel
-                // so the ToolOutput reflects actual progress, not an empty vec.
-                let persisted = container
-                    .plan_run_store
-                    .load_step_results(&plan_run_id)
-                    .await
-                    .unwrap_or_default();
-                let phase_results: Vec<serde_json::Value> = persisted
-                    .iter()
-                    .map(|step| {
-                        let mut entry = serde_json::json!({
-                            "task_id": step.task_id,
-                            "phase": step.phase,
-                            "title": step.title,
-                            "status": step.status,
-                        });
-                        if let Some(output) = &step.output_json {
-                            if step.status == "completed" {
-                                entry["summary"] = serde_json::Value::String(output.clone());
-                            } else {
-                                entry["error"] = serde_json::Value::String(output.clone());
-                            }
-                        }
-                        entry
-                    })
-                    .collect();
-                let completed = phase_results
-                    .iter()
-                    .filter(|r| r["status"] == "completed")
-                    .count();
-                let failed = phase_results
-                    .iter()
-                    .filter(|r| r["status"] == "failed")
-                    .count();
-                let metadata = build_plan_execution_metadata(
+            if !review.approved {
+                let event = if is_cancelled(cancel.as_ref()) {
+                    PlanLifecycleEvent::Stopped
+                } else {
+                    PlanLifecycleEvent::Rejected
+                };
+                lifecycle.transition(event).map_err(plan_lifecycle_error)?;
+                return Ok(build_plan_rejected_tool_output(
                     &plan_path,
                     &structured_plan,
-                    &plan_run_id,
-                    completed,
-                    failed,
-                    &phase_results,
-                );
-                return Ok(ToolOutput {
-                    success: false,
-                    content: build_plan_execution_tool_content(
+                    &review,
+                ));
+            }
+
+            lifecycle
+                .transition(PlanLifecycleEvent::Approved)
+                .map_err(plan_lifecycle_error)?;
+            tracing::info!(
+                total_tasks = structured_plan.tasks.len(),
+                max_parallel,
+                "plan orchestrator: starting phase execution"
+            );
+
+            let plan_run_id = if let Some(id) = review.plan_run_id.clone() {
+                id
+            } else {
+                let id = Uuid::new_v4().to_string();
+                let plan_json = serde_json::to_string(&structured_plan).unwrap_or_default();
+                let _ = container
+                    .plan_run_store
+                    .create_run(
+                        &id,
+                        parent_session_id.as_str(),
+                        &plan_json,
+                        &plan_path.display().to_string(),
+                    )
+                    .await;
+                id
+            };
+            existing_plan_run_id = Some(plan_run_id.clone());
+
+            let attempt = Box::pin(Self::execute_phases_with_revision_control(
+                container,
+                parent_session_id,
+                &structured_plan,
+                &plan_path,
+                &plan_run_id,
+                max_parallel,
+                progress,
+                cancel.as_ref(),
+            ))
+            .await;
+
+            let phase_results = match attempt {
+                PlanExecutionAttempt::RevisionRequested(feedback) => {
+                    lifecycle
+                        .transition(PlanLifecycleEvent::ExecutionRevisionRequested)
+                        .map_err(plan_lifecycle_error)?;
+                    lifecycle
+                        .transition(PlanLifecycleEvent::ExecutionInterrupted)
+                        .map_err(plan_lifecycle_error)?;
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "awaiting_approval")
+                        .await;
+                    revision_count += 1;
+                    if revision_count > MAX_PLAN_REVISIONS {
+                        let _ = container
+                            .plan_run_store
+                            .update_run_status(&plan_run_id, "cancelled")
+                            .await;
+                        let exhausted = PlanReviewOutcome {
+                            approved: false,
+                            status: "max_revisions_exceeded".to_string(),
+                            feedback,
+                            plan_run_id: Some(plan_run_id),
+                        };
+                        return Ok(build_plan_rejected_tool_output(
+                            &plan_path,
+                            &structured_plan,
+                            &exhausted,
+                        ));
+                    }
+                    let prior_steps = container
+                        .plan_run_store
+                        .load_step_results(&plan_run_id)
+                        .await
+                        .unwrap_or_default();
+                    revision_feedback =
+                        Some(build_execution_revision_feedback(&feedback, &prior_steps));
+                    review_mode = PlanReviewMode::Manual;
+                    continue;
+                }
+                PlanExecutionAttempt::Finished(Ok(results)) => results,
+                PlanExecutionAttempt::Finished(Err(e)) if is_cancelled_tool_error(&e) => {
+                    lifecycle
+                        .transition(PlanLifecycleEvent::Stopped)
+                        .map_err(plan_lifecycle_error)?;
+                    let _ = container
+                        .plan_run_store
+                        .update_run_status(&plan_run_id, "cancelled")
+                        .await;
+                    let phase_results = load_persisted_phase_results(container, &plan_run_id).await;
+                    return Ok(build_cancelled_plan_output(
                         &plan_path,
                         &structured_plan,
                         &plan_run_id,
-                        completed,
-                        failed,
                         &phase_results,
-                        Some(&review),
-                        None,
-                    ),
-                    warnings: vec!["Plan execution was cancelled by the user. \
-                        Completed phases are preserved; the plan can be resumed."
-                        .into()],
-                    metadata,
-                });
-            }
-            Err(e) => return Err(e),
-        };
+                        &review,
+                    ));
+                }
+                PlanExecutionAttempt::Finished(Err(e)) => return Err(e),
+            };
 
-        let run_status = if phase_results.iter().any(|r| r["status"] == "failed") {
-            "partial_failure"
-        } else {
-            "completed"
-        };
-        let _ = container
-            .plan_run_store
-            .update_run_status(&plan_run_id, run_status)
-            .await;
+            lifecycle
+                .transition(PlanLifecycleEvent::ExecutionCompleted)
+                .map_err(plan_lifecycle_error)?;
+            let run_status = if phase_results.iter().any(|r| r["status"] == "failed") {
+                "partial_failure"
+            } else {
+                "completed"
+            };
+            let _ = container
+                .plan_run_store
+                .update_run_status(&plan_run_id, run_status)
+                .await;
 
-        let completed = phase_results
-            .iter()
-            .filter(|r| r["status"] == "completed")
-            .count();
-        let failed = phase_results
-            .iter()
-            .filter(|r| r["status"] == "failed")
-            .count();
-        let metadata = build_plan_execution_metadata(
-            &plan_path,
-            &structured_plan,
-            &plan_run_id,
-            completed,
-            failed,
-            &phase_results,
-        );
-
-        Ok(ToolOutput {
-            success: failed == 0,
-            content: build_plan_execution_tool_content(
+            return Ok(build_completed_plan_output(
                 &plan_path,
                 &structured_plan,
                 &plan_run_id,
-                completed,
-                failed,
                 &phase_results,
-                Some(&review),
-                None,
-            ),
-            warnings: vec![],
-            metadata,
-        })
+                &review,
+            ));
+        }
     }
 
     /// Create a child session under the parent and run the plan-writer agent.
@@ -711,6 +774,8 @@ impl PlanOrchestrator {
         progress: Option<&TurnEventSender>,
         pending_plan_reviews: &PendingPlanReviews,
         container: &ServiceContainer,
+        existing_plan_run_id: Option<&str>,
+        cancel: Option<&CancellationToken>,
     ) -> PlanReviewOutcome {
         match review_mode {
             PlanReviewMode::Auto => {
@@ -738,21 +803,33 @@ impl PlanOrchestrator {
                     };
                 };
 
-                let review_id = Uuid::new_v4().to_string();
+                let review_id =
+                    existing_plan_run_id.map_or_else(|| Uuid::new_v4().to_string(), str::to_owned);
                 let plan_run_id = review_id.clone();
 
                 let plan_json = serde_json::to_string(plan).unwrap_or_default();
-                if let Err(e) = container
-                    .plan_run_store
-                    .create_run_with_status(
-                        &plan_run_id,
-                        session_id.as_str(),
-                        &plan_json,
-                        &plan_path.display().to_string(),
-                        "awaiting_approval",
-                    )
-                    .await
-                {
+                let persist_result = if existing_plan_run_id.is_some() {
+                    container
+                        .plan_run_store
+                        .replace_run_for_revision(
+                            &plan_run_id,
+                            &plan_json,
+                            &plan_path.display().to_string(),
+                        )
+                        .await
+                } else {
+                    container
+                        .plan_run_store
+                        .create_run_with_status(
+                            &plan_run_id,
+                            session_id.as_str(),
+                            &plan_json,
+                            &plan_path.display().to_string(),
+                            "awaiting_approval",
+                        )
+                        .await
+                };
+                if let Err(e) = persist_result {
                     tracing::warn!(
                         error = %e,
                         "failed to persist plan run as awaiting_approval"
@@ -801,8 +878,17 @@ impl PlanOrchestrator {
                     tasks: tasks_json,
                 });
 
-                let outcome = match decision_rx.await {
-                    Ok(PlanReviewDecision::Approve) => {
+                let decision = if let Some(cancel) = cancel {
+                    tokio::select! {
+                        decision = decision_rx => Some(decision),
+                        () = cancel.cancelled() => None,
+                    }
+                } else {
+                    Some(decision_rx.await)
+                };
+
+                let outcome = match decision {
+                    Some(Ok(PlanReviewDecision::Approve)) => {
                         emit_plan_review_progress(tx, plan_path, plan, "approved", "", None);
                         PlanReviewOutcome {
                             approved: true,
@@ -811,7 +897,7 @@ impl PlanOrchestrator {
                             plan_run_id: Some(plan_run_id.clone()),
                         }
                     }
-                    Ok(PlanReviewDecision::Revise { feedback }) => {
+                    Some(Ok(PlanReviewDecision::Revise { feedback })) => {
                         emit_plan_review_progress(
                             tx,
                             plan_path,
@@ -827,7 +913,7 @@ impl PlanOrchestrator {
                             plan_run_id: Some(plan_run_id.clone()),
                         }
                     }
-                    Ok(PlanReviewDecision::Reject { feedback }) => {
+                    Some(Ok(PlanReviewDecision::Reject { feedback })) => {
                         emit_plan_review_progress(tx, plan_path, plan, "rejected", &feedback, None);
                         PlanReviewOutcome {
                             approved: false,
@@ -836,7 +922,7 @@ impl PlanOrchestrator {
                             plan_run_id: Some(plan_run_id.clone()),
                         }
                     }
-                    Err(_) => {
+                    None | Some(Err(_)) => {
                         Self::remove_pending_review(&review_id, pending_plan_reviews).await;
                         emit_plan_review_progress(
                             tx,
@@ -895,6 +981,94 @@ impl PlanOrchestrator {
             );
             false
         }
+    }
+
+    /// Ask an actively executing plan to stop its current phase subtree and
+    /// return to drafting and manual approval with the supplied feedback.
+    pub async fn request_execution_revision(
+        plan_run_id: &str,
+        feedback: String,
+        active_plan_executions: &ActivePlanExecutions,
+    ) -> bool {
+        let active = active_plan_executions.lock().await.remove(plan_run_id);
+
+        if let Some(active) = active {
+            active.request_revision(feedback).is_ok()
+        } else {
+            tracing::warn!(
+                plan_run_id,
+                "request_execution_revision: plan is no longer executing"
+            );
+            false
+        }
+    }
+
+    async fn execute_phases_with_revision_control(
+        container: &ServiceContainer,
+        parent_session_id: &SessionId,
+        plan: &StructuredPlan,
+        plan_path: &Path,
+        plan_run_id: &str,
+        max_parallel: usize,
+        progress: Option<&TurnEventSender>,
+        root_cancel: Option<&CancellationToken>,
+    ) -> PlanExecutionAttempt {
+        let phase_cancel = root_cancel
+            .map(CancellationToken::child_token)
+            .unwrap_or_default();
+        let (revision_sender, revision_receiver) = tokio::sync::oneshot::channel();
+        container
+            .session_state
+            .active_plan_executions
+            .lock()
+            .await
+            .insert(
+                plan_run_id.to_string(),
+                ActivePlanExecution::new(parent_session_id.clone(), revision_sender),
+            );
+
+        let execution = plan_execution_ctx::scoped(Self::execute_phases(
+            container,
+            parent_session_id,
+            plan,
+            plan_path,
+            plan_run_id,
+            max_parallel,
+            progress,
+            Some(&phase_cancel),
+            None,
+        ));
+        tokio::pin!(execution);
+
+        let attempt = tokio::select! {
+            result = &mut execution => PlanExecutionAttempt::Finished(result),
+            requested = revision_receiver => {
+                match requested {
+                    Ok(feedback) => {
+                        phase_cancel.cancel();
+                        if let Err(error) = (&mut execution).await {
+                            if !is_cancelled_tool_error(&error) {
+                                tracing::warn!(
+                                    plan_run_id,
+                                    %error,
+                                    "phase execution failed while stopping for plan revision"
+                                );
+                            }
+                        }
+                        PlanExecutionAttempt::RevisionRequested(feedback)
+                    }
+                    Err(_) => PlanExecutionAttempt::Finished((&mut execution).await),
+                }
+            }
+        };
+
+        container
+            .session_state
+            .active_plan_executions
+            .lock()
+            .await
+            .remove(plan_run_id);
+        attempt
     }
 
     /// Reconstruct a display summary for every persisted plan run in a session,
@@ -3110,6 +3284,146 @@ fn build_plan_rejected_tool_output(
             &review.status,
             &review.feedback,
             None,
+        ),
+    }
+}
+
+fn plan_lifecycle_error(message: String) -> ToolError {
+    ToolError::RuntimeError {
+        name: "Plan".into(),
+        message,
+    }
+}
+
+async fn load_persisted_phase_results(
+    container: &ServiceContainer,
+    plan_run_id: &str,
+) -> Vec<serde_json::Value> {
+    container
+        .plan_run_store
+        .load_step_results(plan_run_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|step| {
+            let mut entry = serde_json::json!({
+                "task_id": step.task_id,
+                "phase": step.phase,
+                "title": step.title,
+                "status": step.status,
+            });
+            if let Some(output) = step.output_json {
+                let output_key = if step.status == "completed" {
+                    "summary"
+                } else {
+                    "error"
+                };
+                entry[output_key] = serde_json::Value::String(output);
+            }
+            entry
+        })
+        .collect()
+}
+
+fn build_execution_revision_feedback(
+    feedback: &str,
+    prior_steps: &[y_storage::PlanStepResultRow],
+) -> String {
+    let completed = prior_steps
+        .iter()
+        .filter(|step| step.status == "completed")
+        .map(|step| format!("{} ({})", step.title, step.task_id))
+        .collect::<Vec<_>>();
+
+    if completed.is_empty() {
+        return feedback.to_string();
+    }
+
+    format!(
+        "{feedback}\n\nExecution was interrupted for this revision. Already completed phases: {}. Account for their side effects and do not repeat them unless the requested change requires rework.",
+        completed.join(", ")
+    )
+}
+
+fn build_cancelled_plan_output(
+    plan_path: &Path,
+    plan: &StructuredPlan,
+    plan_run_id: &str,
+    phase_results: &[serde_json::Value],
+    review: &PlanReviewOutcome,
+) -> ToolOutput {
+    let completed = phase_results
+        .iter()
+        .filter(|result| result["status"] == "completed")
+        .count();
+    let failed = phase_results
+        .iter()
+        .filter(|result| result["status"] == "failed")
+        .count();
+
+    ToolOutput {
+        success: false,
+        content: build_plan_execution_tool_content(
+            plan_path,
+            plan,
+            plan_run_id,
+            completed,
+            failed,
+            phase_results,
+            Some(review),
+            None,
+        ),
+        warnings: vec![
+            "Plan execution was cancelled by the user. Completed phases are preserved; the plan can be resumed."
+                .into(),
+        ],
+        metadata: build_plan_execution_metadata(
+            plan_path,
+            plan,
+            plan_run_id,
+            completed,
+            failed,
+            phase_results,
+        ),
+    }
+}
+
+fn build_completed_plan_output(
+    plan_path: &Path,
+    plan: &StructuredPlan,
+    plan_run_id: &str,
+    phase_results: &[serde_json::Value],
+    review: &PlanReviewOutcome,
+) -> ToolOutput {
+    let completed = phase_results
+        .iter()
+        .filter(|result| result["status"] == "completed")
+        .count();
+    let failed = phase_results
+        .iter()
+        .filter(|result| result["status"] == "failed")
+        .count();
+
+    ToolOutput {
+        success: failed == 0,
+        content: build_plan_execution_tool_content(
+            plan_path,
+            plan,
+            plan_run_id,
+            completed,
+            failed,
+            phase_results,
+            Some(review),
+            None,
+        ),
+        warnings: vec![],
+        metadata: build_plan_execution_metadata(
+            plan_path,
+            plan,
+            plan_run_id,
+            completed,
+            failed,
+            phase_results,
         ),
     }
 }
