@@ -207,6 +207,13 @@ export function useSessionInteractions(activeSessionId: string | null) {
     answerPlanReview(reviewId, 'reject', feedback);
   }, [answerPlanReview]);
 
+  const handlePlanExecutionRevision = useCallback((planRunId: string, feedback: string) => {
+    transport.invoke('chat_request_plan_revision', {
+      planRunId,
+      feedback,
+    }).catch(console.error);
+  }, []);
+
   return {
     askUserData,
     permissionData,
@@ -220,5 +227,6 @@ export function useSessionInteractions(activeSessionId: string | null) {
     handlePlanReviewApprove,
     handlePlanReviewRevise,
     handlePlanReviewReject,
+    handlePlanExecutionRevision,
   };
 }

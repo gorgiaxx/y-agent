@@ -97,6 +97,17 @@ export function isPlanResumeRun(state: ChatRunState, runId: string): boolean {
   return state.runKinds[runId] === 'plan_resume';
 }
 
+export function getTerminalRunContext(
+  state: ChatRunState,
+  runId: string,
+  explicitSessionId?: string,
+): { sessionId: string; kind?: string } {
+  return {
+    sessionId: explicitSessionId || state.runToSession[runId] || '',
+    ...(state.runKinds[runId] ? { kind: state.runKinds[runId] } : {}),
+  };
+}
+
 /// Mark a child (sub-agent) session as actively streaming so the drill-in
 /// sub-chat's input area reflects the running state. Called when a sub-session
 /// streaming event arrives during a parent run.

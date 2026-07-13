@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } fro
 
 import { useChat } from '../hooks/useChat';
 import { useSteering } from '../hooks/useSteering';
+import { useTodoQueue } from '../hooks/useTodoQueue';
 import { useSessions } from '../hooks/useSessions';
 import { useConfig } from '../hooks/useConfig';
 import { useWorkspaces } from '../hooks/useWorkspaces';
@@ -20,6 +21,7 @@ import type { EditorTab, EditorSurface } from '../components/agents/types';
 import {
   ChatContext,
   SteeringContext,
+  TodoQueueContext,
   SessionsContext,
   AgentSessionsContext,
   WorkspacesContext,
@@ -58,6 +60,7 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   const agentSessionHooks = useSessions(activeAgentId);
   const chatHooks = useChat(sessionHooks.activeSessionId);
   const steeringHooks = useSteering();
+  const todoQueueHooks = useTodoQueue();
   const configHooks = useConfig();
   const themeCtx = useThemeProvider(configHooks.config.theme);
   const workspaceHooks = useWorkspaces();
@@ -208,33 +211,35 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
           <AgentSessionsContext.Provider value={agentSessionHooks}>
             <ChatContext.Provider value={chatHooks}>
               <SteeringContext.Provider value={steeringHooks}>
-              <WorkspacesContext.Provider value={workspaceHooks}>
-                <SkillsContext.Provider value={skillHooks}>
-                  <KnowledgeContext.Provider value={knowledgeHooks}>
-                    <AgentsContext.Provider value={agentHooks}>
-                      <AutomationContext.Provider value={automationHooks}>
-                        <BackgroundTasksContext.Provider value={backgroundTaskHooks}>
-                          <ProvidersContext.Provider value={providerHooks}>
-                            <ViewRoutingContext.Provider value={viewRouting}>
-                              <PanelContext.Provider value={panelState}>
-                                <AgentEditorContext.Provider value={agentEditorState}>
-                                  <SkillsNavContext.Provider value={skillsNavState}>
-                                    <AutomationNavContext.Provider value={automationNavState}>
-                                      <BackgroundTasksNavContext.Provider value={backgroundTasksNavState}>
-                                        {children}
-                                      </BackgroundTasksNavContext.Provider>
-                                    </AutomationNavContext.Provider>
-                                  </SkillsNavContext.Provider>
-                                </AgentEditorContext.Provider>
-                              </PanelContext.Provider>
-                            </ViewRoutingContext.Provider>
-                          </ProvidersContext.Provider>
-                        </BackgroundTasksContext.Provider>
-                      </AutomationContext.Provider>
-                    </AgentsContext.Provider>
-                  </KnowledgeContext.Provider>
-                </SkillsContext.Provider>
-              </WorkspacesContext.Provider>
+                <TodoQueueContext.Provider value={todoQueueHooks}>
+                  <WorkspacesContext.Provider value={workspaceHooks}>
+                    <SkillsContext.Provider value={skillHooks}>
+                      <KnowledgeContext.Provider value={knowledgeHooks}>
+                        <AgentsContext.Provider value={agentHooks}>
+                          <AutomationContext.Provider value={automationHooks}>
+                            <BackgroundTasksContext.Provider value={backgroundTaskHooks}>
+                              <ProvidersContext.Provider value={providerHooks}>
+                                <ViewRoutingContext.Provider value={viewRouting}>
+                                  <PanelContext.Provider value={panelState}>
+                                    <AgentEditorContext.Provider value={agentEditorState}>
+                                      <SkillsNavContext.Provider value={skillsNavState}>
+                                        <AutomationNavContext.Provider value={automationNavState}>
+                                          <BackgroundTasksNavContext.Provider value={backgroundTasksNavState}>
+                                            {children}
+                                          </BackgroundTasksNavContext.Provider>
+                                        </AutomationNavContext.Provider>
+                                      </SkillsNavContext.Provider>
+                                    </AgentEditorContext.Provider>
+                                  </PanelContext.Provider>
+                                </ViewRoutingContext.Provider>
+                              </ProvidersContext.Provider>
+                            </BackgroundTasksContext.Provider>
+                          </AutomationContext.Provider>
+                        </AgentsContext.Provider>
+                      </KnowledgeContext.Provider>
+                    </SkillsContext.Provider>
+                  </WorkspacesContext.Provider>
+                </TodoQueueContext.Provider>
               </SteeringContext.Provider>
             </ChatContext.Provider>
           </AgentSessionsContext.Provider>

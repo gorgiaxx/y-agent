@@ -12,6 +12,7 @@ function makePlanReviewCtx(overrides: Partial<PlanReviewState> = {}): PlanReview
     onApprove: vi.fn(),
     onRevise: vi.fn(),
     onReject: vi.fn(),
+    onRequestExecutionRevision: vi.fn(),
     ...overrides,
   };
 }
@@ -289,5 +290,36 @@ describe('PlanRenderer inline review integration', () => {
 
     expect(html).toContain('Awaiting review');
     expect(html).not.toContain('plan-review-inline');
+  });
+
+  it('offers a revise-plan action while approved phases are executing', () => {
+    const ctx = makePlanReviewCtx();
+    const html = renderToStaticMarkup(
+      <PlanReviewProvider value={ctx}>
+        <ToolCallCard
+          toolCall={{ id: 'plan-running', name: 'Plan', arguments: '{}' }}
+          status="success"
+          result="Execution in progress"
+          metadata={{
+            display: {
+              kind: 'plan_execution',
+              plan_title: 'Running plan',
+              plan_file: '/tmp/running.md',
+              plan_run_id: 'run-1',
+              total_phases: 2,
+              completed: 0,
+              failed: 0,
+              tasks: [
+                { id: 'p1', phase: 1, title: 'First', status: 'in_progress' },
+                { id: 'p2', phase: 2, title: 'Second', status: 'pending' },
+              ],
+              phases: [],
+            },
+          }}
+        />
+      </PlanReviewProvider>,
+    );
+
+    expect(html).toContain('Revise plan');
   });
 });

@@ -5,6 +5,7 @@ export interface PlanReviewState {
   onApprove: (reviewId: string) => void;
   onRevise: (reviewId: string, feedback: string) => void;
   onReject: (reviewId: string, feedback: string) => void;
+  onRequestExecutionRevision: (planRunId: string, feedback: string) => void;
 }
 
 export const PlanReviewContext = createContext<PlanReviewState | null>(null);

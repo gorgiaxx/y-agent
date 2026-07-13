@@ -9,6 +9,7 @@ import {
   Circle,
   Clock3,
   ListTodo,
+  PencilLine,
   Play,
   RotateCcw,
 } from 'lucide-react';
@@ -358,6 +359,68 @@ function PlanReviewPanel({
   );
 }
 
+function PlanExecutionRevisionControl({ planRunId }: { planRunId: string }) {
+  const planReview = usePlanReview();
+  const [editing, setEditing] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const trimmedFeedback = feedback.trim();
+
+  if (!planReview) return null;
+
+  const submit = () => {
+    if (!trimmedFeedback) return;
+    planReview.onRequestExecutionRevision(planRunId, trimmedFeedback);
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        className="tool-call-plan-revise"
+        onClick={() => setEditing(true)}
+      >
+        <PencilLine size={13} />
+        <span>Revise plan</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="tool-call-plan-revise-form">
+      <textarea
+        className="tool-call-plan-revise-input"
+        value={feedback}
+        onChange={(event) => setFeedback(event.target.value)}
+        placeholder="Describe the required plan changes"
+        rows={2}
+        autoFocus
+      />
+      <div className="tool-call-plan-revise-actions">
+        <button
+          type="button"
+          className="tool-call-plan-revise-cancel"
+          onClick={() => {
+            setEditing(false);
+            setFeedback('');
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="tool-call-plan-revise-submit"
+          disabled={!trimmedFeedback}
+          onClick={submit}
+        >
+          <PencilLine size={13} />
+          Revise plan
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function PlanRenderer({
   toolCall,
   status,
@@ -488,6 +551,9 @@ export function PlanRenderer({
           sessionId={activeSessionId ?? undefined}
           onRetryFromHere={handleRetryFromHere}
         />
+        {executionRunning && planRunId && (
+          <PlanExecutionRevisionControl planRunId={planRunId} />
+        )}
         {canResumePlan && (
           <button
             type="button"

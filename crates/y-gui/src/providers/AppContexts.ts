@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { UseChatReturn } from '../hooks/useChat';
 import type { UseSteeringReturn } from '../hooks/useSteering';
+import type { UseTodoQueueReturn } from '../hooks/useTodoQueue';
 import type { UseSessionsReturn } from '../hooks/useSessions';
 import type { UseWorkspacesReturn } from '../hooks/useWorkspaces';
 import type { UseSkillsReturn } from '../hooks/useSkills';
@@ -16,6 +17,7 @@ import type { EditorTab, EditorSurface } from '../components/agents/types';
 
 export const ChatContext = createContext<UseChatReturn | null>(null);
 export const SteeringContext = createContext<UseSteeringReturn | null>(null);
+export const TodoQueueContext = createContext<UseTodoQueueReturn | null>(null);
 export const SessionsContext = createContext<UseSessionsReturn | null>(null);
 export const AgentSessionsContext = createContext<UseSessionsReturn | null>(null);
 export const WorkspacesContext = createContext<UseWorkspacesReturn | null>(null);
@@ -118,6 +120,7 @@ function createSafeHook<T>(ctx: React.Context<T | null>, name: string): () => T 
 
 export const useChatContext = createSafeHook(ChatContext, 'useChatContext');
 export const useSteeringContext = createSafeHook(SteeringContext, 'useSteeringContext');
+export const useTodoQueueContext = createSafeHook(TodoQueueContext, 'useTodoQueueContext');
 export const useSessionsContext = createSafeHook(SessionsContext, 'useSessionsContext');
 export const useAgentSessionsContext = createSafeHook(AgentSessionsContext, 'useAgentSessionsContext');
 export const useWorkspacesContext = createSafeHook(WorkspacesContext, 'useWorkspacesContext');

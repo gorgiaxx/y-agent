@@ -110,6 +110,40 @@ describe('HttpTransport contract mapping', () => {
     expect(body.thinking_effort ?? null).toBeNull();
   });
 
+  it('maps an execution revision request to the shared web contract', async () => {
+    const { calls } = installFetchMock({ delivered: true });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('chat_request_plan_revision', {
+      planRunId: 'plan-run-1',
+      feedback: 'Add a rollback phase',
+    });
+
+    expect(calls[0].url).toBe('http://localhost:3000/api/v1/chat/request-plan-revision');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      plan_run_id: 'plan-run-1',
+      feedback: 'Add a rollback phase',
+    });
+  });
+
+  it('maps TODO queue additions to the shared follow-up endpoint', async () => {
+    const { calls } = installFetchMock({ id: 'todo-1', text: 'run tests', created_at: 1 });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('chat_add_follow_up', {
+      sessionId: 'session-1',
+      text: 'run tests',
+    });
+
+    expect(calls[0].url).toBe('http://localhost:3000/api/v1/chat/follow-up');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      session_id: 'session-1',
+      text: 'run tests',
+    });
+  });
+
   it('routes skill_import to the y-web import endpoint instead of no-oping', async () => {
     const { calls } = installFetchMock({ decision: 'accepted' });
     const transport = new HttpTransport('http://localhost:3000');

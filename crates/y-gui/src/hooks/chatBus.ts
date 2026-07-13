@@ -16,6 +16,7 @@ import type {
   ChatStartedPayload,
   ProgressPayload,
   SteerMessage,
+  TodoItem,
 } from '../types';
 import {
   applyAwaitingInteraction,
@@ -23,6 +24,7 @@ import {
   applyRunStarted,
   applyRunTerminal,
   createChatRunState,
+  getTerminalRunContext,
   markSubSessionStreaming,
   type ChatRunState,
 } from './chatRunState';
@@ -39,8 +41,8 @@ export type ChatBusEvent =
   | { type: 'started'; run_id: string; session_id: string; kind?: string }
   | { type: 'awaiting_interaction'; run_id: string; session_id: string }
   | { type: 'interaction_resolved'; run_id: string; session_id: string }
-  | { type: 'complete'; payload: ChatCompletePayload }
-  | { type: 'error'; payload: ChatErrorPayload }
+  | { type: 'complete'; payload: ChatCompletePayload; kind?: string }
+  | { type: 'error'; payload: ChatErrorPayload; kind?: string }
   | { type: 'stream_delta'; run_id: string; session_id: string; content: string; agent_name?: string; sub_session?: boolean }
   | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string; agent_name?: string; sub_session?: boolean }
   | { type: 'stream_image_delta'; run_id: string; session_id: string; index: number; mime_type: string; partial_data: string; agent_name?: string; sub_session?: boolean }
@@ -49,6 +51,8 @@ export type ChatBusEvent =
   | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown>; agent_name?: string; sub_session?: boolean }
   | { type: 'steer_injected'; run_id: string; session_id: string; steer_id: string; text: string }
   | { type: 'steer_queue'; session_id: string; queue: SteerMessage[] }
+  | { type: 'todo_injected'; run_id: string; session_id: string; todo_id: string; text: string }
+  | { type: 'todo_queue'; session_id: string; queue: TodoItem[] }
   | { type: 'heartbeat'; run_id: string; session_id: string };
 
 // ---------------------------------------------------------------------------
@@ -118,27 +122,25 @@ async function initialiseChatBus() {
 
   const u1 = await transport.listen<ChatCompletePayload>('chat:complete', (e) => {
     const { run_id } = e.payload;
-    const resolvedSessionId =
-      e.payload.session_id || chatBusState.runToSession[run_id] || '';
+    const terminal = getTerminalRunContext(chatBusState, run_id, e.payload.session_id);
     Object.assign(
       chatBusState,
-      applyRunTerminal(chatBusState, run_id, resolvedSessionId),
+      applyRunTerminal(chatBusState, run_id, terminal.sessionId),
     );
-    const enrichedPayload = { ...e.payload, session_id: resolvedSessionId };
-    notifyChatSubscribers({ type: 'complete', payload: enrichedPayload });
+    const enrichedPayload = { ...e.payload, session_id: terminal.sessionId };
+    notifyChatSubscribers({ type: 'complete', payload: enrichedPayload, kind: terminal.kind });
   });
   chatUnlistenFns.push(u1);
 
   const u2 = await transport.listen<ChatErrorPayload>('chat:error', (e) => {
     const { run_id } = e.payload;
-    const resolvedSessionId =
-      e.payload.session_id || chatBusState.runToSession[run_id] || '';
+    const terminal = getTerminalRunContext(chatBusState, run_id, e.payload.session_id);
     Object.assign(
       chatBusState,
-      applyRunTerminal(chatBusState, run_id, resolvedSessionId),
+      applyRunTerminal(chatBusState, run_id, terminal.sessionId),
     );
-    const enrichedPayload = { ...e.payload, session_id: resolvedSessionId };
-    notifyChatSubscribers({ type: 'error', payload: enrichedPayload });
+    const enrichedPayload = { ...e.payload, session_id: terminal.sessionId };
+    notifyChatSubscribers({ type: 'error', payload: enrichedPayload, kind: terminal.kind });
   });
   chatUnlistenFns.push(u2);
 
@@ -272,6 +274,17 @@ async function initialiseChatBus() {
           text: event.text,
         });
       }
+    } else if (event.type === 'follow_up_injected') {
+      const session_id = chatBusState.runToSession[run_id];
+      if (session_id) {
+        notifyChatSubscribers({
+          type: 'todo_injected',
+          run_id,
+          session_id,
+          todo_id: event.follow_up_id,
+          text: event.text,
+        });
+      }
     }
   });
   chatUnlistenFns.push(u3);
@@ -284,6 +297,15 @@ async function initialiseChatBus() {
     },
   );
   chatUnlistenFns.push(u4);
+
+  const u5 = await transport.listen<{ session_id: string; queue: TodoItem[] }>(
+    'chat:follow_up_queue',
+    (e) => {
+      const { session_id, queue } = e.payload;
+      notifyChatSubscribers({ type: 'todo_queue', session_id, queue: queue ?? [] });
+    },
+  );
+  chatUnlistenFns.push(u5);
 }
 
 // Kick off immediately so events are never missed due to mount timing.

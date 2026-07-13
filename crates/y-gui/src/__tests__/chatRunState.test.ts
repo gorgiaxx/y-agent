@@ -7,6 +7,7 @@ import {
   applyRunTerminal,
   createChatRunState,
   getPendingRunIdForSession,
+  getTerminalRunContext,
   hasPendingRunForSession,
   isPlanResumeRun,
   markSubSessionStreaming,
@@ -150,6 +151,19 @@ describe('chatRunState', () => {
 
     state = applyRunTerminal(state, 'run-resume', 'session-1');
     expect(isPlanResumeRun(state, 'run-resume')).toBe(false);
+    expect(state.runKinds['run-resume']).toBeUndefined();
+  });
+
+  it('captures terminal run kind before terminal cleanup removes it', () => {
+    let state = createChatRunState();
+    state = applyRunStarted(state, 'run-resume', 'session-1', 'plan_resume');
+
+    expect(getTerminalRunContext(state, 'run-resume', '')).toEqual({
+      sessionId: 'session-1',
+      kind: 'plan_resume',
+    });
+
+    state = applyRunTerminal(state, 'run-resume', 'session-1');
     expect(state.runKinds['run-resume']).toBeUndefined();
   });
  });

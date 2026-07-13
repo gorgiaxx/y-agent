@@ -4,13 +4,15 @@ import { ChatSearchProvider } from '../components/chat-panel/ChatSearchContext';
 import { WelcomePage } from '../components/WelcomePage';
 import { InputArea } from '../components/chat-panel/input-area/InputArea';
 import { SteeringQueue } from '../components/chat-panel/SteeringQueue';
+import { TodoQueue } from '../components/chat-panel/TodoQueue';
 import { StatusBar } from '../components/chat-panel/StatusBar';
 import { WorkspaceDialog } from '../components/chat-panel/WorkspaceDialog';
 import { RewindPanel } from '../components/chat-panel/RewindPanel';
 import { useRewind } from '../hooks/useRewind';
 import { useMcpServers } from '../hooks/useMcpServers';
+import { useToast } from '../hooks/useToast';
 
-import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useViewRouting, usePanelContext, useBackgroundTasksContext, useSteeringContext } from '../providers/AppContexts';
+import { useChatContext, useSessionsContext, useWorkspacesContext, useSkillsContext, useKnowledgeContext, useProvidersContext, useConfigContext, useViewRouting, usePanelContext, useBackgroundTasksContext, useSteeringContext, useTodoQueueContext } from '../providers/AppContexts';
 import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
@@ -18,11 +20,13 @@ import { getVisiblePendingEdit } from '../hooks/chatEditState';
 import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
-import type { ThinkingEffort, PlanMode, McpMode, RequestMode, SteerMessage } from '../types';
+import type { ThinkingEffort, PlanMode, McpMode, RequestMode, SteerMessage, TodoItem } from '../types';
 
 export function ChatView() {
   const chatHooks = useChatContext();
   const steering = useSteeringContext();
+  const todoQueue = useTodoQueueContext();
+  const { toast } = useToast();
   const sessionHooks = useSessionsContext();
   const workspaceHooks = useWorkspacesContext();
   const skillHooks = useSkillsContext();
@@ -95,6 +99,7 @@ export function ChatView() {
     handlePlanReviewApprove,
     handlePlanReviewRevise,
     handlePlanReviewReject,
+    handlePlanExecutionRevision,
   } = useSessionInteractions(sessionHooks.activeSessionId);
 
   const diagnosticsScope = resolveDiagnosticsScope(viewRouting.activeView, sessionHooks.activeSessionId);
@@ -173,6 +178,7 @@ export function ChatView() {
   // at the next LLM-call boundary instead of starting a new turn.
   const steerActive = chatHooks.isStreaming;
   const activeSteers: SteerMessage[] = steering.steersFor(sessionHooks.activeSessionId);
+  const activeTodos: TodoItem[] = todoQueue.todosFor(sessionHooks.activeSessionId);
 
   const handleSteer = useCallback((text: string) => {
     if (sessionHooks.activeSessionId) {
@@ -193,6 +199,41 @@ export function ChatView() {
       void steering.deleteSteer(sessionHooks.activeSessionId, steerId);
     }
   }, [steering, sessionHooks.activeSessionId]);
+
+  const handleTodo = useCallback(async (text: string) => {
+    const sid = sessionHooks.activeSessionId;
+    if (!text.trim()) {
+      toast('Enter a task after /todo', 'error');
+      return;
+    }
+    if (!sid || !chatHooks.isStreaming) {
+      toast('TODO can only be added while the assistant is running', 'error');
+      return;
+    }
+    try {
+      await todoQueue.addTodo(sid, text);
+      toast('TODO added', 'success');
+    } catch {
+      toast('The active run is no longer accepting TODO items', 'error');
+    }
+  }, [chatHooks.isStreaming, sessionHooks.activeSessionId, todoQueue, toast]);
+
+  const handleTodoEdit = useCallback((todo: TodoItem) => {
+    const sid = sessionHooks.activeSessionId;
+    if (!sid) return;
+    void todoQueue.deleteTodo(sid, todo.id).catch(() => {
+      toast('Failed to edit TODO item', 'error');
+    });
+    setRewindDraft(todo.text);
+  }, [sessionHooks.activeSessionId, todoQueue, toast]);
+
+  const handleTodoDelete = useCallback((todoId: string) => {
+    const sid = sessionHooks.activeSessionId;
+    if (!sid) return;
+    void todoQueue.deleteTodo(sid, todoId).catch(() => {
+      toast('Failed to delete TODO item', 'error');
+    });
+  }, [sessionHooks.activeSessionId, todoQueue, toast]);
 
   // Residual replay: steers added too late to be injected fire one-by-one as
   // new turns. On a streaming->idle transition, dequeue the oldest residual and
@@ -244,7 +285,8 @@ export function ChatView() {
     onApprove: handlePlanReviewApprove,
     onRevise: handlePlanReviewRevise,
     onReject: handlePlanReviewReject,
-  }), [pendingReviewIds, handlePlanReviewApprove, handlePlanReviewRevise, handlePlanReviewReject]);
+    onRequestExecutionRevision: handlePlanExecutionRevision,
+  }), [pendingReviewIds, handlePlanReviewApprove, handlePlanReviewRevise, handlePlanReviewReject, handlePlanExecutionRevision]);
 
   // A sub-agent child session (drilled-in from the info panel) is managed by
   // its parent's orchestrator, not by `chat_resend`. Showing a Retry button
@@ -291,6 +333,13 @@ export function ChatView() {
           onDelete={handleSteerDelete}
         />
       )}
+      {steerActive && activeTodos.length > 0 && (
+        <TodoQueue
+          todos={activeTodos}
+          onEdit={handleTodoEdit}
+          onDelete={handleTodoDelete}
+        />
+      )}
       <InputArea
         key={sessionHooks.activeSessionId ?? '__no_session__'}
         onSend={handleSend}
@@ -299,6 +348,7 @@ export function ChatView() {
         disabled={inputDisabled}
         steerActive={steerActive}
         onSteer={handleSteer}
+        onTodo={(text) => { void handleTodo(text); }}
         sendOnEnter={configHooks.config.send_on_enter}
         skills={skillHooks.skills.filter((s) => s.enabled)}
         knowledgeCollections={knowledgeHooks.collections}

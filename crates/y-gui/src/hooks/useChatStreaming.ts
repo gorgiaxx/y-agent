@@ -377,7 +377,7 @@ export function useChatStreaming(
         // reload and tool-result cleanup. The Plan card was already updated
         // in-place by the tool_result events on this run. Only reflect the
         // streaming-state change.
-        if (isPlanResumeRun(chatBusState, payload.run_id)) {
+        if (event.kind === 'plan_resume') {
           setStreamingSessionIds(new Set(chatBusState.streamingSessions));
           if (refs.activeSessionIdRef.current === sessionId) {
             // Refresh persisted plan runs so the InfoPanel's plan card shows
@@ -570,7 +570,7 @@ export function useChatStreaming(
 
         // plan_resume: no assistant bubble to finalize; just reflect streaming
         // state and return. The Plan card retains its last-known status.
-        if (isPlanResumeRun(chatBusState, payload.run_id)) {
+        if (event.kind === 'plan_resume') {
           setStreamingSessionIds(new Set(chatBusState.streamingSessions));
           return;
         }

@@ -11,6 +11,7 @@ import { CommandMenu } from './CommandMenu';
 import { AskUserDialog } from './AskUserDialog';
 import { PermissionDialog } from './PermissionDialog';
 import { ContentEditableInput, type ContentEditableInputHandle } from './ContentEditableInput';
+import { routeStreamingInput } from './streamingInputRoute';
 import { GUI_COMMANDS } from '../../../commands';
 import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions, UserPromptTemplate } from '../../../types';
@@ -141,6 +142,8 @@ interface InputAreaProps {
   steerActive?: boolean;
   /** Called with the message text to enqueue while a run is streaming. */
   onSteer?: (text: string) => void;
+  /** Called for explicit `/todo <task>` input. */
+  onTodo?: (text: string) => void;
   sendOnEnter: boolean;
   expanded?: boolean;
   onExpandChange?: (expanded: boolean) => void;
@@ -170,7 +173,7 @@ interface InputAreaProps {
 export function InputArea(props: InputAreaProps) {
   const {
     onSend, onStop, onCommand, disabled, sendOnEnter,
-    steerActive = false, onSteer,
+    steerActive = false, onSteer, onTodo,
     expanded = false, onExpandChange, onClearSession, onAddContextReset,
     isCompacting = false, sessionId, skills = [], knowledgeCollections = [],
     hasCustomPrompt = false, onManagePrompts, onSessionPromptApplied,
@@ -439,15 +442,21 @@ export function InputArea(props: InputAreaProps) {
     // Prevent double-send from rapid Enter key events (common on Windows).
     if (sendingRef.current) return;
 
-    // While a run is streaming, route the message to the steering queue
-    // instead of starting a new turn. The text is injected at the next
-    // LLM-call boundary (see useSteering / backend executor).
+    // Streaming input defaults to steering. Only an explicit /todo prefix
+    // routes the text to deferred FIFO work.
     if (steerActive) {
       const { text } = contentEditableRef.current?.extractContent() ?? { text: '' };
-      const trimmed = text.trim();
-      if (!trimmed) return;
+      const route = routeStreamingInput(text);
+      if (!route.text) {
+        if (route.kind === 'todo') onTodo?.('');
+        return;
+      }
       sendingRef.current = true;
-      onSteer?.(trimmed);
+      if (route.kind === 'todo') {
+        onTodo?.(route.text);
+      } else {
+        onSteer?.(route.text);
+      }
       resetInput();
       exitCommandMode();
       queueMicrotask(() => { sendingRef.current = false; });
@@ -460,6 +469,18 @@ export function InputArea(props: InputAreaProps) {
     const trimmed = text.trim();
 
     if (!trimmed && extractedSkills.length === 0 && selectedKbCollections.length === 0 && attachments.length === 0) return;
+
+    // `/todo` never falls through to a normal user message. The caller gives
+    // feedback when no active streaming run can accept it.
+    const slashRoute = routeStreamingInput(trimmed);
+    if (slashRoute.kind === 'todo') {
+      onTodo?.(slashRoute.text);
+      if (slashRoute.text) {
+        resetInput();
+        exitCommandMode();
+      }
+      return;
+    }
 
     // Intercept slash commands.
     if (trimmed.startsWith('/')) {
@@ -492,7 +513,7 @@ export function InputArea(props: InputAreaProps) {
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, steerActive, onSteer, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions, clearAttachmentList]);
+  }, [disabled, steerActive, onSteer, onTodo, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions, clearAttachmentList]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     // Try image paste first; fall back to plain text.

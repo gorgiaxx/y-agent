@@ -198,7 +198,8 @@ export function AgentsView() {
     onApprove: interactions.handlePlanReviewApprove,
     onRevise: interactions.handlePlanReviewRevise,
     onReject: interactions.handlePlanReviewReject,
-  }), [interactions.pendingReviewIds, interactions.handlePlanReviewApprove, interactions.handlePlanReviewRevise, interactions.handlePlanReviewReject]);
+    onRequestExecutionRevision: interactions.handlePlanExecutionRevision,
+  }), [interactions.pendingReviewIds, interactions.handlePlanReviewApprove, interactions.handlePlanReviewRevise, interactions.handlePlanReviewReject, interactions.handlePlanExecutionRevision]);
 
   const handleReloadAgents = useCallback(async () => {
     setReloadingAgents(true);

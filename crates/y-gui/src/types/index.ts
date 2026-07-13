@@ -273,10 +273,25 @@ export interface SteerMessage {
   created_at: number;
 }
 
+/** Deferred work queued for FIFO execution in the active session. */
+export interface TodoItem {
+  id: string;
+  text: string;
+  /** Unix epoch milliseconds when the TODO was enqueued. */
+  created_at: number;
+}
+
 /** Emitted when a queued steer is injected at an LLM-call boundary. */
 export interface SteerInjectedEvent {
   type: 'steer_injected';
   steer_id: string;
+  text: string;
+}
+
+/** Emitted when the oldest queued TODO begins its follow-up turn. */
+export interface TodoInjectedEvent {
+  type: 'follow_up_injected';
+  follow_up_id: string;
   text: string;
 }
 
@@ -295,6 +310,7 @@ export type TurnEvent =
   | PermissionRequestEvent
   | PlanReviewRequestEvent
   | SteerInjectedEvent
+  | TodoInjectedEvent
   | HeartbeatEvent;
 
 export interface ProgressPayload {
