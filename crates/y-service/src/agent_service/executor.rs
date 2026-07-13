@@ -591,9 +591,7 @@ pub(crate) async fn execute_inner(
                     iter_reasoning_duration_ms,
                     &mut ctx,
                     &config.agent_name,
-                )
-                .await
-                {
+                ) {
                     continue;
                 }
 
@@ -795,7 +793,7 @@ fn fold_response_and_inject_steers(
 ///
 /// The current LLM response is folded into history as an intermediate
 /// assistant turn before injecting the follow-up user messages.
-async fn drain_and_inject_follow_ups(
+fn drain_and_inject_follow_ups(
     container: &ServiceContainer,
     progress: Option<&TurnEventSender>,
     response: &y_core::provider::ChatResponse,
@@ -805,10 +803,11 @@ async fn drain_and_inject_follow_ups(
     ctx: &mut ToolExecContext,
     agent_name: &str,
 ) -> bool {
-    let follow_ups = crate::ChatService::drain_follow_ups(container, &ctx.session_id).await;
-    if follow_ups.is_empty() {
+    let Some(follow_up) =
+        crate::ChatService::take_next_follow_up_or_close(container, &ctx.session_id)
+    else {
         return false;
-    }
+    };
 
     // Emit the current response as an intermediate turn.
     result::emit_llm_response(
@@ -840,32 +839,28 @@ async fn drain_and_inject_follow_ups(
     ctx.working_history.push(assistant_msg.clone());
     ctx.new_messages.push(assistant_msg);
 
-    // Inject each follow-up as a user message.
-    for fu in &follow_ups {
-        let msg = y_core::types::Message {
-            message_id: y_core::types::generate_message_id(),
-            role: y_core::types::Role::User,
-            content: fu.text.clone(),
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: serde_json::json!({
-                "kind": "follow_up",
-                "follow_up_id": fu.id,
-            }),
-        };
-        ctx.working_history.push(msg.clone());
-        ctx.new_messages.push(msg);
-    }
+    // Inject exactly one follow-up so each FIFO item receives its own response.
+    let msg = y_core::types::Message {
+        message_id: y_core::types::generate_message_id(),
+        role: y_core::types::Role::User,
+        content: follow_up.text.clone(),
+        tool_call_id: None,
+        tool_calls: vec![],
+        timestamp: y_core::types::now(),
+        metadata: serde_json::json!({
+            "kind": "follow_up",
+            "follow_up_id": follow_up.id,
+        }),
+    };
+    ctx.working_history.push(msg.clone());
+    ctx.new_messages.push(msg);
 
-    // Emit a follow-up injected event for each message.
+    // Remove the injected item from the client's pending queue projection.
     if let Some(progress) = progress {
-        for fu in &follow_ups {
-            let _ = progress.send(TurnEvent::FollowUpInjected {
-                follow_up_id: fu.id.clone(),
-                text: fu.text.clone(),
-            });
-        }
+        let _ = progress.send(TurnEvent::FollowUpInjected {
+            follow_up_id: follow_up.id,
+            text: follow_up.text,
+        });
     }
 
     true
@@ -987,6 +982,73 @@ mod tests {
         let again = super::drain_and_inject_steers(&container, None, &mut ctx).await;
         assert!(!again);
         assert_eq!(ctx.working_history.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn follow_up_boundary_injects_only_oldest_todo() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("todo-fifo-session".into());
+        crate::ChatService::begin_follow_up_run(&container, &sid);
+        let first = crate::ChatService::add_follow_up(&container, &sid, "first".into())
+            .expect("active run should accept first TODO");
+        let second = crate::ChatService::add_follow_up(&container, &sid, "second".into())
+            .expect("active run should accept second TODO");
+
+        let response = y_core::provider::ChatResponse {
+            id: "response-1".into(),
+            model: "test-model".into(),
+            content: Some("current task done".into()),
+            reasoning_content: None,
+            tool_calls: vec![],
+            usage: y_core::types::TokenUsage::default(),
+            finish_reason: y_core::provider::FinishReason::Stop,
+            raw_request: None,
+            raw_response: None,
+            provider_id: None,
+            generated_images: vec![],
+        };
+        let data = LlmIterationData {
+            resp_input_tokens: 1,
+            resp_output_tokens: 1,
+            resp_cache_read_tokens: 0,
+            resp_cache_write_tokens: 0,
+            context_input_tokens: 1,
+            cost: 0.0,
+            llm_elapsed_ms: 1,
+            prompt_preview: String::new(),
+            response_text_raw: "current task done".into(),
+        };
+        let mut ctx = make_test_ctx(sid.clone(), Vec::new());
+        let (tx, mut rx) = crate::chat::TurnEventSender::channel();
+
+        assert!(super::drain_and_inject_follow_ups(
+            &container,
+            Some(&tx),
+            &response,
+            &data,
+            128,
+            None,
+            &mut ctx,
+            "test-agent",
+        ));
+
+        assert_eq!(ctx.working_history.len(), 2);
+        assert_eq!(ctx.working_history[1].content, "first");
+        assert_eq!(ctx.working_history[1].metadata["follow_up_id"], first.id);
+        assert_eq!(
+            crate::ChatService::list_follow_ups(&container, &sid),
+            vec![second]
+        );
+        let mut saw_injected = false;
+        while let Ok((event, _)) = rx.try_recv() {
+            if matches!(
+                event,
+                crate::chat::TurnEvent::FollowUpInjected { text, .. } if text == "first"
+            ) {
+                saw_injected = true;
+            }
+        }
+        assert!(saw_injected);
     }
 
     #[tokio::test]

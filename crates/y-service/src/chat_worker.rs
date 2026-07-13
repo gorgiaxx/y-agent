@@ -117,6 +117,10 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
     // main task (emit_complete / emit_error / emit_title_updated).
     let sink = Arc::new(sink);
 
+    // Open TODO acceptance before clients observe the run as streaming.
+    ChatService::begin_follow_up_run(&container, &sid_clone);
+    sink.emit_started(&run_id_clone, &sid_clone.0);
+
     tokio::spawn(async move {
         let sink_inner = Arc::clone(&sink);
         let result = std::panic::AssertUnwindSafe(async {
@@ -273,6 +277,10 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
             // the frontend has already processed complete/error.
             let _ = progress_task.await;
 
+            // Cancellation and provider errors can bypass the natural
+            // empty-queue boundary. Close acceptance before the terminal event.
+            ChatService::finish_follow_up_run(&container, &sid_clone);
+
             match turn_result {
                 Ok(result) => {
                     // Cache last-turn metadata for the presentation layer.
@@ -329,6 +337,7 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
         let final_run_id = match result {
             Ok(rid) => rid,
             Err(payload) => {
+                ChatService::finish_follow_up_run(&container, &sid_clone);
                 let detail = panic_message(payload.as_ref());
                 let location = take_panic_location();
                 let location_suffix = location

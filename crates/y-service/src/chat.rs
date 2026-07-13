@@ -26,11 +26,12 @@ use crate::container::ServiceContainer;
 
 // Re-export types from chat_types for backward compatibility.
 pub use crate::chat_types::{
-    FollowUpMessage, FollowUpQueues, OperationMode, PendingInteractions, PendingPermissions,
-    PendingPlanReviews, PermissionPromptResponse, PlanReviewDecision, PrepareTurnError,
-    PrepareTurnRequest, PreparedTurn, ResendTurnError, ResendTurnRequest, SessionAgentConfig,
-    SessionAgentFeatures, SteerMessage, SteeringQueues, ToolCallRecord, TurnCancellationToken,
-    TurnError, TurnEvent, TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
+    FollowUpMessage, FollowUpQueueError, FollowUpQueueState, FollowUpQueues, OperationMode,
+    PendingInteractions, PendingPermissions, PendingPlanReviews, PermissionPromptResponse,
+    PlanReviewDecision, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError,
+    ResendTurnRequest, SessionAgentConfig, SessionAgentFeatures, SteerMessage, SteeringQueues,
+    ToolCallRecord, TurnCancellationToken, TurnError, TurnEvent, TurnEventSender, TurnInput,
+    TurnMetaSummary, TurnResult,
 };
 
 // ---------------------------------------------------------------------------
@@ -129,60 +130,130 @@ impl ChatService {
     // The agent execution loop drains them after the inner loop exits
     // (no tool calls, no steering). When non-empty, the run continues.
 
-    /// Enqueue a follow-up message for a session. Returns the created entry.
-    pub async fn add_follow_up(
+    /// Open an empty TODO/follow-up queue for a newly started streaming run.
+    pub fn begin_follow_up_run(container: &ServiceContainer, session_id: &SessionId) {
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        queues.insert(
+            session_id.clone(),
+            FollowUpQueueState {
+                accepting: true,
+                ..FollowUpQueueState::default()
+            },
+        );
+    }
+
+    /// Close and discard a streaming run's remaining TODO/follow-up state.
+    pub fn finish_follow_up_run(container: &ServiceContainer, session_id: &SessionId) {
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        queues.remove(session_id);
+    }
+
+    /// Enqueue a follow-up message for an accepting streaming run.
+    pub fn add_follow_up(
         container: &ServiceContainer,
         session_id: &SessionId,
         text: String,
-    ) -> FollowUpMessage {
+    ) -> Result<FollowUpMessage, FollowUpQueueError> {
         let msg = FollowUpMessage::new(text);
-        let mut queues = container.session_state.follow_up_queues.lock().await;
-        queues
-            .entry(session_id.clone())
-            .or_default()
-            .push(msg.clone());
-        msg
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(state) = queues.get_mut(session_id).filter(|state| state.accepting) else {
+            return Err(FollowUpQueueError::RunNotAccepting {
+                session_id: session_id.clone(),
+            });
+        };
+        state.queue.push_back(msg.clone());
+        Ok(msg)
     }
 
     /// List the pending follow-up messages for a session (FIFO order).
-    pub async fn list_follow_ups(
+    pub fn list_follow_ups(
         container: &ServiceContainer,
         session_id: &SessionId,
     ) -> Vec<FollowUpMessage> {
-        let queues = container.session_state.follow_up_queues.lock().await;
-        queues.get(session_id).cloned().unwrap_or_default()
+        let queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        queues
+            .get(session_id)
+            .map(|state| state.queue.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Remove a single follow-up message by id. Returns true if it was present.
-    pub async fn delete_follow_up(
+    pub fn delete_follow_up(
         container: &ServiceContainer,
         session_id: &SessionId,
         follow_up_id: &str,
     ) -> bool {
-        let mut queues = container.session_state.follow_up_queues.lock().await;
-        let Some(queue) = queues.get_mut(session_id) else {
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(state) = queues.get_mut(session_id) else {
             return false;
         };
-        let before = queue.len();
-        queue.retain(|f| f.id != follow_up_id);
-        queue.len() != before
+        let before = state.queue.len();
+        state.queue.retain(|item| item.id != follow_up_id);
+        state.queue.len() != before
     }
 
     /// Take all pending follow-up messages for a session, leaving it empty.
-    pub async fn drain_follow_ups(
+    pub fn drain_follow_ups(
         container: &ServiceContainer,
         session_id: &SessionId,
     ) -> Vec<FollowUpMessage> {
-        let mut queues = container.session_state.follow_up_queues.lock().await;
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         queues
             .get_mut(session_id)
-            .map(std::mem::take)
+            .map(|state| state.queue.drain(..).collect())
             .unwrap_or_default()
     }
 
+    /// Take the oldest TODO item, or atomically close acceptance when empty.
+    pub fn take_next_follow_up_or_close(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Option<FollowUpMessage> {
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let state = queues.get_mut(session_id)?;
+        if let Some(item) = state.queue.pop_front() {
+            Some(item)
+        } else {
+            state.accepting = false;
+            None
+        }
+    }
+
     /// Clear a session's follow-up queue (called at run start).
-    pub async fn clear_follow_ups(container: &ServiceContainer, session_id: &SessionId) {
-        let mut queues = container.session_state.follow_up_queues.lock().await;
+    pub fn clear_follow_ups(container: &ServiceContainer, session_id: &SessionId) {
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         queues.remove(session_id);
     }
 
@@ -608,7 +679,7 @@ impl ChatService {
         // by the client only while a run is streaming, so clearing here just
         // guards against stale entries leaking across runs.
         Self::clear_steers(container, &session_id).await;
-        Self::clear_follow_ups(container, &session_id).await;
+        Self::clear_follow_ups(container, &session_id);
         let agent_config = Self::resolve_session_agent_config(container, &session)
             .await
             .map_err(PrepareTurnError::SessionAgentNotFound)?;
@@ -1283,9 +1354,9 @@ impl ChatService {
         //    create checkpoint. AgentService doesn't handle session storage —
         //    that's the ChatService's responsibility.
 
-        // Persist the assistant output. With steering this is an interleaved
-        // sequence of assistant segments and injected user-message bubbles;
-        // without steering it is a single consolidated assistant message.
+        // Persist the assistant output. Steering and follow-up TODOs produce an
+        // interleaved sequence of assistant segments and user-message bubbles;
+        // otherwise this is one consolidated assistant message.
         let messages = Self::build_steered_messages(&result);
         for msg in &messages {
             if let Err(e) = container
@@ -1389,30 +1460,49 @@ impl ChatService {
             .collect()
     }
 
-    /// Split a turn's consolidated assistant output into segments at each
-    /// steering-injection boundary, interleaving the injected user messages so
-    /// the persisted transcript reads `[asst seg][steer][asst seg]...`.
+    /// Split a turn's consolidated output at injected-user-message boundaries.
     ///
-    /// With no steers (the common case) this returns a single assistant message
-    /// identical to the non-steered consolidation.
+    /// Steering records carry their boundary directly. Follow-up TODO messages
+    /// are recovered from `new_messages`; their boundary is the number of raw
+    /// assistant iterations that precede them. The persisted transcript then
+    /// reads `[assistant][steer/TODO][assistant]...` in execution order.
+    ///
+    /// With no injected user input, this returns one assistant message identical
+    /// to the normal consolidated turn.
     fn build_steered_messages(result: &AgentExecutionResult) -> Vec<Message> {
         let total_blocks = result.iteration_texts.len();
         let mut messages = Vec::new();
         let mut prev = 0usize;
         let mut idx = 0usize;
-        let steers = &result.injected_steers;
+        let mut injections: Vec<(usize, &Message)> = result
+            .injected_steers
+            .iter()
+            .map(|steer| (steer.after_iteration, &steer.message))
+            .collect();
 
-        while idx < steers.len() {
-            let gap = steers[idx].after_iteration.min(total_blocks);
+        let mut completed_iterations = 0usize;
+        for message in &result.new_messages {
+            if message.role == Role::Assistant {
+                completed_iterations += 1;
+            } else if message.role == Role::User
+                && message.metadata.get("kind").and_then(|kind| kind.as_str()) == Some("follow_up")
+            {
+                injections.push((completed_iterations, message));
+            }
+        }
+        injections.sort_by_key(|(after_iteration, _)| *after_iteration);
+
+        while idx < injections.len() {
+            let gap = injections[idx].0.min(total_blocks);
             // Assistant segment for blocks [prev, gap); skip empty ranges (e.g.
             // multiple steers at the same boundary, or a steer before any text).
             if gap > prev {
                 messages.push(Self::build_segment_message(result, prev, gap, false));
                 prev = gap;
             }
-            // Emit every steer anchored at this boundary, in injection order.
-            while idx < steers.len() && steers[idx].after_iteration.min(total_blocks) == gap {
-                messages.push(steers[idx].message.clone());
+            // Emit every user input anchored at this boundary in queue order.
+            while idx < injections.len() && injections[idx].0.min(total_blocks) == gap {
+                messages.push(injections[idx].1.clone());
                 idx += 1;
             }
         }
@@ -2457,6 +2547,33 @@ mod tests {
         }
     }
 
+    fn follow_up_user_msg(id: &str, text: &str) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::User,
+            content: text.to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::json!({
+                "kind": "follow_up",
+                "follow_up_id": id,
+            }),
+        }
+    }
+
+    fn assistant_msg(text: &str) -> Message {
+        Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: text.to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
     fn make_steer_result(
         iteration_texts: Vec<String>,
         iteration_tool_counts: Vec<usize>,
@@ -2518,6 +2635,33 @@ mod tests {
             msgs[0].metadata["tool_results"].as_array().unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn build_steered_messages_interleaves_fifo_follow_ups_at_turn_boundaries() {
+        let mut result = make_steer_result(
+            vec!["original done\n".into(), "first done\n".into()],
+            vec![0, 0],
+            "second done",
+            vec![],
+        );
+        result.new_messages = vec![
+            assistant_msg("original done"),
+            follow_up_user_msg("todo-1", "first task"),
+            assistant_msg("first done"),
+            follow_up_user_msg("todo-2", "second task"),
+        ];
+
+        let messages = ChatService::build_steered_messages(&result);
+
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[0].content, "original done\n");
+        assert_eq!(messages[1].content, "first task");
+        assert_eq!(messages[1].metadata["follow_up_id"], "todo-1");
+        assert_eq!(messages[2].content, "first done\n");
+        assert_eq!(messages[3].content, "second task");
+        assert_eq!(messages[3].metadata["follow_up_id"], "todo-2");
+        assert_eq!(messages[4].content, "second done");
     }
 
     #[test]
@@ -3352,33 +3496,72 @@ max_iterations = 1
     // --- Follow-up queue tests ---
 
     #[tokio::test]
-    async fn test_follow_up_queue_add_and_list() {
+    async fn test_follow_up_queue_rejects_add_when_run_is_not_accepting() {
         let (container, _tmp) = make_test_container().await;
-        let sid = SessionId("test-followup-1".into());
+        let sid = SessionId("test-followup-idle".into());
 
-        let msg1 = ChatService::add_follow_up(&container, &sid, "first follow-up".into()).await;
-        let msg2 = ChatService::add_follow_up(&container, &sid, "second follow-up".into()).await;
+        let result = ChatService::add_follow_up(&container, &sid, "not now".into());
 
-        let list = ChatService::list_follow_ups(&container, &sid).await;
+        assert!(matches!(
+            result,
+            Err(FollowUpQueueError::RunNotAccepting { session_id })
+                if session_id == sid
+        ));
+        assert!(ChatService::list_follow_ups(&container, &sid).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_takes_one_item_per_boundary_in_fifo_order() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-followup-fifo".into());
+        ChatService::begin_follow_up_run(&container, &sid);
+
+        let msg1 = ChatService::add_follow_up(&container, &sid, "first follow-up".into())
+            .expect("active run should accept first TODO");
+        let msg2 = ChatService::add_follow_up(&container, &sid, "second follow-up".into())
+            .expect("active run should accept second TODO");
+
+        let list = ChatService::list_follow_ups(&container, &sid);
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].text, "first follow-up");
         assert_eq!(list[1].text, "second follow-up");
         assert_eq!(list[0].id, msg1.id);
         assert_eq!(list[1].id, msg2.id);
+
+        let first = ChatService::take_next_follow_up_or_close(&container, &sid)
+            .expect("first TODO should be queued");
+        assert_eq!(first.id, msg1.id);
+        assert_eq!(
+            ChatService::list_follow_ups(&container, &sid),
+            vec![msg2.clone()]
+        );
+
+        let second = ChatService::take_next_follow_up_or_close(&container, &sid)
+            .expect("second TODO should be queued");
+        assert_eq!(second.id, msg2.id);
+
+        assert!(ChatService::take_next_follow_up_or_close(&container, &sid).is_none());
+        assert!(matches!(
+            ChatService::add_follow_up(&container, &sid, "too late".into()),
+            Err(FollowUpQueueError::RunNotAccepting { .. })
+        ));
     }
 
     #[tokio::test]
     async fn test_follow_up_queue_delete() {
         let (container, _tmp) = make_test_container().await;
         let sid = SessionId("test-followup-2".into());
+        ChatService::begin_follow_up_run(&container, &sid);
 
-        let msg = ChatService::add_follow_up(&container, &sid, "to be deleted".into()).await;
-        ChatService::add_follow_up(&container, &sid, "to keep".into()).await;
+        let msg = ChatService::add_follow_up(&container, &sid, "to be deleted".into())
+            .expect("active run should accept TODO");
+        ChatService::add_follow_up(&container, &sid, "to keep".into())
+            .expect("active run should accept TODO");
 
-        let deleted = ChatService::delete_follow_up(&container, &sid, &msg.id).await;
+        let deleted = ChatService::delete_follow_up(&container, &sid, &msg.id);
         assert!(deleted);
 
-        let list = ChatService::list_follow_ups(&container, &sid).await;
+        let list = ChatService::list_follow_ups(&container, &sid);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].text, "to keep");
     }
@@ -3387,12 +3570,14 @@ max_iterations = 1
     async fn test_follow_up_queue_delete_nonexistent() {
         let (container, _tmp) = make_test_container().await;
         let sid = SessionId("test-followup-3".into());
+        ChatService::begin_follow_up_run(&container, &sid);
 
-        ChatService::add_follow_up(&container, &sid, "exists".into()).await;
-        let deleted = ChatService::delete_follow_up(&container, &sid, "nonexistent-id").await;
+        ChatService::add_follow_up(&container, &sid, "exists".into())
+            .expect("active run should accept TODO");
+        let deleted = ChatService::delete_follow_up(&container, &sid, "nonexistent-id");
         assert!(!deleted);
 
-        let list = ChatService::list_follow_ups(&container, &sid).await;
+        let list = ChatService::list_follow_ups(&container, &sid);
         assert_eq!(list.len(), 1);
     }
 
@@ -3400,17 +3585,20 @@ max_iterations = 1
     async fn test_follow_up_queue_drain() {
         let (container, _tmp) = make_test_container().await;
         let sid = SessionId("test-followup-4".into());
+        ChatService::begin_follow_up_run(&container, &sid);
 
-        ChatService::add_follow_up(&container, &sid, "msg1".into()).await;
-        ChatService::add_follow_up(&container, &sid, "msg2".into()).await;
+        ChatService::add_follow_up(&container, &sid, "msg1".into())
+            .expect("active run should accept TODO");
+        ChatService::add_follow_up(&container, &sid, "msg2".into())
+            .expect("active run should accept TODO");
 
-        let drained = ChatService::drain_follow_ups(&container, &sid).await;
+        let drained = ChatService::drain_follow_ups(&container, &sid);
         assert_eq!(drained.len(), 2);
         assert_eq!(drained[0].text, "msg1");
         assert_eq!(drained[1].text, "msg2");
 
         // Queue should be empty after drain.
-        let list = ChatService::list_follow_ups(&container, &sid).await;
+        let list = ChatService::list_follow_ups(&container, &sid);
         assert!(list.is_empty());
     }
 
@@ -3418,13 +3606,16 @@ max_iterations = 1
     async fn test_follow_up_queue_clear() {
         let (container, _tmp) = make_test_container().await;
         let sid = SessionId("test-followup-5".into());
+        ChatService::begin_follow_up_run(&container, &sid);
 
-        ChatService::add_follow_up(&container, &sid, "msg1".into()).await;
-        ChatService::add_follow_up(&container, &sid, "msg2".into()).await;
+        ChatService::add_follow_up(&container, &sid, "msg1".into())
+            .expect("active run should accept TODO");
+        ChatService::add_follow_up(&container, &sid, "msg2".into())
+            .expect("active run should accept TODO");
 
-        ChatService::clear_follow_ups(&container, &sid).await;
+        ChatService::clear_follow_ups(&container, &sid);
 
-        let list = ChatService::list_follow_ups(&container, &sid).await;
+        let list = ChatService::list_follow_ups(&container, &sid);
         assert!(list.is_empty());
     }
 
@@ -3433,10 +3624,10 @@ max_iterations = 1
         let (container, _tmp) = make_test_container().await;
         let sid = SessionId("test-followup-empty".into());
 
-        let list = ChatService::list_follow_ups(&container, &sid).await;
+        let list = ChatService::list_follow_ups(&container, &sid);
         assert!(list.is_empty());
 
-        let drained = ChatService::drain_follow_ups(&container, &sid).await;
+        let drained = ChatService::drain_follow_ups(&container, &sid);
         assert!(drained.is_empty());
     }
 
@@ -3452,21 +3643,23 @@ max_iterations = 1
     async fn test_follow_up_queue_independent_from_steering() {
         let (container, _tmp) = make_test_container().await;
         let sid = SessionId("test-followup-steer".into());
+        ChatService::begin_follow_up_run(&container, &sid);
 
         // Add both steer and follow-up.
         ChatService::add_steer(&container, &sid, "steer msg".into()).await;
-        ChatService::add_follow_up(&container, &sid, "follow-up msg".into()).await;
+        ChatService::add_follow_up(&container, &sid, "follow-up msg".into())
+            .expect("active run should accept TODO");
 
         // Both queues should be independent.
         let steers = ChatService::list_steers(&container, &sid).await;
-        let follow_ups = ChatService::list_follow_ups(&container, &sid).await;
+        let follow_ups = ChatService::list_follow_ups(&container, &sid);
         assert_eq!(steers.len(), 1);
         assert_eq!(follow_ups.len(), 1);
         assert_eq!(steers[0].text, "steer msg");
         assert_eq!(follow_ups[0].text, "follow-up msg");
 
         // Draining one should not affect the other.
-        let drained_follow_ups = ChatService::drain_follow_ups(&container, &sid).await;
+        let drained_follow_ups = ChatService::drain_follow_ups(&container, &sid);
         assert_eq!(drained_follow_ups.len(), 1);
 
         let steers_after = ChatService::list_steers(&container, &sid).await;

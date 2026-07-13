@@ -71,6 +71,9 @@ pub struct SessionState {
     /// Pending plan-review channels for HITL plan approval/rejection.
     pub pending_plan_reviews: crate::chat::PendingPlanReviews,
 
+    /// Control channels for approved plans whose phases are executing.
+    pub active_plan_executions: crate::chat_types::ActivePlanExecutions,
+
     /// Per-session steering queues. Holds user messages enqueued while a turn
     /// is streaming; drained and injected at LLM-call boundaries.
     pub steering_queues: crate::chat::SteeringQueues,
@@ -92,8 +95,9 @@ impl Default for SessionState {
             pending_interactions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_plan_reviews: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            active_plan_executions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             steering_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            follow_up_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            follow_up_queues: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
             session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -1119,6 +1123,10 @@ impl ServiceContainer {
         {
             let mut reviews = self.session_state.pending_plan_reviews.lock().await;
             reviews.retain(|_, pending| pending.session_id() != session_id);
+        }
+        {
+            let mut executions = self.session_state.active_plan_executions.lock().await;
+            executions.retain(|_, active| active.session_id() != session_id);
         }
         if let Err(e) = self
             .plan_run_store

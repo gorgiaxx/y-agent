@@ -407,6 +407,37 @@ pub type PendingPermissions =
 pub type PendingPlanReviews =
     std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, PendingPlanReview>>>;
 
+/// Control channel for a plan whose approved phases are currently executing.
+/// A revision request is consumed by the orchestrator, which cancels only the
+/// phase subtree and returns the same run to plan drafting and review.
+pub struct ActivePlanExecution {
+    session_id: SessionId,
+    revision_sender: tokio::sync::oneshot::Sender<String>,
+}
+
+impl ActivePlanExecution {
+    pub fn new(
+        session_id: SessionId,
+        revision_sender: tokio::sync::oneshot::Sender<String>,
+    ) -> Self {
+        Self {
+            session_id,
+            revision_sender,
+        }
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn request_revision(self, feedback: String) -> Result<(), String> {
+        self.revision_sender.send(feedback)
+    }
+}
+
+pub type ActivePlanExecutions =
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, ActivePlanExecution>>>;
+
 // ---------------------------------------------------------------------------
 // Steering queue
 // ---------------------------------------------------------------------------
@@ -453,6 +484,23 @@ pub struct FollowUpMessage {
     pub created_at: i64,
 }
 
+/// Runtime state for one session's TODO/follow-up queue.
+///
+/// `accepting` and `queue` share one lock so the final empty check can close
+/// the acceptance window atomically with respect to concurrent additions.
+#[derive(Debug, Default)]
+pub struct FollowUpQueueState {
+    pub(crate) accepting: bool,
+    pub(crate) queue: std::collections::VecDeque<FollowUpMessage>,
+}
+
+/// Error returned when deferred work cannot be added to a session.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FollowUpQueueError {
+    #[error("session {session_id} is not accepting TODO items")]
+    RunNotAccepting { session_id: SessionId },
+}
+
 impl FollowUpMessage {
     /// Build a follow-up with a freshly generated id and current timestamp.
     pub fn new(text: String) -> Self {
@@ -469,7 +517,7 @@ impl FollowUpMessage {
 /// by the agent execution loop. When non-empty, the run continues instead of
 /// stopping.
 pub type FollowUpQueues =
-    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<SessionId, Vec<FollowUpMessage>>>>;
+    std::sync::Arc<std::sync::Mutex<std::collections::HashMap<SessionId, FollowUpQueueState>>>;
 
 // ---------------------------------------------------------------------------
 // Turn result / error
