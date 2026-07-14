@@ -1,6 +1,6 @@
 //! Context pruning: message-level branch pruning for attention quality.
 //!
-//! Design reference: context-pruning-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Two built-in strategies:
 //! - **`RetryPruning`**: removes failed tool call branches (zero LLM cost)

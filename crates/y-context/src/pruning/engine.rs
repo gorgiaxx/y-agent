@@ -1,7 +1,7 @@
 //! `PruningEngine`: coordinates strategy selection, threshold evaluation,
 //! and pruning execution.
 //!
-//! Design reference: context-pruning-design.md, Component Overview
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::sync::Arc;
 

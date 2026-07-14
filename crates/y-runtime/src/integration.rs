@@ -1,6 +1,6 @@
 //! Runtime-Tools integration layer: bridges tool execution with runtime isolation.
 //!
-//! Design reference: runtime-tools-integration-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! The integration layer constructs a `RuntimeContext` from a tool's manifest,
 //! performs a 4-layer capability check, dispatches to the appropriate execution

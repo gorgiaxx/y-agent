@@ -1,7 +1,7 @@
 //! `ProgressivePruning` strategy: replaces completed multi-step sequences
 //! with LLM-generated rolling summaries via subagent delegation.
 //!
-//! Design reference: context-pruning-design.md, Flow 2
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Delegates summarization to the `pruning-summarizer` built-in agent
 //! via `AgentDelegator`, following the same pattern as `title-generator`.

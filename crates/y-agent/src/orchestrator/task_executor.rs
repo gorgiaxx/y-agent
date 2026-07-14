@@ -1,6 +1,6 @@
 //! Task executor trait: type-dispatched async task execution.
 //!
-//! Design reference: orchestrator-design.md, Execution Engine
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Each `TaskType` variant is handled by a concrete executor that implements
 //! this trait. The workflow executor dispatches tasks to the appropriate

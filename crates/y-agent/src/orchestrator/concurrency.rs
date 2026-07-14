@@ -1,6 +1,6 @@
 //! Concurrency controller: limits global and per-resource concurrent tasks.
 //!
-//! Design reference: orchestrator-design.md, Performance
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 //! Hook Handler Executor: 4 handler types, matcher, JSON I/O, decision aggregation.
 //!
-//! Design reference: hooks-plugin-design.md §Hook Handler Types
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! External extensibility via configuration-driven hook handlers:
 //! - **Command hooks**: shell scripts with JSON stdin/stdout

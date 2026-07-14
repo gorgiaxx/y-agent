@@ -1,6 +1,6 @@
 //! Skill evolution: proposals and metrics.
 //!
-//! Design reference: skill-versioning-evolution-design.md §Evolution Pipeline
+//! Standard reference: `docs/standards/SKILLS_STANDARD.md`
 //!
 //! After accumulating enough experience, the system can propose changes
 //! to skill documents. This module defines the proposal and metrics types

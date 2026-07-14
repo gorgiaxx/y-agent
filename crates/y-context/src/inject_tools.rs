@@ -1,6 +1,6 @@
 //! `InjectTools` pipeline stage (priority 500).
 //!
-//! Design reference: context-session-design.md [Pipeline Stages]
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Implements Tool Lazy Loading with dual-mode support:
 //!

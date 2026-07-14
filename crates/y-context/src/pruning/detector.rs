@@ -1,6 +1,6 @@
 //! Hybrid failure detection for context pruning.
 //!
-//! Design reference: context-pruning-design.md, Hybrid Failure Detection
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Three detection signals, applied conservatively:
 //! 1. Error status -- tool result contains error field or error-indicating patterns

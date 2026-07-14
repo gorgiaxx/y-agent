@@ -1,6 +1,6 @@
 //! Trust tiers for permission scoping across agents.
 //!
-//! Design reference: agent-autonomy-design.md -- Trust Model
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The trust hierarchy enforces `BuiltIn > UserDefined > Dynamic`.
 //! Each tier determines what operations an agent can perform:

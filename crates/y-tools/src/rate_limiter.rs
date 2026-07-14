@@ -6,7 +6,7 @@
 //! - Each tool call consumes one token
 //! - Requests are rejected when tokens are exhausted
 //!
-//! Design reference: tools-design.md §Execution Pipeline
+//! Protocol reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 
 use std::collections::{hash_map::Entry, HashMap};
 use std::sync::Arc;

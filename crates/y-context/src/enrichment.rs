@@ -1,6 +1,6 @@
 //! Input enrichment: context provider that enhances user input.
 //!
-//! Design reference: input-enrichment-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! The input enrichment sub-agent analyzes user queries to determine
 //! if additional context or clarification would improve the response.

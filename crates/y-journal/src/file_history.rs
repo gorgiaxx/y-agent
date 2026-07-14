@@ -4,7 +4,7 @@
 //! boundaries. When a rewind is requested, files are restored from
 //! their backups to the state at the target snapshot.
 //!
-//! Design reference: chat-checkpoint-design.md, file-journal-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Inspired by Claude Code's `fileHistory.ts` but adapted for the
 //! y-agent architecture (`SQLite` metadata + flat file backups).

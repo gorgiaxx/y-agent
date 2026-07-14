@@ -13,7 +13,7 @@
 //! 7. Mode transforms (dont_ask: ask->deny)
 //! ```
 //!
-//! Design reference: `docs/design/guardrails-hitl-design.md`
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use y_core::permission_types::{
     PermissionBehavior, PermissionContext, PermissionMode, PermissionReason, PermissionResult,

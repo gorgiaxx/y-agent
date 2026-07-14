@@ -1,6 +1,6 @@
 //! Agent runner: bridges `AgentRunConfig` → `ProviderPool::chat_completion()`.
 //!
-//! Design reference: `AGENT_AUTONOMY.md` §2.3
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! `SingleTurnRunner` is the default implementation of `AgentRunner`
 //! (from `y-core`). It converts an agent's system prompt and structured

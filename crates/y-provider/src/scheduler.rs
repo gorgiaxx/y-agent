@@ -1,6 +1,6 @@
 //! Priority scheduler for provider requests.
 //!
-//! Design reference: providers-design.md §Concurrency Model
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Implements a three-tier priority queue (Critical / Normal / Idle) that
 //! ensures Critical requests always get through by reserving capacity.

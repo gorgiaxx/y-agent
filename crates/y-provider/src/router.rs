@@ -1,6 +1,6 @@
 //! Tag-based provider routing with pluggable selection strategies.
 //!
-//! Design reference: providers-design.md §Tag-Based Routing
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::sync::Arc;
 

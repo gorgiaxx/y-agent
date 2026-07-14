@@ -1,6 +1,6 @@
 //! Message scheduling: queue modes for message delivery ordering.
 //!
-//! Design reference: message-scheduling-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Three queue modes control how messages are ordered before delivery:
 //! - **FIFO**: First-in-first-out (default)

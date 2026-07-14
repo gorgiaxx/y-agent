@@ -1,6 +1,6 @@
 //! Skill registry traits and associated types.
 //!
-//! Design reference: skills-knowledge-design.md, skill-versioning-evolution-design.md
+//! Standard reference: `docs/standards/SKILLS_STANDARD.md`
 //!
 //! Skills are LLM-instruction-only artifacts (no embedded tools or scripts).
 //! They use a tree-indexed proprietary format with compact root documents

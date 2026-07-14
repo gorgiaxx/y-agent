@@ -1,6 +1,6 @@
 //! Skill state machine: enforces valid lifecycle transitions.
 //!
-//! Design reference: skills-knowledge-design.md state diagram.
+//! Standard reference: `docs/standards/SKILLS_STANDARD.md`.
 //!
 //! ```text
 //! [*] → Submitted → Analyzing → Classified → Rejected → [*]

@@ -1,6 +1,6 @@
 //! Micro-agent pipeline: stateless steps with working memory slots.
 //!
-//! Design reference: multi-agent-design.md §Micro-Agent Pipeline
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! Each pipeline step runs a lightweight agent that reads from and writes
 //! to named working memory (WM) slots. The agent's session context is

@@ -1,6 +1,6 @@
 //! `InjectSkills` pipeline stage (priority 400).
 //!
-//! Design reference: context-session-design.md §Pipeline Stages
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Dynamically injects active skill descriptions into the context pipeline.
 //! At `provide()` time, reads `PromptContext.active_skills` and loads content

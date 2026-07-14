@@ -1,7 +1,6 @@
 //! Agent delegation traits for cross-module invocation.
 //!
-//! Design reference: `multi-agent-design.md` §Cross-Module Invocation Protocol,
-//! `AGENT_AUTONOMY.md` §2.4
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! This module defines the `AgentDelegator` trait that enables any module
 //! to request agent delegation without depending on the `y-agent` crate directly. At runtime,

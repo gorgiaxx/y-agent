@@ -1,6 +1,6 @@
 //! Workflow meta-tools: self-orchestration protocol for workflow CRUD.
 //!
-//! Design reference: agent-autonomy-design.md §Self-Orchestration Protocol
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The `WorkflowStore` persists reusable workflow templates (TOML or DSL).
 //! Agents can create, list, get, and delete templates at runtime.

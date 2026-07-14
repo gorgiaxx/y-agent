@@ -1,6 +1,6 @@
 //! Expression DSL: shorthand syntax for workflow composition.
 //!
-//! Design reference: orchestrator-design.md §Expression DSL
+//! Standard reference: `docs/standards/DSL_STANDARD.md`
 //!
 //! Supports two operators:
 //! - `>>` for sequential composition

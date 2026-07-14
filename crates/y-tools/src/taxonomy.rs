@@ -4,8 +4,7 @@
 //! The LLM sees only the compact root summary (~100 tokens) and uses
 //! `ToolSearch` to drill into categories or find specific tools.
 //!
-//! Design reference: `docs/design/tool-search-design.md`,
-//!                    `docs/standards/TOOL_CALL_PROTOCOL.md`
+//! Protocol reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 
 use std::collections::HashMap;
 use std::fmt;

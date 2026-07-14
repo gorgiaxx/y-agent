@@ -1,6 +1,6 @@
 //! Memory client traits and associated types.
 //!
-//! Design reference: memory-architecture-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Three-tier memory system:
 //! - Long-Term Memory (LTM): persistent, vector store backed, workspace-scoped

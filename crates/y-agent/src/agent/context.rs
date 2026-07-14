@@ -1,6 +1,6 @@
 //! Context injection: strategy-based context preparation for delegations.
 //!
-//! Design reference: multi-agent-design.md §Context Sharing Strategies
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! Each strategy controls how much conversation history a delegated agent
 //! receives:

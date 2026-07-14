@@ -1,6 +1,6 @@
 //! Input/output mapping: how data flows between workflow tasks.
 //!
-//! Design reference: orchestrator-design.md, Data Flow & Mapping
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Tasks declare their inputs and outputs as mappings. The executor resolves
 //! inputs before dispatching a task and applies output mappings after the

@@ -5,7 +5,7 @@
 //! 2. File restoration   (via `FileHistoryManager::rewind_to`)
 //! 3. Checkpoint invalidation + session state reset
 //!
-//! Design reference: Implementation plan for rewind feature.
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

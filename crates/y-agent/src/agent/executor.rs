@@ -1,6 +1,6 @@
 //! Agent executor: runs an agent from definition to completion.
 //!
-//! Design reference: multi-agent-design.md §`AgentExecutor`
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The executor loads a definition from the registry, creates a session
 //! branch, applies mode overlay, injects context, and manages the agent

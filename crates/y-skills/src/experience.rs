@@ -1,6 +1,6 @@
 //! Experience capture: structured records of skill execution outcomes.
 //!
-//! Design reference: skill-versioning-evolution-design.md §Experience Capture
+//! Standard reference: `docs/standards/SKILLS_STANDARD.md`
 //!
 //! Every skill execution can be recorded as an `ExperienceRecord`,
 //! capturing the outcome, key decisions, evidence, and resource usage.

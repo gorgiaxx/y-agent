@@ -1,6 +1,6 @@
 //! `ContextManager` — facade orchestrating the full context preparation flow.
 //!
-//! Design reference: context-session-design.md §Full Context Preparation Flow
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! The `ContextManager` owns a `ContextPipeline`, `ContextWindowGuard`, and
 //! `CompactionEngine`, coordinating the `prepare_context` flow:

@@ -6,7 +6,7 @@
 //! - How long the request has been active
 //! - Automatic cleanup on lease drop
 //!
-//! Design reference: providers-design.md §Concurrency Management
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 //! Agent definition: TOML-parsed descriptors for agent capabilities.
 //!
-//! Design reference: multi-agent-design.md §Agent Definition, §Agent Behavioral Modes
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 
 use serde::{Deserialize, Serialize};
 
@@ -112,7 +112,7 @@ impl ResponseFormatConfig {
 
 /// Behavioral mode governing tool availability and system prompt focus.
 ///
-/// Design reference: multi-agent-design.md §Agent Behavioral Modes
+/// Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 ///
 /// Modes are configuration overlays: when an agent runs in `Plan` mode,
 /// the mode configuration filters the agent's tool list to read-only tools
@@ -132,7 +132,7 @@ pub enum AgentMode {
 
 /// Context sharing strategy for delegations.
 ///
-/// Design reference: multi-agent-design.md §Context Sharing Strategies
+/// Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextStrategy {
@@ -149,7 +149,7 @@ pub enum ContextStrategy {
 
 /// Complete definition of an agent, parsed from TOML.
 ///
-/// Design reference: multi-agent-design.md §Agent Definition
+/// Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentDefinition {
     pub id: String,

@@ -3,7 +3,7 @@
 //! Append-only transcript for GUI display. Uses `{session_id}.display.jsonl`
 //! file naming to coexist alongside the context transcript.
 //!
-//! Design reference: `GUI_SESSION_SEPARATION_PLAN.md` §3.1, Step 1.2.
+//! Frontend contract: `docs/standards/FRONTEND_REUSE_STANDARD.md`.
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,6 +1,6 @@
 //! Meta-tools for agent lifecycle management.
 //!
-//! Design reference: multi-agent-design.md §Meta-Tool System
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! These tools allow agents to create, update, deactivate, and search
 //! for other agent definitions at runtime.

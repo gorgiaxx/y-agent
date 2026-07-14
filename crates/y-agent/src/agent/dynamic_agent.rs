@@ -1,6 +1,6 @@
 //! Dynamic agent lifecycle management.
 //!
-//! Design reference: agent-autonomy-design.md §Dynamic Agent Lifecycle
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! Dynamic agents are created at runtime by other agents. They follow
 //! a trust hierarchy (`BuiltIn > UserDefined > Dynamic`) and inherit
@@ -51,7 +51,7 @@ pub enum AgentStatus {
 
 /// Computed effective permissions after intersecting with creator's permissions.
 ///
-/// Design reference: agent-autonomy-design.md §Permission Inheritance
+/// Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 ///
 /// - `tools_allowed`: intersection of declared tools and creator's allowed tools.
 /// - Numeric limits are `min(declared, creator)`.

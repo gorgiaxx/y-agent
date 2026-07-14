@@ -1,6 +1,6 @@
 //! Canonical sessions — cross-channel session management.
 //!
-//! Design reference: session-design.md §Canonical Sessions
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! A canonical session merges messages from multiple channels (CLI, API, Web)
 //! into a unified view. Each channel produces a child session, and the

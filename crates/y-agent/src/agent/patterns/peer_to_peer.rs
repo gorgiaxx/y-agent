@@ -1,6 +1,6 @@
 //! Peer-to-peer pattern: agents communicate through shared typed channels.
 //!
-//! Design reference: multi-agent-design.md §Collaboration Patterns
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! In P2P collaboration, agents exchange messages through shared channels
 //! rather than having a coordinator. A channel reducer aggregates final

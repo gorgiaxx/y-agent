@@ -1,6 +1,6 @@
 //! Tool traits and associated types.
 //!
-//! Design reference: tools-design.md
+//! Protocol reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 //!
 //! The tool system supports four types: built-in, MCP, custom, and dynamic.
 //! Tools are lazily loaded via `ToolIndex` + `ToolSearch` to minimize

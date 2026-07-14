@@ -1,6 +1,6 @@
 //! Embedding provider trait for vector-based memory recall.
 //!
-//! Design reference: memory-architecture-design.md §Vector Search
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! This module defines the `EmbeddingProvider` trait for generating text
 //! embeddings. Implementations may wrap `OpenAI`, local models, or other

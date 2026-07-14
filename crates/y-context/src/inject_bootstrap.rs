@@ -1,6 +1,6 @@
 //! `InjectBootstrap` pipeline stage (priority 200).
 //!
-//! Design reference: context-session-design.md §Pipeline Stages
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Reads workspace context files (README.md, AGENTS.md, project structure)
 //! and injects them as `ContextCategory::Bootstrap` items. Respects the

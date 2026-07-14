@@ -1,6 +1,6 @@
 //! Working Memory: cognitive-category-scoped slots for micro-agent pipelines.
 //!
-//! Design reference: micro-agent-pipeline-design.md §Working Memory
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Working Memory provides typed slots organized by cognitive categories.
 //! Each slot carries a `token_estimate` for budget enforcement. The

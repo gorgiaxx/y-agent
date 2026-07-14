@@ -1,6 +1,6 @@
 //! `RetryPruning` strategy: removes failed tool call branches.
 //!
-//! Design reference: context-pruning-design.md, Flow 1
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Zero LLM cost, target < 5ms. Uses `PruningDetector` for hybrid
 //! failure detection, then tombstones failed messages via batch status update.

@@ -1,6 +1,6 @@
 //! Failure strategies and retry configuration for workflow tasks.
 //!
-//! Design reference: orchestrator-design.md, Failure Handling and Edge Cases
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::time::Duration;
 

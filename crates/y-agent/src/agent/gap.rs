@@ -1,6 +1,6 @@
 //! Capability gap detection and resolution.
 //!
-//! Design reference: multi-agent-design.md §`CapabilityGap` Middleware
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! When a delegation cannot find a suitable agent, the gap detector
 //! classifies the gap type and attempts auto-resolution via the

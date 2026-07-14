@@ -1,6 +1,6 @@
 //! Workflow executor: async DAG execution with task dispatching.
 //!
-//! Design reference: orchestrator-design.md, Execution Engine
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

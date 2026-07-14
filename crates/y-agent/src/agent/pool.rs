@@ -1,6 +1,6 @@
 //! Agent pool: runtime instance management.
 //!
-//! Design reference: multi-agent-design.md §Agent Pool
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The pool manages `AgentInstance` runtime instances (as opposed to the
 //! `AgentRegistry` which manages static definitions). It enforces

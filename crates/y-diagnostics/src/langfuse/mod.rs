@@ -1,7 +1,7 @@
-//! Langfuse OTLP export bridge.
+//! Langfuse diagnostics export bridge.
 //!
 //! Non-invasive tracing export that ships completed diagnostics traces to
-//! Langfuse via OTLP/HTTP JSON, without modifying any business logic.
+//! Langfuse's native ingestion API without modifying business logic.
 
 pub mod bridge;
 pub mod config;

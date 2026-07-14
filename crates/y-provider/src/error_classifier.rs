@@ -1,6 +1,6 @@
 //! Error classifier: normalizes provider errors into a `StandardError` enum.
 //!
-//! Design reference: providers-design.md §Error Classification
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! The classifier examines HTTP status codes and error body content to
 //! categorize provider failures into standard types. These standard errors

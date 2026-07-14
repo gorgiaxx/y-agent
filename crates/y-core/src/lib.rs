@@ -5,21 +5,21 @@
 //!
 //! # Module Overview
 //!
-//! | Module | Key Traits | Design Reference |
-//! |--------|-----------|-----------------|
-//! | [`agent`] | `AgentDelegator`, `ContextStrategyHint`, `DelegationOutput` | multi-agent-design.md, AGENT_AUTONOMY.md |
-//! | [`types`] | Shared IDs, `Message`, `TokenUsage` | - |
-//! | [`error`] | `ClassifiedError`, `Redactable` | - |
-//! | [`provider`] | `LlmProvider`, `ProviderPool` | providers-design.md |
-//! | [`runtime`] | `RuntimeAdapter` | runtime-design.md |
-//! | [`tool`] | `Tool`, `ToolRegistry` | tools-design.md |
-//! | [`session`] | `SessionStore`, `TranscriptStore` | context-session-design.md |
-//! | [`memory`] | `MemoryClient`, `ExperienceStore` | memory-architecture-design.md |
-//! | [`checkpoint`] | `CheckpointStorage` | orchestrator-design.md |
-//! | [`hook`] | `Middleware`, `HookHandler`, `EventSubscriber` | hooks-plugin-design.md |
-//! | [`skill`] | `SkillRegistry` | skills-knowledge-design.md |
-//! | [`embedding`] | `EmbeddingProvider` | memory-architecture-design.md |
-//! | [`permission_types`] | `PermissionBehavior`, `PermissionRule`, `PermissionMode` | guardrails-hitl-design.md |
+//! | Module | Key Traits |
+//! |--------|------------|
+//! | [`agent`] | `AgentDelegator`, `ContextStrategyHint`, `DelegationOutput` |
+//! | [`types`] | Shared IDs, `Message`, `TokenUsage` |
+//! | [`error`] | `ClassifiedError`, `Redactable` |
+//! | [`provider`] | `LlmProvider`, `ProviderPool` |
+//! | [`runtime`] | `RuntimeAdapter` |
+//! | [`tool`] | `Tool`, `ToolRegistry` |
+//! | [`session`] | `SessionStore`, `TranscriptStore` |
+//! | [`memory`] | `MemoryClient`, `ExperienceStore` |
+//! | [`checkpoint`] | `CheckpointStorage` |
+//! | [`hook`] | `Middleware`, `HookHandler`, `EventSubscriber` |
+//! | [`skill`] | `SkillRegistry` |
+//! | [`embedding`] | `EmbeddingProvider` |
+//! | [`permission_types`] | `PermissionBehavior`, `PermissionRule`, `PermissionMode` |
 
 pub mod agent;
 pub mod checkpoint;

@@ -1,6 +1,6 @@
 //! Delegation protocol: task handoff between agents.
 //!
-//! Design reference: multi-agent-design.md §Delegation Protocol
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The delegation protocol manages task handoff between agents including:
 //! - Context sharing strategy selection
@@ -48,7 +48,7 @@ pub struct DelegationResult {
 
 /// Manages task delegation between agents.
 ///
-/// Design reference: multi-agent-design.md §Delegation Protocol
+/// Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 #[derive(Debug)]
 pub struct DelegationProtocol {
     config: MultiAgentConfig,

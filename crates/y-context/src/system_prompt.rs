@@ -1,6 +1,6 @@
 //! `BuildSystemPrompt` pipeline stage.
 //!
-//! Design reference: prompt-design.md, context-session-design.md §Pipeline Stages
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! This stage runs at priority 100 and assembles the system prompt from a
 //! `PromptTemplate` + `SectionStore`. Sections are lazily loaded: only those

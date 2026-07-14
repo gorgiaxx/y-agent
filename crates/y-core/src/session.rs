@@ -1,6 +1,6 @@
 //! Session store traits and associated types.
 //!
-//! Design reference: context-session-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Sessions form a tree structure supporting branching conversations.
 //! Metadata is stored in `SQLite`; message transcripts in JSONL files.
@@ -302,7 +302,7 @@ pub trait TranscriptStore: Send + Sync {
 /// full, uncompacted conversation history.  Only truncated during
 /// undo/rollback operations.
 ///
-/// Design reference: `GUI_SESSION_SEPARATION_PLAN.md` §3.1
+/// Frontend contract: `docs/standards/FRONTEND_REUSE_STANDARD.md`
 #[async_trait]
 pub trait DisplayTranscriptStore: Send + Sync {
     /// Append a message to the display transcript.

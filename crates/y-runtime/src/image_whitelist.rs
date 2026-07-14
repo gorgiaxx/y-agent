@@ -1,6 +1,6 @@
 //! Image whitelist with digest verification.
 //!
-//! Design reference: runtime-design.md §Image Whitelist
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Provides a structured whitelist that goes beyond the simple `HashSet<String>`
 //! in `RuntimeConfig`. Each entry specifies:

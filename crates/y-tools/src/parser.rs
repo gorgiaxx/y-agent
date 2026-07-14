@@ -13,7 +13,7 @@
 //! - `<|DSML|function_calls>...</|DSML|function_calls>` (`DeepSeek` V3.2)
 //! - `<minimax:tool_call>...</minimax:tool_call>` (`MiniMax` M2)
 //!
-//! Design reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
+//! Protocol reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 
 use serde::{Deserialize, Serialize};
 

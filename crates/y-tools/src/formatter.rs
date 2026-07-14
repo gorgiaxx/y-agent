@@ -4,7 +4,7 @@
 //! formats suitable for LLM context. Supports multiple output formats
 //! and content truncation for large outputs.
 //!
-//! Design reference: tools-design.md §Result Processing
+//! Protocol reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 
 use serde_json::Value;
 

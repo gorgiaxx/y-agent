@@ -1,6 +1,6 @@
 //! Multi-agent configuration.
 //!
-//! Design reference: multi-agent-design.md §Agent Pool Configuration
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 
 use serde::{Deserialize, Serialize};
 

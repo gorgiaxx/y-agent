@@ -1,6 +1,6 @@
 //! Compaction engine: summarizes older messages to reclaim context window space.
 //!
-//! Design reference: context-session-design.md §Compaction
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Three strategies are supported:
 //! - **Summarize**: single LLM call summarizes all old messages

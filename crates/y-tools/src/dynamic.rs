@@ -1,6 +1,6 @@
 //! Dynamic tool lifecycle management.
 //!
-//! Design reference: tools-design.md §Dynamic Tools
+//! Protocol reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 //!
 //! Dynamic tools are created at runtime by agents — script wrappers,
 //! HTTP-API calls, or composite pipelines. They are always sandboxed

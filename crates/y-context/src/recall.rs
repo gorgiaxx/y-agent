@@ -1,6 +1,6 @@
 //! Memory recall: retrieves relevant memories for context injection.
 //!
-//! Design reference: memory-architecture-design.md §Recall
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Supports multiple recall methods:
 //! - **Text**: Full-text substring/word-overlap search

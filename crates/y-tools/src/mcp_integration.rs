@@ -1,6 +1,6 @@
 //! MCP tool integration: configuration and naming utilities.
 //!
-//! Design reference: tools-design.md -- MCP Tool Discovery
+//! Protocol reference: `docs/standards/TOOL_CALL_PROTOCOL.md`
 //!
 //! Tool registration is handled by `ServiceContainer::register_mcp_tools()`
 //! in `y-service`, which bridges `McpConnectionManager` discovered tools into

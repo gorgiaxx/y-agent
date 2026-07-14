@@ -1,6 +1,6 @@
 //! Runtime adapter traits and capability model.
 //!
-//! Design reference: runtime-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! The runtime layer provides isolated execution environments for tools.
 //! Three backends (Docker, Native/bubblewrap, SSH) implement the same trait.

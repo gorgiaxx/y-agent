@@ -4,7 +4,7 @@
 //! thresholds and alerting. Used for preventing resource exhaustion
 //! and providing observability into runtime operations.
 //!
-//! Design reference: runtime-design.md §Resource Management
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::sync::Arc;
 use std::time::Instant;

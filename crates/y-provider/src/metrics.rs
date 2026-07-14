@@ -1,6 +1,6 @@
 //! Per-provider metrics tracking with cost accumulation.
 //!
-//! Design reference: providers-design.md §Observability
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

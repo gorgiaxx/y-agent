@@ -1,6 +1,6 @@
 //! LLM provider traits and associated types.
 //!
-//! Design reference: providers-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! The provider layer manages multiple LLM backends with tag-based routing,
 //! intelligent freeze/failover, and per-provider connection pooling.

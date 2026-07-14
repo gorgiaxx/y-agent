@@ -1,4 +1,4 @@
-//! Langfuse OTLP export configuration.
+//! Langfuse diagnostics export configuration.
 
 use serde::{Deserialize, Serialize};
 

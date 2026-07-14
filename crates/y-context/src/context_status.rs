@@ -1,6 +1,6 @@
 //! `InjectContextStatus` pipeline stage.
 //!
-//! Design reference: context-session-design.md §Pipeline Stages
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! This stage runs last (priority 700) and injects a status report about
 //! the current context budget — how many tokens are used, remaining

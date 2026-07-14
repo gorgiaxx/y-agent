@@ -1,6 +1,6 @@
 //! Adapter that bridges `ContextProvider` stages to `y-hooks` `Middleware`.
 //!
-//! Design reference: context-session-design.md §Pipeline Stages
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Each `ContextProvider` is wrapped as a `Middleware` so the context
 //! assembly pipeline can participate in the middleware chain. The adapter

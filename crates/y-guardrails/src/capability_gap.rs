@@ -1,6 +1,6 @@
 //! Capability gap detection and resolution middleware.
 //!
-//! Design reference: agent-autonomy-design.md §Capability-Gap Resolution
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The `CapabilityGapMiddleware` detects when the agent's current tool or
 //! agent inventory is insufficient for a task and triggers automatic

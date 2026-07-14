@@ -1,6 +1,6 @@
 //! `LoadHistory` pipeline stage (priority 600).
 //!
-//! Design reference: context-session-design.md §Pipeline Stages
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Loads session messages, applies `repair_history()` to fix
 //! inconsistencies, and injects them as `ContextCategory::History` items.

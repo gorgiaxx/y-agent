@@ -1,6 +1,6 @@
 //! Async event bus with per-subscriber channels.
 //!
-//! Design reference: hooks-plugin-design.md §Event Bus
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Architecture: channel-per-subscriber (not broadcast).
 //! Each subscriber gets its own `mpsc` channel. The publisher pre-filters

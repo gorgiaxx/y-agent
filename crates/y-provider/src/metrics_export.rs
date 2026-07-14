@@ -3,7 +3,7 @@
 //! Renders per-provider metrics into Prometheus text exposition format (text/plain).
 //! Supports standard metric types: counters and gauges.
 //!
-//! Design reference: providers-design.md §Observability
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::fmt::Write;
 

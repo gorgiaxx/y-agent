@@ -1,7 +1,7 @@
 //! Built-in prompt sections and default template.
 //!
-//! Provides factory functions for the built-in prompt sections defined in
-//! `prompt-design.md` and a default `PromptTemplate` referencing them.
+//! Provides factory functions for built-in prompt sections and a default
+//! `PromptTemplate` referencing them.
 //!
 //! Prompt content is loaded from `config/prompts/*.txt` at compile time via
 //! `include_str!`. At runtime, users can override any prompt by placing a
@@ -325,8 +325,7 @@ pub const BUILTIN_PROMPT_FILES: &[(&str, &str)] = &[
 
 /// Create the default `PromptTemplate` referencing the built-in sections.
 ///
-/// Includes mode overlays for `plan` and `explore` modes as defined in
-/// `prompt-design.md`.
+/// Includes mode overlays for plan and loop execution.
 pub fn default_template() -> PromptTemplate {
     let sections = vec![
         section_ref("core.plan_mode_active"),

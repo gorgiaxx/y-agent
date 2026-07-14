@@ -1,6 +1,6 @@
 //! Micro-agent pipeline: stateless multi-step execution with Working Memory.
 //!
-//! Design reference: micro-agent-pipeline-design.md
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! Each step in the pipeline runs with a fresh session context containing
 //! only the Working Memory slots from its declared input categories.

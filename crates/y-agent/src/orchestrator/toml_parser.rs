@@ -1,6 +1,6 @@
 //! TOML workflow parser: complex workflow definitions via configuration.
 //!
-//! Design reference: orchestrator-design.md, Dual-Format Workflow Definition
+//! Standard reference: `docs/standards/DSL_STANDARD.md`
 //!
 //! Workflows can be defined in two formats:
 //! - **Expression DSL**: compact inline syntax (`search >> (analyze | score) >> summarize`)

@@ -3,7 +3,7 @@
 //! Provides a structured, append-only log of every action taken within
 //! a runtime environment. Used for compliance, debugging, and replay.
 //!
-//! Design reference: runtime-design.md §Observability
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use std::collections::VecDeque;
 use std::sync::Arc;

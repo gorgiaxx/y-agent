@@ -1,6 +1,6 @@
 //! Mode overlay: filters tool lists and injects mode-specific system prompts.
 //!
-//! Design reference: multi-agent-design.md §Agent Behavioral Modes
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! Modes are configuration overlays applied at delegation time:
 //! - `Build`: all allowed tools available, implementation-focused prompt

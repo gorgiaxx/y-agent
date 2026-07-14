@@ -1,6 +1,6 @@
 //! Checkpoint storage traits for workflow state persistence.
 //!
-//! Design reference: orchestrator-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! The checkpoint system uses committed/pending write separation for
 //! cancellation safety. Pending writes are visible only to the current

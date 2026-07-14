@@ -1,6 +1,6 @@
 //! Hook, middleware, and event bus traits.
 //!
-//! Design reference: hooks-plugin-design.md
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Architecture:
 //! - Hooks: observe lifecycle events (read-only)

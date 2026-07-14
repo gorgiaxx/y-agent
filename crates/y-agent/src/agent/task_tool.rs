@@ -1,6 +1,6 @@
 //! Built-in `task` tool: in-conversation agent delegation.
 //!
-//! Design reference: multi-agent-design.md §Task Tool
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The `task` tool allows an agent to delegate work to another agent
 //! within a conversation. It wraps the delegation protocol and executor.

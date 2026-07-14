@@ -1,6 +1,6 @@
 //! Agent registry: unified management of agent definitions.
 //!
-//! Design reference: multi-agent-design.md §Agent Registry
+//! Standard reference: `docs/standards/AGENT_AUTONOMY.md`
 //!
 //! The registry manages three types of agent definitions:
 //! - `BuiltIn`: shipped with the framework (tool-engineer, agent-architect)

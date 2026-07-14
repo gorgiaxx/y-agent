@@ -1,6 +1,6 @@
 //! `InjectMemory` pipeline stage (priority 300).
 //!
-//! Design reference: context-session-design.md §Pipeline Stages
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 //!
 //! Uses `RecallMiddleware` to format recalled memories and injects them
 //! as `ContextCategory::Memory` items in the context pipeline.

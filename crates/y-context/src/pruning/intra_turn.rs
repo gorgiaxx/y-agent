@@ -1,7 +1,7 @@
 //! Intra-turn pruning: removes failed tool call branches from the in-memory
 //! `working_history` between tool call iterations.
 //!
-//! Design reference: context-pruning-design.md, Intra-Turn Pruning section.
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`.
 //!
 //! Operates on `Vec<Message>` (no persistence). Uses the same detection
 //! heuristics as post-turn `RetryPruning` via the shared `patterns` module.

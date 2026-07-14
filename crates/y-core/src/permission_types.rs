@@ -5,7 +5,7 @@
 //! `y-guardrails` for evaluation, `y-tools` for tool-level defaults,
 //! and `y-service` for persistence and wiring.
 //!
-//! Design reference: `docs/design/guardrails-hitl-design.md`
+//! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
 use serde::{Deserialize, Serialize};
 
