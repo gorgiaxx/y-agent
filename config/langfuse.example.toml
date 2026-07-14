@@ -1,4 +1,4 @@
-# Langfuse OTLP Export Configuration
+# Langfuse Diagnostics Export Configuration
 # Non-invasive export of diagnostics traces to Langfuse for evaluation.
 # All fields shown with their defaults.
 

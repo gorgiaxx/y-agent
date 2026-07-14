@@ -12,7 +12,7 @@ y-service = { workspace = true, features = ["langfuse"] }
 y-session = { workspace = true }
 y-agent = { workspace = true }
 y-knowledge = { workspace = true }
-y-skills = { workspace = true }
+y-skills = { workspace = true, features = ["skill_transformation"] }
 y-prompt = { workspace = true }
 
 axum = { workspace = true }

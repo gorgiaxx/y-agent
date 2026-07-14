@@ -16,12 +16,6 @@ Thumbs.db
 *.rej
 
 ### Docs
-docs/anthropic_api
-docs/openai
-docs/plan
-docs/research
-docs/design
-docs/reviews
 *.pdf
 
 ### Rust / Cargo

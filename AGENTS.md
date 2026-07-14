@@ -4,9 +4,9 @@ Scope: entire repository. All rules are mandatory.
 
 ## 1) Project Snapshot
 
-**y-agent** — Rust-first modular AI Agent framework. Phase: **active implementation**.
+**y-agent** — Rust-first, model-agnostic Agent Harness. Phase: **active implementation**.
 
-Goals: async-first (P95 tool dispatch < 100ms) · model-agnostic · full observability · WAL-based recoverability · self-evolving skills.
+Goals: goal-directed execution · plan/loop orchestration · self-orchestration · self-evolving skills · knowledge-backed context · full observability · WAL-based recoverability.
 
 ### 1.1 Workspace Crates
 
@@ -25,8 +25,9 @@ Goals: async-first (P95 tool dispatch < 100ms) · model-agnostic · full observa
 ```
 y-agent/
   docs/
-    design/            — detailed design documents
-    standards/         — engineering, testing, DB, DSL, skills, and tool-call standards
+    guides/            — canonical architecture and authoring guides
+    standards/         — engineering, testing, DSL, skills, tool-call, autonomy, and frontend standards
+    schema/            — runtime schema source-of-truth pointers
   config/
     agents/            — agent configuration
     persona/           — persona configuration
@@ -61,7 +62,7 @@ y-agent/
 
 - **Low** — typo fixes, open question additions
 - **Medium** — new sections, targets, alternatives
-- **High** — shared concepts (permission model, memory tiers, middleware chains), `DESIGN_OVERVIEW.md` alignment table, multi-doc changes
+- **High** — shared concepts (permission model, memory tiers, middleware chains), architecture changes, multi-doc changes
 
 When uncertain -> High.
 
@@ -71,7 +72,7 @@ When uncertain -> High.
 
 > Standards: `TEST_STRATEGY.md` · `ENGINEERING_STANDARDS.md`
 
-- **Before coding**: read the design doc in `docs/design/` + `DESIGN_OVERVIEW.md`. Implementation must conform. Impractical design -> update doc first, then code.
+- **Before coding**: read `docs/guides/ARCHITECTURE.md` and every applicable standard. Inspect current code and tests as the implementation source of truth. If an architectural contract must change, update the canonical architecture or owning standard before production code.
 - **TDD cycle**: Red (failing test) -> Green (minimal code) -> Refactor -> Repeat.
 - **Frontend TDD**: for `crates/y-gui`, add or update Vitest coverage before changing behavior whenever the work affects UI state, rendering contracts, or interaction flows.
 - Rust casing: `snake_case` files/fns · `PascalCase` types · `SCREAMING_SNAKE_CASE` consts.
@@ -139,10 +140,10 @@ This strips compilation progress, download noise, and individual test-pass lines
 
 ## 5) Key References
 
-- `DESIGN_RULE.md` -- Design doc standards, playbooks, validation checklist
+- `docs/guides/ARCHITECTURE.md` -- canonical harness architecture and capability maturity
 - `docs/standards/TEST_STRATEGY.md` -- TDD methodology, pyramid, quality gates
 - `docs/standards/ENGINEERING_STANDARDS.md` -- Rust coding standards
-- `docs/standards/DATABASE_SCHEMA.md` -- SQLite / Qdrant schema
+- `docs/schema/README.md` -- runtime schema source-of-truth pointers
 - `docs/standards/AGENT_AUTONOMY.md` -- Sub-agent autonomy model & delegation protocol
 - `docs/standards/DSL_STANDARD.md` -- DSL specification
 - `docs/standards/FRONTEND_REUSE_STANDARD.md` -- Shared React frontend reuse across y-web and y-gui
