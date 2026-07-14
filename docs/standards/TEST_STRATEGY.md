@@ -246,7 +246,6 @@ y-test-utils/
 |-----------|----------|-----------------|----------|
 | LLM provider | Mock | Mock | Mock (HTTP server) |
 | SQLite | Mock (HashMap) | Real (in-memory) | Real (tempfile) |
-| PostgreSQL | Mock | Skip | Optional |
 | Docker | Mock | Skip | Real |
 | Vector store | Mock (Vec) | Mock (Vec) | Optional |
 | Filesystem | Mock | Real (tempdir) | Real (tempdir) |
@@ -469,4 +468,3 @@ Avoid these patterns in tests:
 | Mock that always returns success | Untested error paths | Test both success and failure paths |
 | Skipping the refactor step | Accumulates tech debt rapidly | Refactor immediately after green |
 | Writing multiple tests before any green | Loses focus, hard to debug | One Red-Green-Refactor cycle at a time |
-

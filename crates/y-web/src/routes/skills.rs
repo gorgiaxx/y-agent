@@ -522,6 +522,57 @@ async fn create_skill(
     Ok(Json(result))
 }
 
+/// Validation result for a single skill.
+#[derive(Debug, Serialize)]
+pub struct SkillValidationResult {
+    pub name: String,
+    pub valid: bool,
+    pub errors: Vec<String>,
+}
+
+/// `GET /api/v1/skills/validate` -- validate all installed skills.
+async fn validate_skills(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let store_path = skills_store_path(&state.config_dir);
+    let store = FilesystemSkillStore::new(&store_path)
+        .map_err(|e| ApiError::Internal(format!("Failed to open skill store: {e}")))?;
+    let all = store
+        .load_all()
+        .map_err(|e| ApiError::Internal(format!("Failed to load skills: {e}")))?;
+
+    let config = SkillConfig::default();
+    let validator = y_skills::SkillValidator::new(config);
+
+    let existing_names: std::collections::HashSet<String> =
+        all.iter().map(|m| m.name.clone()).collect();
+    let empty_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let mut results = Vec::with_capacity(all.len());
+    for manifest in &all {
+        let skill_dir = store_path.join(&manifest.name);
+        let dir_errors = validator.validate_directory(&skill_dir);
+        let manifest_errors = validator.validate_manifest(
+            manifest,
+            &existing_names,
+            &empty_set,
+            &empty_set,
+            &empty_set,
+        );
+        let errors: Vec<String> = dir_errors
+            .into_iter()
+            .chain(manifest_errors)
+            .map(|e| e.to_string())
+            .collect();
+        let valid = errors.is_empty();
+        results.push(SkillValidationResult {
+            name: manifest.name.clone(),
+            valid,
+            errors,
+        });
+    }
+
+    Ok(Json(results))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -532,6 +583,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/skills", get(list_skills))
         .route("/api/v1/skills/import", post(import_skill))
         .route("/api/v1/skills/create", post(create_skill))
+        .route("/api/v1/skills/validate", get(validate_skills))
         .route(
             "/api/v1/skills/{name}",
             get(get_skill).delete(uninstall_skill),

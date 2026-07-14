@@ -10,7 +10,7 @@
 
 This document defines the standard for y-agent's dual-mode workflow definition language: the **Expression DSL** (shorthand syntax for simple flows) and the **TOML Workflow Configuration** (detailed format for complex workflows). Both modes compile to the same internal `TaskDag` representation and are used by the Orchestrator to schedule and execute multi-task workflows.
 
-**Authoritative design reference**: [orchestrator-design.md](../design/orchestrator-design.md)
+**Architecture reference**: [y-agent Harness Architecture](../guides/ARCHITECTURE.md)
 
 ### 1.1 Design Principles
 
@@ -633,8 +633,8 @@ Templates are invoked via the Orchestrator API or via meta-tools:
 
 The Expression DSL parser is implemented in:
 
-- **Crate**: `y-agent-core`
-- **Module**: `expression_dsl` ([expression_dsl.rs](../../crates/y-agent-core/src/expression_dsl.rs))
+- **Crate**: `y-agent`
+- **Module**: `orchestrator::expression_dsl` ([expression_dsl.rs](../../crates/y-agent/src/orchestrator/expression_dsl.rs))
 - **Public API**: `tokenize()`, `parse()`, `expand_template()`, `DslWorkflow::to_task_dag()`
 
 ### 6.2 AST Types

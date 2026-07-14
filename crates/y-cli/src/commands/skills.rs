@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::Subcommand;
 
 use y_core::skill::SkillRegistry;
-use y_service::ServiceContainer;
+use y_service::{ServiceContainer, SkillService};
 use y_skills::{
     FilesystemSkillStore, ManifestParser, SkillConfig, SkillRegistryImpl, SkillValidator,
 };
@@ -64,6 +64,51 @@ pub enum SkillAction {
 
         /// Target version hash to rollback to.
         version: String,
+    },
+
+    /// Enable a skill.
+    Enable {
+        /// Skill name.
+        name: String,
+    },
+
+    /// Disable a skill.
+    Disable {
+        /// Skill name.
+        name: String,
+    },
+
+    /// Uninstall (delete) a skill.
+    Uninstall {
+        /// Skill name.
+        name: String,
+    },
+
+    /// List files in a skill directory.
+    Files {
+        /// Skill name.
+        name: String,
+    },
+
+    /// Read a file within a skill directory.
+    ReadFile {
+        /// Skill name.
+        name: String,
+
+        /// Relative path to the file within the skill directory.
+        path: String,
+    },
+
+    /// Save a file within a skill directory.
+    SaveFile {
+        /// Skill name.
+        name: String,
+
+        /// Relative path to the file within the skill directory.
+        path: String,
+
+        /// File content to write.
+        content: String,
     },
 }
 
@@ -252,6 +297,126 @@ pub async fn run(
             registry.rollback(&skill_id, &target_version).await?;
             output::print_success(&format!("Rolled back skill '{name}' to version {version}"));
         }
+
+        SkillAction::Enable { name } => {
+            let skills_dir = services
+                .skills_dir
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("skills directory not configured"))?;
+            let svc = SkillService::new(skills_dir);
+            svc.set_enabled(name, true)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            output::print_success(&format!("Skill '{name}' enabled"));
+        }
+
+        SkillAction::Disable { name } => {
+            let skills_dir = services
+                .skills_dir
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("skills directory not configured"))?;
+            let svc = SkillService::new(skills_dir);
+            svc.set_enabled(name, false)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            output::print_success(&format!("Skill '{name}' disabled"));
+        }
+
+        SkillAction::Uninstall { name } => {
+            let skills_dir = services
+                .skills_dir
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("skills directory not configured"))?;
+            let svc = SkillService::new(skills_dir);
+            svc.uninstall(name).await.map_err(|e| anyhow::anyhow!(e))?;
+            output::print_success(&format!("Skill '{name}' uninstalled"));
+        }
+
+        SkillAction::Files { name } => {
+            let skills_dir = services
+                .skills_dir
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("skills directory not configured"))?;
+            let dir = skills_dir.join(name);
+            if !dir.exists() {
+                anyhow::bail!("Skill directory not found: {}", dir.display());
+            }
+            let entries = list_skill_files(&dir, &dir)?;
+
+            match mode {
+                OutputMode::Json => {
+                    let json = serde_json::to_string_pretty(&entries)?;
+                    println!("{json}");
+                }
+                _ => {
+                    if entries.is_empty() {
+                        output::print_info(&format!("No files in skill '{name}'"));
+                    } else {
+                        let headers = &["Path", "Type", "Size"];
+                        let rows: Vec<TableRow> = entries
+                            .iter()
+                            .map(|e| TableRow {
+                                cells: vec![
+                                    e.path.clone(),
+                                    if e.is_dir {
+                                        "dir".to_string()
+                                    } else {
+                                        "file".to_string()
+                                    },
+                                    if e.is_dir {
+                                        "-".to_string()
+                                    } else {
+                                        e.size.to_string()
+                                    },
+                                ],
+                            })
+                            .collect();
+                        let table = output::format_table(headers, &rows);
+                        print!("{table}");
+                    }
+                }
+            }
+        }
+
+        SkillAction::ReadFile { name, path } => {
+            let skills_dir = services
+                .skills_dir
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("skills directory not configured"))?;
+            let dir = skills_dir.join(name);
+            let target = y_service::resolve_skill_read_path(&dir, Path::new(path))
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let content = std::fs::read_to_string(&target)?;
+
+            match mode {
+                OutputMode::Json => {
+                    let json = serde_json::json!({
+                        "path": path,
+                        "content": content,
+                    });
+                    println!("{json}");
+                }
+                _ => {
+                    print!("{content}");
+                }
+            }
+        }
+
+        SkillAction::SaveFile {
+            name,
+            path,
+            content,
+        } => {
+            let skills_dir = services
+                .skills_dir
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("skills directory not configured"))?;
+            let dir = skills_dir.join(name);
+            let target = y_service::resolve_skill_write_path(&dir, Path::new(path))
+                .map_err(|e| anyhow::anyhow!(e))?;
+            std::fs::write(&target, content)?;
+            output::print_success(&format!("Saved file '{path}' in skill '{name}'"));
+        }
     }
 
     Ok(())
@@ -423,4 +588,47 @@ fn validate_skills(store_path: &str, config: &SkillConfig) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// A file or directory entry within a skill directory.
+#[derive(Debug, serde::Serialize)]
+struct SkillFileEntry {
+    path: String,
+    is_dir: bool,
+    size: u64,
+}
+
+/// Recursively list all files and directories under `dir`, returning entries
+/// with paths relative to `base`.
+fn list_skill_files(dir: &Path, base: &Path) -> Result<Vec<SkillFileEntry>> {
+    let mut entries = Vec::new();
+    let read_dir = std::fs::read_dir(dir)?;
+    for entry in read_dir {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        let abs_path = entry.path();
+        let rel_path = abs_path
+            .strip_prefix(base)
+            .unwrap_or(&abs_path)
+            .to_string_lossy()
+            .to_string();
+
+        if meta.is_dir() {
+            entries.push(SkillFileEntry {
+                path: rel_path,
+                is_dir: true,
+                size: 0,
+            });
+            entries.extend(list_skill_files(&abs_path, base)?);
+        } else {
+            entries.push(SkillFileEntry {
+                path: rel_path,
+                is_dir: false,
+                size: meta.len(),
+            });
+        }
+    }
+
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
 }

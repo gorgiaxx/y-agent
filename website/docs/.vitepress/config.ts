@@ -6,7 +6,7 @@ const SITE_URL = 'https://ai.jiahao.li';
 export default withMermaid(defineConfig({
   title: 'y-agent',
   description:
-    'A modular, extensible AI agent framework written in Rust. Async-first, model-agnostic, full observability, WAL-based recoverability, self-evolving skills.',
+    'A Rust-first, model-agnostic Agent Harness with plan and loop execution, self-orchestration, knowledge, self-evolving skills, recovery, and observability.',
 
   base: '/',
   lastUpdated: true,
@@ -39,7 +39,7 @@ export default withMermaid(defineConfig({
       {
         name: 'keywords',
         content:
-          'y-agent, AI agent framework, Rust, LLM, multi-agent, DAG workflow, tool calling, MCP, knowledge base, RAG, self-evolving skills, async-first, model-agnostic',
+          'y-agent, agent harness, Rust, LLM, plan mode, goal, self-orchestration, multi-agent, DAG workflow, MCP, knowledge base, self-evolving skills, observability',
       },
     ],
     ['meta', { name: 'robots', content: 'index, follow' }],
@@ -49,7 +49,7 @@ export default withMermaid(defineConfig({
       'meta',
       {
         property: 'og:title',
-        content: 'y-agent -- Modular AI Agent Framework in Rust',
+        content: 'y-agent -- Rust Agent Harness',
       },
     ],
     [
@@ -57,7 +57,7 @@ export default withMermaid(defineConfig({
       {
         property: 'og:description',
         content:
-          'Async-first, model-agnostic AI agent framework with full observability, WAL-based recoverability, and self-evolving skills.',
+          'A model-agnostic Agent Harness with planning, self-orchestration, knowledge, self-evolving skills, recovery, and observability.',
       },
     ],
     ['meta', { property: 'og:url', content: SITE_URL }],
@@ -67,7 +67,7 @@ export default withMermaid(defineConfig({
       'meta',
       {
         name: 'twitter:title',
-        content: 'y-agent -- Modular AI Agent Framework in Rust',
+        content: 'y-agent -- Rust Agent Harness',
       },
     ],
     [
@@ -75,7 +75,7 @@ export default withMermaid(defineConfig({
       {
         name: 'twitter:description',
         content:
-          'Async-first, model-agnostic AI agent framework with full observability and self-evolving skills.',
+          'Goal-directed planning, self-orchestration, knowledge, self-evolving skills, recovery, and observability.',
       },
     ],
   ],
@@ -86,7 +86,7 @@ export default withMermaid(defineConfig({
       lang: 'en',
       title: 'y-agent',
       description:
-        'A modular, extensible AI agent framework written in Rust.',
+        'A Rust-first, model-agnostic Agent Harness.',
       themeConfig: {
         nav: [
           { text: 'Home', link: '/' },
@@ -133,52 +133,8 @@ export default withMermaid(defineConfig({
                   link: '/development/architecture',
                 },
                 {
-                  text: 'Request Lifecycle',
-                  link: '/development/request-lifecycle',
-                },
-                {
-                  text: 'Crate Reference',
-                  link: '/development/crate-reference',
-                },
-                {
-                  text: 'GUI, TUI, and Bots',
-                  link: '/development/gui-tui-bots',
-                },
-                {
-                  text: 'Web API and Web UI',
-                  link: '/development/web-api-and-web-ui',
-                },
-                {
-                  text: 'Maintenance and Packaging',
-                  link: '/development/maintenance-and-packaging',
-                },
-                {
-                  text: 'Agent System',
-                  link: '/development/agent-system',
-                },
-                {
-                  text: 'Execution Modes',
-                  link: '/development/execution-modes',
-                },
-                {
-                  text: 'Tool System',
-                  link: '/development/tool-system',
-                },
-                {
-                  text: 'Context Pipeline',
-                  link: '/development/context-pipeline',
-                },
-                {
-                  text: 'Provider Pool',
-                  link: '/development/provider-pool',
-                },
-                {
-                  text: 'Middleware & Hooks',
-                  link: '/development/middleware-hooks',
-                },
-                {
-                  text: 'Storage & Sessions',
-                  link: '/development/storage-sessions',
+                  text: 'Observability',
+                  link: '/development/observability',
                 },
                 {
                   text: 'Contributing',

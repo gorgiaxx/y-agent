@@ -3,7 +3,7 @@
 **Version**: v0.1
 **Created**: 2026-03-11
 **Status**: Draft
-**Design References**: [skills-knowledge-design.md](../design/skills-knowledge-design.md), [skill-versioning-evolution-design.md](../design/skill-versioning-evolution-design.md)
+**Architecture Reference**: [y-agent Harness Architecture](../guides/ARCHITECTURE.md)
 
 ---
 

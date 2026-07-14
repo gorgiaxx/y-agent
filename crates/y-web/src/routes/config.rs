@@ -363,6 +363,24 @@ async fn mcp_config_save(
     Ok(Json(serde_json::json!({"message": "saved"})))
 }
 
+/// `GET /api/v1/config/mcp/status` -- live MCP server connection status.
+async fn mcp_status(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+    let statuses = state.container.mcp_manager.status().await;
+    let mut entries: Vec<serde_json::Value> = statuses
+        .into_iter()
+        .map(|(name, status)| {
+            let status_str = status.to_string();
+            serde_json::json!({
+                "name": name,
+                "status": status_str,
+                "connected": status_str == "connected",
+            })
+        })
+        .collect();
+    entries.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    Ok(Json(entries))
+}
+
 /// `GET /api/v1/config/prompts` -- list all prompt files.
 async fn prompt_list(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let prompts_dir = state.config_dir.join("prompts");
@@ -491,6 +509,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/config/mcp",
             get(mcp_config_get).put(mcp_config_save),
         )
+        .route("/api/v1/config/mcp/status", get(mcp_status))
         .route("/api/v1/config/prompts", get(prompt_list))
         .route("/api/v1/config/prompt-templates", get(prompt_template_list))
         .route(

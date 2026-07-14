@@ -261,7 +261,7 @@ All agent delegations — including system sub-agents — pass through the stand
 | Trace spans        | Each delegation creates a child span linked to parent        |
 | Token usage        | Tracked per agent instance (`agents.instance.tokens_used`)   |
 | Delegation metrics | `agents.delegations.total`, `agents.delegations.duration_ms` |
-| Cost tracking      | Routed through Diagnostics (PostgreSQL)                      |
+| Cost tracking      | Routed through the diagnostics store and configured exporters |
 | Guardrail checks   | LLM middleware chain applies to all agents                   |
 
 This is a key advantage of the unified model: internal system agent calls (e.g., compaction summarization) get the same observability as user-facing agent calls at zero additional implementation cost.

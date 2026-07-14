@@ -7,7 +7,11 @@ use clap::Subcommand;
 
 use y_agent::orchestrator::dag::TaskDag;
 use y_agent::orchestrator::expression_dsl;
-use y_service::WorkflowRow;
+use y_service::scheduler_service::SchedulerService;
+use y_service::workflow_service::ValidationResult;
+use y_service::{
+    DagVisualization, ExecutionSummary, UpdateWorkflowRequest, WorkflowRow, WorkflowService,
+};
 
 use crate::output::{self, OutputMode, TableRow};
 use crate::wire::AppServices;
@@ -54,6 +58,46 @@ pub enum WorkflowAction {
         /// Expression DSL string, e.g. "a >> (b | c) >> d".
         expression: String,
     },
+
+    /// Update an existing workflow's definition, description, or tags.
+    Update {
+        /// Workflow ID.
+        id: String,
+
+        /// Updated definition body (DSL expression or TOML content).
+        #[arg(long)]
+        def: Option<String>,
+
+        /// Updated description.
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Updated comma-separated tags.
+        #[arg(long)]
+        tags: Option<String>,
+    },
+
+    /// Validate a workflow definition without persisting.
+    Validate {
+        /// Definition body (DSL expression or TOML content).
+        def: String,
+
+        /// Definition format: "`expression_dsl`" or "toml".
+        #[arg(long, default_value = "expression_dsl")]
+        format: String,
+    },
+
+    /// Show the DAG (nodes and edges) for a stored workflow.
+    Dag {
+        /// Workflow ID.
+        id: String,
+    },
+
+    /// Manually execute a workflow.
+    Execute {
+        /// Workflow ID.
+        id: String,
+    },
 }
 
 /// Run a workflow subcommand.
@@ -79,6 +123,25 @@ pub async fn run(action: &WorkflowAction, services: &AppServices, mode: OutputMo
         }
         WorkflowAction::Delete { id } => cmd_delete(services, id, mode).await,
         WorkflowAction::Parse { expression } => cmd_parse(expression, mode),
+        WorkflowAction::Update {
+            id,
+            def,
+            description,
+            tags,
+        } => {
+            cmd_update(
+                services,
+                id,
+                def.as_deref(),
+                description.as_deref(),
+                tags.as_deref(),
+                mode,
+            )
+            .await
+        }
+        WorkflowAction::Validate { def, format } => cmd_validate(def, format, mode),
+        WorkflowAction::Dag { id } => cmd_dag(services, id, mode).await,
+        WorkflowAction::Execute { id } => cmd_execute(services, id, mode).await,
     }
 }
 
@@ -301,6 +364,161 @@ fn print_dag_info(dag: &TaskDag) {
         queue = dag.ready_tasks(&visited);
         // Remove already-visited to avoid infinite loop.
         queue.retain(|t| !visited.contains(&t.id));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// New subcommand handlers (matching GUI automation commands)
+// ---------------------------------------------------------------------------
+
+async fn cmd_update(
+    services: &AppServices,
+    id: &str,
+    def: Option<&str>,
+    description: Option<&str>,
+    tags: Option<&str>,
+    mode: OutputMode,
+) -> Result<()> {
+    let req = UpdateWorkflowRequest {
+        definition: def.map(str::to_string),
+        // Preserve existing format when only updating the definition; the
+        // service defaults to the stored format when `format` is None.
+        format: None,
+        description: description.map(str::to_string),
+        tags: tags.map(str::to_string),
+    };
+
+    let row = WorkflowService::update(&services.workflow_store, id, &req).await?;
+
+    match mode {
+        OutputMode::Json => {
+            let json = serde_json::to_string_pretty(&row)?;
+            println!("{json}");
+        }
+        _ => {
+            output::print_success(&format!("Workflow updated: {} (ID: {})", row.name, row.id));
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_validate(def: &str, format: &str, mode: OutputMode) -> Result<()> {
+    let result: ValidationResult = WorkflowService::validate_definition(def, format);
+
+    if mode == OutputMode::Json {
+        let json = serde_json::to_string_pretty(&result)?;
+        println!("{json}");
+    } else {
+        if result.valid {
+            output::print_success("Definition is valid");
+        } else {
+            output::print_error("Definition is invalid");
+        }
+        if !result.errors.is_empty() {
+            println!();
+            println!("─── Errors ───");
+            for err in &result.errors {
+                println!("  - {err}");
+            }
+        }
+        if let Some(ast_display) = &result.ast_display {
+            println!();
+            println!("─── AST ───");
+            println!("{ast_display}");
+        }
+        if let Some(dag) = &result.dag {
+            println!();
+            print_dag_visualization(dag);
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_dag(services: &AppServices, id: &str, mode: OutputMode) -> Result<()> {
+    let dag: DagVisualization =
+        WorkflowService::get_dag_visualization(&services.workflow_store, id).await?;
+
+    match mode {
+        OutputMode::Json => {
+            let json = serde_json::to_string_pretty(&dag)?;
+            println!("{json}");
+        }
+        _ => {
+            print_dag_visualization(&dag);
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_execute(services: &AppServices, id: &str, mode: OutputMode) -> Result<()> {
+    // Verify the workflow exists and get its name (mirrors the GUI pattern).
+    let wf = WorkflowService::get(&services.workflow_store, id).await?;
+
+    let execution: ExecutionSummary =
+        SchedulerService::execute_workflow(&services.scheduler_manager, &wf.id, &wf.name).await?;
+
+    if mode == OutputMode::Json {
+        let json = serde_json::to_string_pretty(&execution)?;
+        println!("{json}");
+    } else {
+        output::print_success(&format!(
+            "Workflow '{}' execution started (ID: {})",
+            wf.name, execution.execution_id
+        ));
+        println!("Status:    {}", execution.status);
+        println!("Triggered: {}", execution.triggered_at);
+        if let Some(err) = &execution.error_message {
+            output::print_error(&format!("Error: {err}"));
+        }
+    }
+
+    Ok(())
+}
+
+/// Print a `DagVisualization` (nodes, edges, topological order).
+fn print_dag_visualization(dag: &DagVisualization) {
+    println!(
+        "─── DAG ({} nodes, {} edges) ───",
+        dag.nodes.len(),
+        dag.edges.len()
+    );
+    println!();
+    println!("Topological order: {}", dag.topological_order.join(" -> "));
+    println!();
+    println!("Nodes:");
+    let headers = &[
+        "ID",
+        "Name",
+        "Type",
+        "Priority",
+        "Dependencies",
+        "Retry",
+        "Failure",
+    ];
+    let table_rows: Vec<TableRow> = dag
+        .nodes
+        .iter()
+        .map(|n| TableRow {
+            cells: vec![
+                n.id.clone(),
+                n.name.clone(),
+                n.task_type.clone(),
+                n.priority.clone(),
+                n.dependencies.join(", "),
+                if n.has_retry { "yes" } else { "no" }.to_string(),
+                n.failure_strategy.clone(),
+            ],
+        })
+        .collect();
+    let table = output::format_table(headers, &table_rows);
+    print!("{table}");
+    println!();
+    println!("Edges:");
+    for edge in &dag.edges {
+        println!("  {} -> {}", edge.from, edge.to);
     }
 }
 

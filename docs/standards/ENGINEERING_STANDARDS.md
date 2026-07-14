@@ -383,26 +383,32 @@ Before adding a dependency, verify:
 
 ### 7.3 Feature Flags
 
-Subsystem-level feature flags in the workspace:
+Feature flags are declared by the crate that owns the optional subsystem. The
+current manifests are authoritative; representative flags include:
 
 ```toml
-[features]
-default = ["runtime_native", "memory_stm"]
-runtime_docker = ["dep:bollard"]
-runtime_ssh = ["dep:russh"]
-memory_ltm = ["dep:qdrant-client"]
-memory_stm = []
-diagnostics_pg = ["dep:sqlx-postgres"]
-provider_openai = []
-provider_anthropic = []
-provider_ollama = []
-tool_lazy_loading = []
-evolution_fast_path = []
+# y-runtime
+runtime_docker = ["bollard", "futures-util"]
+
+# y-knowledge
+vector_qdrant = ["dep:qdrant-client"]
+
+# y-diagnostics
+langfuse = ["dep:reqwest", "dep:base64", "dep:regex", "dep:tokio-util"]
+
+# y-skills
+evolution_capture = []
+evolution_extraction = []
+evolution_refinement = []
+
+# y-hooks
+hook_handlers = ["dep:reqwest", "dep:regex"]
+llm_hooks = ["dep:y-provider", "hook_handlers"]
 ```
 
 Rules:
 - Every non-trivial subsystem gates behind a feature flag
-- `default` includes the minimum viable feature set
+- Defaults include only the owning crate's minimum viable feature set
 - Heavy dependencies (Docker, Qdrant) are opt-in
 - Feature flag names use `snake_case`
 
@@ -567,7 +573,7 @@ Scope: crate name or `workspace` for cross-cutting changes
 ```
 feat(y-provider): add tag-based routing with priority scheduler
 fix(y-storage): handle WAL checkpoint race in concurrent writes
-docs(design): update memory-architecture-design for 3-tier model
+docs(architecture): update memory model
 test(y-hooks): add middleware chain cancellation tests
 ci: add cargo-deny license check to pipeline
 ```
