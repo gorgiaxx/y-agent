@@ -450,6 +450,7 @@ pub fn run() {
             // MCP
             commands::config::mcp_config_get,
             commands::config::mcp_config_save,
+            commands::config::mcp_status,
             // System
             commands::system::system_status,
             commands::system::health_check,
@@ -487,6 +488,7 @@ pub fn run() {
             commands::skills::skill_get_files,
             commands::skills::skill_read_file,
             commands::skills::skill_save_file,
+            commands::skills::skill_validate,
             // Knowledge
             commands::knowledge::kb_collection_list,
             commands::knowledge::kb_collection_create,

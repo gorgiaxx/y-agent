@@ -359,6 +359,7 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   provider_list_models: { method: 'POST', path: '/api/v1/providers/list-models', body: providerListModelsBody },
   mcp_config_get:      { method: 'GET',  path: '/api/v1/config/mcp' },
   mcp_config_save:     { method: 'PUT',  path: '/api/v1/config/mcp', body: contentBody },
+  mcp_status:          { method: 'GET',  path: '/api/v1/config/mcp/status' },
   prompt_list:         { method: 'GET',  path: '/api/v1/config/prompts' },
   prompt_get:          { method: 'GET',  path: pathWith('/api/v1/config/prompts/{filename}', 'filename'), response: contentResponse },
   prompt_save:         { method: 'PUT',  path: pathWith('/api/v1/config/prompts/{filename}', 'filename'),
@@ -403,6 +404,7 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                            domain_hints: arg(a, 'domainHints', 'domain_hints'),
                            language: a.language,
                          }) },
+  skill_validate:      { method: 'GET',  path: '/api/v1/skills/validate' },
 
   // -- Workflows --
   workflow_list:       { method: 'GET',  path: '/api/v1/workflows' },

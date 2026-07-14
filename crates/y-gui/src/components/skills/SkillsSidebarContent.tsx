@@ -14,6 +14,8 @@ export function SkillsSidebarContent() {
       onSelectSkill={navProps.setActiveSkillName}
       onImportClick={() => navProps.setImportDialogOpen(true)}
       onClearImportStatus={skillHooks.clearImportStatus}
+      onValidate={skillHooks.validateSkills}
+      validating={skillHooks.validating}
     />
   );
 }

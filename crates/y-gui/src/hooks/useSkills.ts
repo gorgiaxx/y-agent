@@ -5,6 +5,12 @@ import type { SkillInfo, SkillDetail, SkillFileEntry, SkillImportResult, Diagnos
 
 export type ImportStatus = 'idle' | 'importing' | 'success' | 'error';
 
+export interface SkillValidationResult {
+  name: string;
+  valid: boolean;
+  errors: string[];
+}
+
 /** The agent whose successful completion means a new skill was registered. */
 const SKILL_CREATOR_AGENT = 'skill-creator';
 
@@ -35,9 +41,12 @@ export interface UseSkillsReturn {
   importStatus: ImportStatus;
   importError: string | null;
   clearImportStatus: () => void;
+  saveSkillFile: (name: string, relativePath: string, content: string) => Promise<boolean>;
+  validateSkills: () => Promise<void>;
+  validationResults: SkillValidationResult[] | null;
+  validating: boolean;
   getSkillFiles: (name: string) => Promise<SkillFileEntry[]>;
   readSkillFile: (name: string, relativePath: string) => Promise<string | null>;
-  saveSkillFile: (name: string, relativePath: string, content: string) => Promise<boolean>;
 }
 
 export function useSkills(): UseSkillsReturn {
@@ -45,6 +54,8 @@ export function useSkills(): UseSkillsReturn {
   const [loading, setLoading] = useState(false);
   const [importStatus, setImportStatus] = useState<ImportStatus>('idle');
   const [importError, setImportError] = useState<string | null>(null);
+  const [validationResults, setValidationResults] = useState<SkillValidationResult[] | null>(null);
+  const [validating, setValidating] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -174,6 +185,19 @@ export function useSkills(): UseSkillsReturn {
     }
   }, []);
 
+  const validateSkills = useCallback(async () => {
+    setValidating(true);
+    try {
+      const results = await transport.invoke<SkillValidationResult[]>('skill_validate');
+      setValidationResults(results);
+    } catch (err) {
+      console.error('Failed to validate skills:', err);
+      setValidationResults(null);
+    } finally {
+      setValidating(false);
+    }
+  }, []);
+
   return useMemo(
     () => ({
       skills,
@@ -190,6 +214,9 @@ export function useSkills(): UseSkillsReturn {
       getSkillFiles,
       readSkillFile,
       saveSkillFile,
+      validateSkills,
+      validationResults,
+      validating,
     }),
     [
       skills,
@@ -206,6 +233,9 @@ export function useSkills(): UseSkillsReturn {
       getSkillFiles,
       readSkillFile,
       saveSkillFile,
+      validateSkills,
+      validationResults,
+      validating,
     ],
   );
 }

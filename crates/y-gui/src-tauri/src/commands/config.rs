@@ -272,6 +272,36 @@ pub async fn mcp_config_save(state: State<'_, AppState>, content: Value) -> Resu
     Ok(())
 }
 
+/// MCP server live connection status entry.
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct McpStatusEntry {
+    pub name: String,
+    pub status: String,
+    pub connected: bool,
+}
+
+/// Get live MCP server connection status from the connection manager.
+///
+/// Returns one entry per configured server with its current connection state
+/// (connected, connecting, reconnecting, disconnected, failed, disabled).
+#[tauri::command]
+pub async fn mcp_status(state: State<'_, AppState>) -> Result<Vec<McpStatusEntry>, String> {
+    let statuses = state.container.mcp_manager.status().await;
+    let mut entries: Vec<McpStatusEntry> = statuses
+        .into_iter()
+        .map(|(name, status)| {
+            let status_str = status.to_string();
+            McpStatusEntry {
+                name,
+                connected: status_str == "connected",
+                status: status_str,
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(entries)
+}
+
 fn server_to_json(s: &y_tools::McpServerConfig) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("transport".into(), Value::String(s.transport.clone()));

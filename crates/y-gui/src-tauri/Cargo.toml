@@ -48,7 +48,7 @@ y-service = { workspace = true, features = ["langfuse"] }
 y-core = { workspace = true }
 y-provider = { workspace = true }
 y-prompt = { workspace = true }
-y-skills = { workspace = true }
+y-skills = { workspace = true, features = ["skill_transformation"] }
 y-knowledge = { workspace = true }
 y-tools = { workspace = true }
 

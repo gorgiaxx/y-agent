@@ -11,13 +11,13 @@ import {
   ChevronDown,
   Copy,
   Check,
+  ShieldCheck,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import type { SkillInfo } from '../../types';
 import type { ImportStatus } from '../../hooks/useSkills';
 import { useSidebarSearch } from '../../hooks/useSidebarSearch';
-
 interface SkillsSidebarPanelProps {
   skills: SkillInfo[];
   activeSkillName: string | null;
@@ -26,6 +26,8 @@ interface SkillsSidebarPanelProps {
   onSelectSkill: (name: string) => void;
   onImportClick: () => void;
   onClearImportStatus: () => void;
+  onValidate?: () => void;
+  validating?: boolean;
 }
 
 export function SkillsSidebarPanel({
@@ -36,6 +38,8 @@ export function SkillsSidebarPanel({
   onSelectSkill,
   onImportClick,
   onClearImportStatus,
+  onValidate,
+  validating,
 }: SkillsSidebarPanelProps) {
   const { searchQuery, setSearchQuery, searchOpen, setSearchOpen, searchInputRef, closeSearch } = useSidebarSearch();
   const [importStatusExpanded, setImportStatusExpanded] = useState(false);
@@ -84,6 +88,17 @@ export function SkillsSidebarPanel({
           >
             <Search size={14} />
           </Button>
+          {onValidate && (
+            <Button
+              variant="icon"
+              size="sm"
+              onClick={onValidate}
+              disabled={validating}
+              title="Validate All Skills"
+            >
+              <ShieldCheck size={14} className={validating ? 'spin' : ''} />
+            </Button>
+          )}
           <Button variant="icon" size="sm" onClick={onImportClick} title="Import Skill">
             <Plus size={14} />
           </Button>

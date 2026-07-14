@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, RefreshCw } from 'lucide-react';
 import { transport } from '../../lib';
 import { TagChipInput } from './TagChipInput';
 import type { McpServerFormData } from './settingsTypes';
@@ -11,6 +11,12 @@ import { emptyMcpServer, jsonToMcpServers, mcpServersToJson } from './settingsTy
 import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Checkbox, Input, Button, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
+
+interface McpStatusEntry {
+  name: string;
+  status: string;
+  connected: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // McpServerTabPanel -- form for a single MCP server (shown in tab view)
@@ -250,6 +256,26 @@ export function McpTab({
   const [activeMcpTab, setActiveMcpTab] = useState(0);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const [mcpStatuses, setMcpStatuses] = useState<Record<string, McpStatusEntry>>({});
+  const [statusLoading, setStatusLoading] = useState(false);
+
+  const refreshStatus = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      const entries = await transport.invoke<McpStatusEntry[]>('mcp_status');
+      const map: Record<string, McpStatusEntry> = {};
+      for (const e of entries) { map[e.name] = e; }
+      setMcpStatuses(map);
+    } catch {
+      setMcpStatuses({});
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshStatus();
+  }, [refreshStatus]);
 
   const loadMcpServers = useCallback(async () => {
     setLoading(true);
@@ -326,26 +352,39 @@ export function McpTab({
       sidebar={
         <>
           <div className="sub-list-items">
-            {mcpServersList.map((s, i) => (
-              <button
-                key={i}
-                className={`sub-list-item ${activeMcpTab === i ? 'active' : ''}`}
-                onClick={() => setActiveMcpTab(i)}
-              >
-                <span className="sub-list-item-label">{s.name || `Server ${i + 1}`}</span>
-                {s.disabled && <span style={{ fontSize: '9px', color: 'var(--text-muted)', marginLeft: '2px' }}>OFF</span>}
-                <span
-                  className="sub-list-item-close"
-                  role="button"
-                  tabIndex={0}
-                  title="Remove server"
-                  onClick={(e) => { e.stopPropagation(); handleMcpServerRemove(i); }}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleMcpServerRemove(i); } }}
+            {mcpServersList.map((s, i) => {
+              const status = mcpStatuses[s.name];
+              const dotColor = status?.connected
+                ? 'var(--success, #22c55e)'
+                : status?.status === 'connecting' || status?.status === 'reconnecting'
+                  ? 'var(--warning, #f59e0b)'
+                  : 'var(--text-muted)';
+              return (
+                <button
+                  key={i}
+                  className={`sub-list-item ${activeMcpTab === i ? 'active' : ''}`}
+                  onClick={() => setActiveMcpTab(i)}
                 >
-                  <X size={11} />
-                </span>
-              </button>
-            ))}
+                  <span
+                    className="mcp-status-dot"
+                    title={status?.status ?? 'unknown'}
+                    style={{ width: '6px', height: '6px', borderRadius: '50%', background: dotColor, flexShrink: 0, marginRight: '4px' }}
+                  />
+                  <span className="sub-list-item-label">{s.name || `Server ${i + 1}`}</span>
+                  {s.disabled && <span style={{ fontSize: '9px', color: 'var(--text-muted)', marginLeft: '2px' }}>OFF</span>}
+                  <span
+                    className="sub-list-item-close"
+                    role="button"
+                    tabIndex={0}
+                    title="Remove server"
+                    onClick={(e) => { e.stopPropagation(); handleMcpServerRemove(i); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleMcpServerRemove(i); } }}
+                  >
+                    <X size={11} />
+                  </span>
+                </button>
+              );
+            })}
           </div>
           <button
             className="sub-list-item sub-list-item-add"
@@ -354,6 +393,16 @@ export function McpTab({
           >
             <Plus size={13} />
             <span>Add</span>
+          </button>
+          <button
+            className="sub-list-item sub-list-item-refresh"
+            onClick={refreshStatus}
+            disabled={statusLoading}
+            title="Refresh connection status"
+            style={{ opacity: statusLoading ? 0.5 : 1 }}
+          >
+            <RefreshCw size={13} className={statusLoading ? 'spin' : ''} />
+            <span>Refresh Status</span>
           </button>
         </>
       }
