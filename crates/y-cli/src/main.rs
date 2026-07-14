@@ -319,6 +319,21 @@ async fn main() -> Result<()> {
             let exit_info = commands::tui_cmd::run(services, Some(toast_rx), Some(forked)).await?;
             print_exit_summary(&exit_info);
         }
+        Some(Commands::Workspace { action }) => {
+            commands::workspace::run(action, mode)?;
+        }
+        Some(Commands::Provider { action }) => {
+            let services = wire::wire(&config).await?;
+            commands::provider::run(action, &services, mode).await?;
+        }
+        Some(Commands::Observe { action }) => {
+            let services = wire::wire(&config).await?;
+            commands::observe::run(action, &services, mode).await?;
+        }
+        Some(Commands::Rewind { action }) => {
+            let services = wire::wire(&config).await?;
+            commands::rewind::run(action, &services, mode).await?;
+        }
         None => {
             println!("y-agent v{}", env!("CARGO_PKG_VERSION"));
             println!("Use --help for available commands.");

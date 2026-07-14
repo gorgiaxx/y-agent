@@ -9,7 +9,10 @@ pub mod diag;
 pub mod init;
 pub mod kb;
 pub mod mcp;
+pub mod observe;
 pub mod print;
+pub mod provider;
+pub mod rewind;
 pub mod rpc;
 pub mod serve;
 pub mod session;
@@ -19,6 +22,7 @@ pub mod tool;
 #[cfg(feature = "tui")]
 pub mod tui_cmd;
 pub mod workflow;
+pub mod workspace;
 
 use clap::Subcommand;
 
@@ -153,6 +157,30 @@ pub enum Commands {
         /// Label for the forked session.
         #[arg(long)]
         label: Option<String>,
+    },
+
+    /// Workspace management.
+    Workspace {
+        #[command(subcommand)]
+        action: workspace::WorkspaceAction,
+    },
+
+    /// Provider management.
+    Provider {
+        #[command(subcommand)]
+        action: provider::ProviderAction,
+    },
+
+    /// Observability and live system state.
+    Observe {
+        #[command(subcommand)]
+        action: observe::ObserveAction,
+    },
+
+    /// Rewind (file history rollback).
+    Rewind {
+        #[command(subcommand)]
+        action: rewind::RewindAction,
     },
 }
 
