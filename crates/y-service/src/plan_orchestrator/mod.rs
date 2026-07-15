@@ -688,6 +688,7 @@ impl PlanOrchestrator {
             response_format: settings.response_format.clone(),
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
         };
 
         let result =
@@ -3035,6 +3036,7 @@ fn build_phase_execution_config(
         response_format: None,
         image_generation_options: None,
         inherited_constraints: execution_contract.inherited_constraints.clone(),
+        trace_metadata: serde_json::Value::Null,
     }
 }
 
@@ -3864,6 +3866,7 @@ pub async fn assess_complexity(
         response_format: None,
         image_generation_options: None,
         inherited_constraints: None,
+        trace_metadata: serde_json::Value::Null,
     };
 
     match AgentService::execute(container, &exec_config, None, None).await {

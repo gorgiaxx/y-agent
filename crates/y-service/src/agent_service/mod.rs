@@ -19,10 +19,13 @@
 //! - `subagent` -- `ServiceAgentRunner`, sub-agent prompt construction
 
 mod delegation_ctx;
+mod dynamic_agent_tools;
+mod dynamic_tool_tools;
 mod executor;
 mod llm;
 mod pruning;
 mod result;
+mod skill_evolution_tools;
 mod subagent;
 mod tool_dispatch;
 mod tool_handling;
@@ -137,11 +140,15 @@ pub struct AgentExecutionConfig {
     /// to the system prompt so the sub-agent respects parent-specified
     /// boundaries and conventions.
     pub inherited_constraints: Option<y_core::agent::InheritedConstraints>,
+    /// Metadata merged into the diagnostics trace created for this execution.
+    pub trace_metadata: serde_json::Value,
 }
 
 /// Result of agent execution.
 #[derive(Debug, Clone)]
 pub struct AgentExecutionResult {
+    /// Diagnostics trace that contains this execution's evidence.
+    pub trace_id: Option<Uuid>,
     /// Final assistant text content.
     pub content: String,
     /// Model that served the final request.

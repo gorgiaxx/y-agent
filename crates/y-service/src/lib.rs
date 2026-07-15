@@ -20,6 +20,7 @@ pub mod agent_service;
 pub mod app_config;
 pub mod background_tasks;
 pub mod bot;
+pub mod capability_reuse;
 pub mod chat;
 pub mod chat_types;
 pub mod chat_worker;
@@ -29,8 +30,13 @@ pub mod container;
 pub mod context_optimization;
 pub mod cost;
 pub mod diagnostics;
+pub mod dynamic_agent_refinement;
+pub mod dynamic_agent_service;
+pub mod dynamic_tool_service;
 pub mod event_sink;
+pub mod evolution_feedback;
 pub mod init;
+pub mod knowledge_context_retrieval;
 pub mod knowledge_service;
 pub mod loop_orchestrator;
 pub mod mcp_service;
@@ -43,6 +49,8 @@ pub mod rewind;
 pub mod scheduler_service;
 pub mod skill_creation;
 pub mod skill_evolution;
+pub mod skill_evolution_refinement;
+pub mod skill_evolution_service;
 pub mod skill_files;
 pub mod skill_ingestion;
 pub mod skill_manifest_helper;
@@ -53,6 +61,7 @@ pub mod tool_search_orchestrator;
 pub mod user_interaction_orchestrator;
 pub mod workflow_executors;
 pub mod workflow_orchestrator;
+pub mod workflow_run_service;
 pub mod workflow_service;
 pub mod workspace;
 
@@ -81,7 +90,10 @@ pub use config::ServiceConfig;
 pub use config_service::{list_provider_models, ConfigService, CONFIG_SECTIONS};
 pub use container::ServiceContainer;
 pub use cost::CostService;
-pub use diagnostics::{DiagnosticsAgentDelegator, DiagnosticsService, HistoricalEntry};
+pub use diagnostics::{
+    DiagnosticsAgentDelegator, DiagnosticsService, DynamicAgentRegressionFinding,
+    DynamicAgentVersionMetrics, HistoricalEntry, OrchestrationModeMetrics,
+};
 pub use event_sink::EventSink;
 pub use mcp_service::McpService;
 pub use observability::{
@@ -115,6 +127,7 @@ pub use system::{
     HealthReport, HttpProtocol, MemoryStats, ProviderInfo, ProviderTestRequest, StatusReport,
     SystemService,
 };
+pub use workflow_run_service::{WorkflowRunError, WorkflowRunService};
 pub use workflow_service::{
     CreateWorkflowRequest, DagEdge, DagNode, DagVisualization, UpdateWorkflowRequest,
     ValidationResult, WorkflowService, WorkflowServiceError,

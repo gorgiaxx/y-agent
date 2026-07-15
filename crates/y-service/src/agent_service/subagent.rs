@@ -263,6 +263,10 @@ impl AgentRunner for ServiceAgentRunner {
             response_format: config.response_format.clone(),
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: self
+                .container
+                .dynamic_agent_service
+                .execution_trace_metadata(&config.agent_name),
         };
 
         let result = AgentService::execute(&self.container, &exec_config, progress, cancel).await;

@@ -13,6 +13,7 @@ use y_context::pruning::IntraTurnPruner;
 use y_context::{AssembledContext, ContextCategory, ContextItem, ContextRequest};
 use y_core::provider::{ProviderPool, ToolCallingMode};
 use y_core::types::{Role, SessionId};
+use y_diagnostics::TraceStore;
 use y_tools::{parse_tool_calls, strip_tool_call_blocks};
 
 use crate::container::ServiceContainer;
@@ -78,6 +79,7 @@ pub(crate) async fn init_context_and_trace(
         AssembledContext::default()
     };
     append_inherited_constraints_context(&mut assembled, config);
+    append_reuse_recommendations_context(&mut assembled, config);
 
     // Diagnostics trace lifecycle.
     // If the caller already created a trace (external_trace_id), we reuse
@@ -106,7 +108,36 @@ pub(crate) async fn init_context_and_trace(
     };
     let owns_trace = config.external_trace_id.is_none();
 
+    if let Some(tid) = trace_id {
+        merge_trace_metadata(container, tid, &config.trace_metadata).await;
+    }
+
     (assembled, trace_id, owns_trace)
+}
+
+async fn merge_trace_metadata(
+    container: &ServiceContainer,
+    trace_id: Uuid,
+    metadata: &serde_json::Value,
+) {
+    let Some(additions) = metadata.as_object() else {
+        return;
+    };
+    let store = container.diagnostics.store();
+    let Ok(mut trace) = store.get_trace(trace_id).await else {
+        return;
+    };
+    if !trace.metadata.is_object() {
+        trace.metadata = serde_json::json!({});
+    }
+    if let Some(existing) = trace.metadata.as_object_mut() {
+        for (key, value) in additions {
+            existing.insert(key.clone(), value.clone());
+        }
+    }
+    if let Err(error) = store.update_trace(trace).await {
+        tracing::warn!(%error, %trace_id, "failed to merge diagnostics trace metadata");
+    }
 }
 
 fn append_inherited_constraints_context(
@@ -125,6 +156,33 @@ fn append_inherited_constraints_context(
         category: ContextCategory::SystemPrompt,
         token_estimate: y_prompt::estimate_tokens(&content),
         priority: 95,
+        content,
+    });
+}
+
+fn append_reuse_recommendations_context(
+    assembled: &mut AssembledContext,
+    config: &AgentExecutionConfig,
+) {
+    let Some(value) = config
+        .trace_metadata
+        .pointer("/orchestration/reuse")
+        .cloned()
+    else {
+        return;
+    };
+    let Ok(decision) =
+        serde_json::from_value::<crate::capability_reuse::CapabilityReuseDecision>(value)
+    else {
+        return;
+    };
+    let Some(content) = decision.prompt_section() else {
+        return;
+    };
+    assembled.add(ContextItem {
+        category: ContextCategory::SystemPrompt,
+        token_estimate: y_prompt::estimate_tokens(&content),
+        priority: 96,
         content,
     });
 }
@@ -1085,6 +1143,12 @@ mod tests {
             response_format: None,
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: serde_json::json!({
+                "orchestration": {
+                    "requested_mode": "auto",
+                    "selected_mode": "plan"
+                }
+            }),
         };
 
         let (_assembled, trace_id, owns_trace) = init_context_and_trace(&container, &config).await;
@@ -1099,6 +1163,7 @@ mod tests {
             .expect("trace should be readable");
 
         assert_eq!(trace.user_input.as_deref(), Some("real user question"));
+        assert_eq!(trace.metadata["orchestration"]["selected_mode"], "plan");
     }
 
     #[test]
@@ -1139,6 +1204,7 @@ mod tests {
                 guardrails: vec!["Use the parent report format".to_string()],
                 output_format: None,
             }),
+            trace_metadata: serde_json::Value::Null,
         };
 
         append_inherited_constraints_context(&mut assembled, &config);
@@ -1149,6 +1215,67 @@ mod tests {
             .content
             .contains("## Inherited Constraints"));
         assert!(assembled.items[0].content.contains("- crates/y-gui/"));
+    }
+
+    #[test]
+    fn append_reuse_recommendations_context_requires_reuse_before_creation() {
+        let mut assembled = AssembledContext::default();
+        let mut config = AgentExecutionConfig {
+            agent_name: "chat-turn".to_string(),
+            system_prompt: String::new(),
+            max_iterations: 1,
+            max_tool_calls: 1,
+            tool_definitions: vec![],
+            tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            messages: vec![],
+            provider_id: None,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            fallback_provider_tags: vec![],
+            request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: None,
+            additional_read_dirs: vec![],
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            session_id: Some(SessionId("reuse-session".into())),
+            session_uuid: Uuid::new_v4(),
+            knowledge_collections: vec![],
+            use_context_pipeline: false,
+            user_query: "Review these Rust files".to_string(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+            response_format: None,
+            image_generation_options: None,
+            inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
+        };
+        config.trace_metadata = serde_json::json!({
+            "orchestration": {
+                "reuse": {
+                    "reuse_before_create": true,
+                    "recommendations": [{
+                        "asset_type": "agent",
+                        "id": "rust-reviewer",
+                        "name": "rust-reviewer",
+                        "score": 20,
+                        "reason": "strong existing match",
+                        "usage": "Delegate with Task"
+                    }]
+                }
+            }
+        });
+
+        append_reuse_recommendations_context(&mut assembled, &config);
+
+        assert_eq!(assembled.items.len(), 1);
+        assert!(assembled.items[0]
+            .content
+            .contains("Reuse these existing assets before creating"));
+        assert!(assembled.items[0].content.contains("rust-reviewer"));
     }
 
     #[tokio::test]
@@ -1185,6 +1312,7 @@ mod tests {
             response_format: None,
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
         };
 
         let _ = init_context_and_trace(&container, &config).await;

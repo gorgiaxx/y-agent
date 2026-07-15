@@ -9,6 +9,8 @@ use std::sync::Arc;
 use y_core::provider::ProviderPool;
 use y_diagnostics::{TraceSearch, TraceSearchQuery, TraceStore};
 
+use super::adaptation_metrics;
+use super::{DynamicAgentRegressionFinding, DynamicAgentVersionMetrics, OrchestrationModeMetrics};
 use crate::container::ServiceContainer;
 
 /// System health report returned by [`DiagnosticsService::health_check`].
@@ -72,6 +74,50 @@ pub enum HistoricalEntry {
 pub struct DiagnosticsService;
 
 impl DiagnosticsService {
+    /// Aggregate completed trace outcomes by the orchestration mode recorded
+    /// in `trace.metadata.orchestration.selected_mode`.
+    pub async fn orchestration_mode_metrics(
+        store: Arc<dyn TraceStore>,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: usize,
+    ) -> Result<Vec<OrchestrationModeMetrics>, String> {
+        let traces = store
+            .list_traces(None, since, limit)
+            .await
+            .map_err(|error| format!("Failed to list orchestration traces: {error}"))?;
+        Ok(adaptation_metrics::orchestration_mode_metrics(traces))
+    }
+
+    /// Aggregate durable outcomes by dynamic-agent ID and version.
+    pub async fn dynamic_agent_version_metrics(
+        store: Arc<dyn TraceStore>,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: usize,
+    ) -> Result<Vec<DynamicAgentVersionMetrics>, String> {
+        let traces = store
+            .list_traces(None, since, limit)
+            .await
+            .map_err(|error| format!("Failed to list dynamic-agent traces: {error}"))?;
+        Ok(adaptation_metrics::dynamic_agent_version_metrics(traces))
+    }
+
+    /// Detect adjacent dynamic-agent versions with enough repeated evidence
+    /// and a success-rate drop at or above the configured threshold.
+    pub async fn dynamic_agent_regressions(
+        store: Arc<dyn TraceStore>,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: usize,
+        min_samples: usize,
+        max_success_rate_drop: f64,
+    ) -> Result<Vec<DynamicAgentRegressionFinding>, String> {
+        let metrics = Self::dynamic_agent_version_metrics(store, since, limit).await?;
+        Ok(adaptation_metrics::dynamic_agent_regressions(
+            &metrics,
+            min_samples.max(1),
+            max_success_rate_drop.clamp(0.0, 1.0),
+        ))
+    }
+
     /// Search traces using a query.
     pub async fn search_traces(
         store: Arc<dyn TraceStore>,
@@ -492,6 +538,144 @@ mod tests {
         InMemoryTraceStore, Observation, ObservationStatus, ObservationType, Trace, TraceStatus,
         TraceStore,
     };
+
+    #[tokio::test]
+    async fn orchestration_metrics_group_trace_outcomes_by_selected_mode() {
+        let store = Arc::new(InMemoryTraceStore::new());
+        let session_id = Uuid::new_v4();
+
+        let mut successful_plan = Trace::new(session_id, "chat-turn");
+        successful_plan.metadata = serde_json::json!({
+            "orchestration": { "selected_mode": "plan" }
+        });
+        successful_plan.total_input_tokens = 100;
+        successful_plan.total_output_tokens = 20;
+        successful_plan.total_cost_usd = 0.4;
+        successful_plan.complete();
+        store.insert_trace(successful_plan).await.unwrap();
+
+        let mut failed_plan = Trace::new(session_id, "chat-turn");
+        failed_plan.metadata = serde_json::json!({
+            "orchestration": { "selected_mode": "plan" }
+        });
+        failed_plan.total_input_tokens = 60;
+        failed_plan.total_output_tokens = 10;
+        failed_plan.total_cost_usd = 0.2;
+        failed_plan.fail();
+        store.insert_trace(failed_plan).await.unwrap();
+
+        let mut successful_loop = Trace::new(session_id, "chat-turn");
+        successful_loop.metadata = serde_json::json!({
+            "orchestration": { "selected_mode": "loop" }
+        });
+        successful_loop.complete();
+        store.insert_trace(successful_loop).await.unwrap();
+
+        let metrics = DiagnosticsService::orchestration_mode_metrics(store, None, 100)
+            .await
+            .unwrap();
+
+        let plan = metrics.iter().find(|metric| metric.mode == "plan").unwrap();
+        assert_eq!(plan.total_runs, 2);
+        assert_eq!(plan.successful_runs, 1);
+        assert_eq!(plan.failed_runs, 1);
+        assert_eq!(plan.success_rate, 0.5);
+        assert_eq!(plan.average_tokens, 95.0);
+        assert!((plan.average_cost_usd - 0.3).abs() < f64::EPSILON);
+
+        let loop_mode = metrics.iter().find(|metric| metric.mode == "loop").unwrap();
+        assert_eq!(loop_mode.total_runs, 1);
+        assert_eq!(loop_mode.success_rate, 1.0);
+    }
+
+    #[tokio::test]
+    async fn dynamic_agent_metrics_group_outcomes_by_agent_version() {
+        let store = Arc::new(InMemoryTraceStore::new());
+        let session_id = Uuid::new_v4();
+
+        for (version, status) in [
+            (1, TraceStatus::Completed),
+            (1, TraceStatus::Completed),
+            (2, TraceStatus::Completed),
+            (2, TraceStatus::Failed),
+        ] {
+            let mut trace = Trace::new(session_id, "dyn-code-scout");
+            trace.metadata = serde_json::json!({
+                "dynamic_agent": {
+                    "id": "dyn-code-scout",
+                    "version": version
+                }
+            });
+            match status {
+                TraceStatus::Completed => trace.complete(),
+                TraceStatus::Failed => trace.fail(),
+                _ => unreachable!(),
+            }
+            store.insert_trace(trace).await.unwrap();
+        }
+
+        let metrics = DiagnosticsService::dynamic_agent_version_metrics(store, None, 100)
+            .await
+            .unwrap();
+
+        let version_one = metrics.iter().find(|metric| metric.version == 1).unwrap();
+        assert_eq!(version_one.total_runs, 2);
+        assert_eq!(version_one.success_rate, 1.0);
+
+        let version_two = metrics.iter().find(|metric| metric.version == 2).unwrap();
+        assert_eq!(version_two.total_runs, 2);
+        assert_eq!(version_two.success_rate, 0.5);
+    }
+
+    #[tokio::test]
+    async fn dynamic_agent_metrics_treat_explicit_negative_feedback_as_failure() {
+        let store: Arc<dyn TraceStore> = Arc::new(InMemoryTraceStore::new());
+        let mut trace = Trace::new(Uuid::new_v4(), "subagent:test");
+        trace.metadata = serde_json::json!({
+            "dynamic_agent": { "id": "dyn-test", "version": 2 },
+            "user_feedback": { "score": 0.0 }
+        });
+        trace.complete();
+        store.insert_trace(trace).await.unwrap();
+
+        let metrics = DiagnosticsService::dynamic_agent_version_metrics(store, None, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(metrics[0].failed_runs, 1);
+        assert_eq!(metrics[0].successful_runs, 0);
+    }
+
+    #[tokio::test]
+    async fn dynamic_agent_regressions_require_repeated_version_evidence() {
+        let store = Arc::new(InMemoryTraceStore::new());
+        let session_id = Uuid::new_v4();
+
+        for version in [1_u64, 2] {
+            for sample in 0..5 {
+                let mut trace = Trace::new(session_id, "dyn-code-scout");
+                trace.metadata = serde_json::json!({
+                    "dynamic_agent": { "id": "dyn-code-scout", "version": version }
+                });
+                if version == 1 || sample == 0 {
+                    trace.complete();
+                } else {
+                    trace.fail();
+                }
+                store.insert_trace(trace).await.unwrap();
+            }
+        }
+
+        let findings = DiagnosticsService::dynamic_agent_regressions(store, None, 100, 5, 0.25)
+            .await
+            .unwrap();
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].agent_id, "dyn-code-scout");
+        assert_eq!(findings[0].baseline_version, 1);
+        assert_eq!(findings[0].current_version, 2);
+        assert!((findings[0].success_rate_drop - 0.8).abs() < f64::EPSILON);
+    }
 
     #[tokio::test]
     async fn test_get_history_for_session_ids_includes_descendants_and_tool_requests() {

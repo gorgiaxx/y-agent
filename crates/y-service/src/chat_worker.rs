@@ -302,6 +302,7 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                     let payload = serde_json::json!({
                         "run_id": run_id_clone,
                         "session_id": sid_clone.0,
+                        "trace_id": result.trace_id,
                         "content": result.content,
                         "model": result.model,
                         "provider_id": result.provider_id,

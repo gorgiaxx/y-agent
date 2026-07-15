@@ -390,6 +390,7 @@ impl LoopOrchestrator {
             response_format: None,
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
         };
 
         // Create a per-round snapshot under the parent session's file history
@@ -520,6 +521,7 @@ impl LoopOrchestrator {
             response_format: None,
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
         };
 
         AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())

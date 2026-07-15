@@ -8,7 +8,7 @@ description = "Business/service layer for y-agent — shared by CLI, TUI, and fu
 [dependencies]
 y-core = { workspace = true }
 y-bot = { workspace = true }
-y-agent = { workspace = true }
+y-agent = { workspace = true, features = ["dynamic_agent_evolution"] }
 y-mcp = { workspace = true }
 y-provider = { workspace = true }
 y-session = { workspace = true }
@@ -28,7 +28,9 @@ y-diagnostics = { workspace = true }
 y-skills = { workspace = true, features = [
     "skill_ingestion",
     "skill_security_screening",
+    "skill_transformation",
     "evolution_capture",
+    "evolution_extraction",
     "evolution_refinement",
     "skill_usage_audit",
 ] }

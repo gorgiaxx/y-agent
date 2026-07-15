@@ -7,7 +7,7 @@
 //! returns real results instead of `{"status": "pending"}`.
 //!
 //! Since v0.4, keyword search also queries `SkillSearch` and `AgentRegistry`
-//! so that skills and agents are discoverable through the same meta-tool.
+//! so that skills, agents, and workflows are discoverable through the same meta-tool.
 
 use std::sync::Arc;
 
@@ -21,14 +21,24 @@ use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
 /// Optional extra capability sources for unified search.
 ///
-/// When provided, keyword search (`query`) also returns matching skills
-/// and agents alongside tools. Category browsing and direct tool lookup
+/// Compact reusable workflow descriptor for unified capability search.
+pub struct WorkflowSearchItem {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+}
+
+/// When provided, keyword search (`query`) also returns matching skills,
+/// agents, and workflows alongside tools. Category browsing and direct tool lookup
 /// remain tool-only.
 pub struct CapabilitySearchSources<'a> {
     /// Skill search index (loaded from the filesystem skill store).
     pub skill_search: Option<&'a RwLock<SkillSearch>>,
     /// Agent registry for agent definition search.
     pub agent_registry: Option<&'a Mutex<AgentRegistry>>,
+    /// Durable reusable workflow descriptors.
+    pub workflows: Option<&'a [WorkflowSearchItem]>,
 }
 
 impl CapabilitySearchSources<'_> {
@@ -37,6 +47,7 @@ impl CapabilitySearchSources<'_> {
         Self {
             skill_search: None,
             agent_registry: None,
+            workflows: None,
         }
     }
 }
@@ -54,7 +65,7 @@ impl ToolSearchOrchestrator {
     /// Examines the `arguments` JSON and dispatches to the appropriate mode:
     /// - `tool` -> get full definition + activate
     /// - `category` -> browse taxonomy category
-    /// - `query` -> keyword search across tools, skills, and agents + activate tool results
+    /// - `query` -> keyword search across tools, skills, agents, and workflows
     ///
     /// Returns a `ToolOutput` containing real search results.
     pub async fn handle(
@@ -76,7 +87,7 @@ impl ToolSearchOrchestrator {
     /// Handle a `ToolSearch` call with optional skill/agent sources.
     ///
     /// This is the full-featured entry point. Keyword search queries all
-    /// three registries (tools, skills, agents) when sources are provided.
+    /// all capability registries when sources are provided.
     pub async fn handle_with_sources(
         arguments: &serde_json::Value,
         registry: &ToolRegistryImpl,
@@ -243,7 +254,7 @@ impl ToolSearchOrchestrator {
         })
     }
 
-    /// Keyword search across tools, skills, and agents, with tool activation.
+    /// Keyword search across tools, skills, agents, and workflows, with tool activation.
     async fn handle_search(
         query: &str,
         registry: &ToolRegistryImpl,
@@ -267,7 +278,7 @@ impl ToolSearchOrchestrator {
         }
 
         // Activate all found tools.
-        let activated_names: Vec<String> = result_defs
+        let mut activated_names: Vec<String> = result_defs
             .iter()
             .map(|d| d.name.as_str().to_string())
             .collect();
@@ -324,8 +335,47 @@ impl ToolSearchOrchestrator {
             vec![]
         };
 
-        // --- 4. Build unified response ---
-        let total_count = tools_json.len() + skills_json.len() + agents_json.len();
+        // --- 4. Search workflows ---
+        let workflows_json = sources.workflows.map_or_else(Vec::new, |workflows| {
+            let mut matches: Vec<_> = workflows
+                .iter()
+                .filter_map(|workflow| {
+                    let score = workflow_match_score(workflow, query);
+                    (score > 0).then_some((score, workflow))
+                })
+                .collect();
+            matches.sort_by(|left, right| {
+                right
+                    .0
+                    .cmp(&left.0)
+                    .then_with(|| left.1.name.cmp(&right.1.name))
+            });
+            matches
+                .into_iter()
+                .take(10)
+                .map(|(_, workflow)| {
+                    serde_json::json!({
+                        "type": "workflow",
+                        "id": workflow.id,
+                        "name": workflow.name,
+                        "description": workflow.description,
+                        "tags": workflow.tags,
+                        "usage": "Use WorkflowRun with this workflow's id or name.",
+                    })
+                })
+                .collect()
+        });
+        if !workflows_json.is_empty() && !activated_names.iter().any(|name| name == "WorkflowRun") {
+            let workflow_run = ToolName::from_string("WorkflowRun");
+            if let Some(definition) = registry.get_definition(&workflow_run).await {
+                activation_set.write().await.activate(definition);
+                activated_names.push("WorkflowRun".to_string());
+            }
+        }
+
+        // --- 5. Build unified response ---
+        let total_count =
+            tools_json.len() + skills_json.len() + agents_json.len() + workflows_json.len();
 
         Ok(ToolOutput {
             success: true,
@@ -340,6 +390,7 @@ impl ToolSearchOrchestrator {
                 },
                 "skills": skills_json,
                 "agents": agents_json,
+                "workflows": workflows_json,
                 "total_count": total_count,
             }),
             warnings: vec![],
@@ -369,6 +420,38 @@ impl ToolSearchOrchestrator {
         }
         json
     }
+}
+
+fn workflow_match_score(workflow: &WorkflowSearchItem, query: &str) -> usize {
+    let name = workflow.name.to_lowercase();
+    let description = workflow
+        .description
+        .as_deref()
+        .unwrap_or_default()
+        .to_lowercase();
+    let tags: Vec<_> = workflow.tags.iter().map(|tag| tag.to_lowercase()).collect();
+    query
+        .split(|character: char| !character.is_alphanumeric())
+        .map(str::to_lowercase)
+        .filter(|token| token.len() >= 3)
+        .map(|token| {
+            let tag_score: usize = tags
+                .iter()
+                .map(|tag| {
+                    if tag == &token {
+                        10
+                    } else if tag.contains(&token) {
+                        6
+                    } else {
+                        0
+                    }
+                })
+                .sum();
+            tag_score
+                + usize::from(name.contains(&token)) * 4
+                + usize::from(description.contains(&token)) * 2
+        })
+        .sum()
 }
 
 #[cfg(test)]
@@ -430,6 +513,7 @@ tools = ["ToolSearch"]
             ("FileWrite", "Write file contents"),
             ("ShellExec", "Execute shell commands"),
             ("ToolSearch", "Search for tools"),
+            ("WorkflowRun", "Execute a reusable workflow"),
         ] {
             let def = sample_def(name, desc);
             use y_core::tool::ToolRegistry;
@@ -592,10 +676,17 @@ tools = ["ToolSearch"]
 
         // Set up an AgentRegistry with a matching agent.
         let agent_registry = Mutex::new(y_agent::AgentRegistry::new());
+        let workflows = vec![WorkflowSearchItem {
+            id: "workflow-1".to_string(),
+            name: "file-review-pipeline".to_string(),
+            description: Some("Review files and summarize findings".to_string()),
+            tags: vec!["file".to_string(), "review".to_string()],
+        }];
 
         let sources = CapabilitySearchSources {
             skill_search: Some(&skill_search),
             agent_registry: Some(&agent_registry),
+            workflows: Some(&workflows),
         };
 
         let args = serde_json::json!({"query": "file"});
@@ -620,6 +711,15 @@ tools = ["ToolSearch"]
         assert!(!skills.is_empty());
         assert!(skills.iter().any(|s| s["name"] == "code-review"));
 
+        let workflow_results = result.content["workflows"].as_array().unwrap();
+        assert_eq!(workflow_results.len(), 1);
+        assert_eq!(workflow_results[0]["name"], "file-review-pipeline");
+        assert!(tools["activated"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|name| name == "WorkflowRun"));
+
         // total_count should include tools + skills + agents.
         let total = result.content["total_count"].as_u64().unwrap();
         assert!(total >= tools["count"].as_u64().unwrap() + skills.len() as u64);
@@ -634,11 +734,13 @@ tools = ["ToolSearch"]
             .await
             .unwrap();
 
-        // Without sources, skills and agents arrays should be empty.
+        // Without sources, non-tool capability arrays should be empty.
         let skills = result.content["skills"].as_array().unwrap();
         assert!(skills.is_empty());
         let agents = result.content["agents"].as_array().unwrap();
         assert!(agents.is_empty());
+        let workflows = result.content["workflows"].as_array().unwrap();
+        assert!(workflows.is_empty());
     }
 
     #[tokio::test]

@@ -813,6 +813,7 @@ mod tests {
             response_format: None,
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
         }
     }
 

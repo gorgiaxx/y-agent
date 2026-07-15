@@ -167,6 +167,7 @@ impl BotService {
             response_format: None,
             image_generation_options: None,
             inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
         };
         let result = AgentService::execute(container, &exec_config, None, None)
             .await

@@ -26,6 +26,7 @@ use y_core::types::{SessionId, ToolName};
 use y_diagnostics::{DiagnosticsEvent, DiagnosticsSubscriber, TraceStore};
 use y_guardrails::GuardrailManager;
 use y_hooks::HookSystem;
+use y_knowledge::tokenizer::AutoTokenizer;
 use y_prompt::{builtin_section_store_with_overrides, default_template, PromptContext};
 use y_provider::ProviderPoolImpl;
 use y_provider::SingleTurnRunner;
@@ -40,7 +41,9 @@ use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
 use crate::chat_types::OperationMode;
 use crate::config::ServiceConfig;
+use crate::dynamic_agent_service::DynamicAgentService;
 
+use crate::knowledge_context_retrieval::KnowledgeContextRetrievalAdapter;
 use crate::knowledge_service::KnowledgeService;
 use crate::skill_creation::{create_skill_from_request, SkillCreateOutcome, SkillCreationService};
 use crate::skill_ingestion::{import_skill_from_path, SkillImportOutcome, SkillIngestionService};
@@ -130,6 +133,9 @@ pub struct ServiceContainer {
     /// Tool registry for tool management.
     pub tool_registry: ToolRegistryImpl,
 
+    /// Durable runtime-created script tools synchronized with the live registry.
+    pub dynamic_tool_service: Arc<crate::dynamic_tool_service::DynamicToolService>,
+
     /// Session-scoped tool activation set (LRU, ceiling 20).
     pub tool_activation_set: Arc<RwLock<ToolActivationSet>>,
 
@@ -142,9 +148,15 @@ pub struct ServiceContainer {
     /// so it can be refreshed when skills are added/removed.
     pub skill_search: RwLock<SkillSearch>,
 
+    /// Durable evidence capture and governed skill-evolution proposals.
+    pub skill_evolution_service: Arc<crate::skill_evolution_service::SkillEvolutionService>,
+
     // -- Agents ------------------------------------------------------------
     /// Agent registry for definition management.
     pub agent_registry: Arc<Mutex<AgentRegistry>>,
+
+    /// Durable dynamic-agent lifecycle and live registry synchronization.
+    pub dynamic_agent_service: Arc<DynamicAgentService>,
 
     /// Agent pool for runtime instance management.
     /// Shared via `Arc` with `MutexPoolDelegator` so that runner upgrades
@@ -318,6 +330,7 @@ impl ServiceContainer {
     pub async fn from_config(config: &ServiceConfig) -> Result<Self> {
         // 1. Storage -- SQLite pool + schema compatibility handling.
         let pool = Self::init_storage(config).await?;
+        let data_dir = Self::resolve_data_dir(config);
 
         // 2. Session infrastructure.
         let sessions = Self::init_sessions(&pool, config);
@@ -343,16 +356,27 @@ impl ServiceContainer {
 
         // 7. Tool registry + taxonomy + activation set.
         let tools = Self::init_tools(config, &knowledge_service, embedding_provider.clone()).await;
+        let dynamic_tool_service = Arc::new(
+            crate::dynamic_tool_service::DynamicToolService::open(
+                data_dir.join("dynamic-tools.jsonl"),
+                &tools.tool_registry,
+            )
+            .await
+            .context("failed to initialize dynamic-tool store")?,
+        );
 
         // 8. Runtime manager + venvs.
         let (runtime_manager, venv_info) = Self::init_runtime(config).await;
 
         // 9. Context pipeline.
+        let knowledge_context_handle = knowledge_service.lock().await.knowledge_handle();
         let ctx = Self::init_context_pipeline(
             config,
             &tools.tool_registry,
             &tools.tool_activation_set,
             &tools.tool_taxonomy,
+            knowledge_context_handle,
+            embedding_provider.clone(),
             venv_info,
         )
         .await;
@@ -386,7 +410,27 @@ impl ServiceContainer {
         let provider_metrics_store = SqliteProviderMetricsStore::new(pool.clone());
         Self::spawn_metrics_event_consumers(&provider_pool, provider_metrics_store.clone());
 
-        // 15. MCP connection manager (connections started later via
+        // 15. Durable dynamic-agent definitions and live registry hydration.
+        let dynamic_agent_service = Arc::new(
+            DynamicAgentService::open(
+                data_dir.join("dynamic-agents.jsonl"),
+                Arc::clone(&agent_registry),
+            )
+            .await
+            .context("failed to initialize dynamic-agent store")?,
+        );
+
+        // 16. Durable skill-evolution evidence and proposals.
+        let skill_evolution_service = Arc::new(
+            crate::skill_evolution_service::SkillEvolutionService::open(
+                data_dir.join("skill-evolution"),
+                config.skills_dir.clone(),
+            )
+            .await
+            .context("failed to initialize skill evolution journals")?,
+        );
+
+        // 17. MCP connection manager (connections started later via
         //     start_background_services).
         let mcp_manager = Arc::new(McpConnectionManager::new(None));
 
@@ -395,11 +439,13 @@ impl ServiceContainer {
             session_manager: sessions.session_manager,
             hook_system: std::sync::RwLock::new(hook_system),
             tool_registry: tools.tool_registry,
+            dynamic_tool_service,
             exec_policy_manager,
             runtime_manager,
             context_pipeline: ctx.pipeline,
             guardrail_manager,
             agent_registry,
+            dynamic_agent_service,
             agent_pool,
             agent_delegator,
             delegation_tracker,
@@ -423,26 +469,13 @@ impl ServiceContainer {
             pruning_watermarks: RwLock::new(HashMap::new()),
             provider_metrics_store,
             skill_search: RwLock::new(ctx.skill_search),
+            skill_evolution_service,
             callable_agents_text: ctx.callable_agents_text,
             session_state: SessionState::default(),
             persona_dir: config.persona_dir.clone(),
             mcp_manager,
             file_history_managers: crate::rewind::create_file_history_managers(),
-            data_dir: {
-                let db_path = std::path::Path::new(&config.storage.db_path);
-                // For :memory: databases, use transcript_dir's parent as data_dir
-                // to ensure file-history is created in a temp directory during tests.
-                if db_path.parent().is_none_or(|p| p.as_os_str().is_empty()) {
-                    config
-                        .storage
-                        .transcript_dir
-                        .parent()
-                        .unwrap_or(std::path::Path::new("."))
-                        .to_path_buf()
-                } else {
-                    db_path.parent().unwrap().to_path_buf()
-                }
-            },
+            data_dir,
             #[cfg(feature = "langfuse")]
             langfuse_state: tokio::sync::Mutex::new(LangfuseState {
                 config: config.langfuse.clone(),
@@ -468,6 +501,28 @@ impl ServiceContainer {
             .await
             .context("failed to initialize SQLite schema")?;
         Ok(pool)
+    }
+
+    fn resolve_data_dir(config: &ServiceConfig) -> PathBuf {
+        let db_path = std::path::Path::new(&config.storage.db_path);
+        // For :memory: databases, use transcript_dir's parent as data_dir
+        // to ensure file-history and evolution journals stay in the test/project state dir.
+        if db_path
+            .parent()
+            .is_none_or(|parent| parent.as_os_str().is_empty())
+        {
+            config
+                .storage
+                .transcript_dir
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf()
+        } else {
+            db_path
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .to_path_buf()
+        }
     }
 
     /// Construct session manager, checkpoint manager, and message store.
@@ -545,6 +600,19 @@ impl ServiceContainer {
         )
         .await;
 
+        for name in [
+            "ToolCreate",
+            "ToolUpdate",
+            "ToolDelete",
+            "ToolGet",
+            "ToolList",
+        ] {
+            let enabled = config.tools.allow_dynamic_tools;
+            tool_registry
+                .set_check_fn(&ToolName::from_string(name), Arc::new(move || enabled))
+                .await;
+        }
+
         let tool_taxonomy = Arc::new(RwLock::new(
             ToolTaxonomy::from_toml(DEFAULT_TAXONOMY_TOML).unwrap_or_else(|e| {
                 warn!(error = %e, "failed to load tool taxonomy; using empty");
@@ -610,6 +678,8 @@ tools = ["ToolSearch"]
         tool_registry: &ToolRegistryImpl,
         tool_activation_set: &Arc<RwLock<ToolActivationSet>>,
         tool_taxonomy: &Arc<RwLock<ToolTaxonomy>>,
+        knowledge: Arc<std::sync::Mutex<y_knowledge::middleware::InjectKnowledge<AutoTokenizer>>>,
+        embedding_provider: Option<Arc<dyn y_core::embedding::EmbeddingProvider>>,
         venv_info: VenvPromptInfo,
     ) -> ContextPipelineInit {
         let prompt_context = Arc::new(RwLock::new(PromptContext::default()));
@@ -664,7 +734,12 @@ tools = ["ToolSearch"]
                 venv_info_for_skills,
             )));
         }
-        pipeline.register(Box::new(KnowledgeContextProvider::new()));
+        pipeline.register(Box::new(KnowledgeContextProvider::with_retriever(
+            Arc::new(KnowledgeContextRetrievalAdapter::new(
+                knowledge,
+                embedding_provider,
+            )),
+        )));
 
         ContextPipelineInit {
             pipeline,

@@ -13,6 +13,8 @@
 //! so that sub-agents (A2A) share the same execution path. `ChatService` is now
 //! a thin session-management wrapper.
 
+use std::time::Instant;
+
 use uuid::Uuid;
 
 use y_agent::agent::definition::AgentDefinition;
@@ -20,9 +22,14 @@ use y_context::AssembledContext;
 use y_core::provider::{RequestMode, ThinkingConfig, ToolCallingMode};
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore, SessionNode};
 use y_core::types::{Message, Role, SessionId};
+use y_skills::experience::{
+    EvidenceEntry, EvidenceProvenance, ExperienceOutcome, TokenUsage as SkillTokenUsage,
+    ToolCallRecord as SkillToolCallRecord,
+};
 
 use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentExecutionResult};
 use crate::container::ServiceContainer;
+use crate::skill_evolution_service::TurnExperienceInput;
 
 // Re-export types from chat_types for backward compatibility.
 pub use crate::chat_types::{
@@ -282,6 +289,79 @@ impl ChatService {
         Self::execute_turn_inner(container, input, Some(progress), cancel).await
     }
 
+    async fn capture_skill_evolution(
+        container: &ServiceContainer,
+        input: &TurnInput<'_>,
+        outcome: ExperienceOutcome,
+        trajectory_summary: String,
+        tool_calls: &[ToolCallRecord],
+        mut error_messages: Vec<String>,
+        input_tokens: u64,
+        output_tokens: u64,
+        duration_ms: u64,
+    ) {
+        for call in tool_calls.iter().filter(|call| !call.success) {
+            let error = format!("tool call failed: {}", call.name);
+            if !error_messages.contains(&error) {
+                error_messages.push(error);
+            }
+        }
+        let tool_calls = tool_calls
+            .iter()
+            .map(|call| SkillToolCallRecord {
+                name: call.name.clone(),
+                success: call.success,
+                duration_ms: call.duration_ms,
+            })
+            .collect();
+        let token_usage = SkillTokenUsage::new(
+            u32::try_from(input_tokens).unwrap_or(u32::MAX),
+            u32::try_from(output_tokens).unwrap_or(u32::MAX),
+        );
+        let evidence = vec![EvidenceEntry {
+            content: trajectory_summary.clone(),
+            provenance: EvidenceProvenance::TaskOutcome,
+        }];
+        let experience = TurnExperienceInput {
+            skills: input.skills.clone(),
+            task_description: input.user_input.to_string(),
+            outcome,
+            trajectory_summary,
+            key_decisions: Vec::new(),
+            evidence,
+            tool_calls,
+            error_messages,
+            duration_ms,
+            token_usage,
+        };
+
+        match container
+            .skill_evolution_service
+            .record_turn(experience)
+            .await
+        {
+            Ok(proposals) if !proposals.is_empty() => {
+                tracing::info!(
+                    proposal_count = proposals.len(),
+                    session_id = %input.session_id,
+                    "created pending skill evolution proposals"
+                );
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    session_id = %input.session_id,
+                    "failed to capture skill evolution evidence"
+                );
+            }
+        }
+    }
+
+    fn elapsed_ms(started_at: Instant) -> u64 {
+        u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
     fn build_execution_config(
         input: &TurnInput<'_>,
         tool_defs: Vec<serde_json::Value>,
@@ -323,6 +403,7 @@ impl ChatService {
             response_format: None,
             image_generation_options: input.image_generation_options.clone(),
             inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
         }
     }
 
@@ -415,7 +496,10 @@ impl ChatService {
         }
     }
 
-    async fn configure_plan_mode_prompt_flag(container: &ServiceContainer, input: &TurnInput<'_>) {
+    async fn configure_plan_mode_prompt_flag(
+        container: &ServiceContainer,
+        input: &TurnInput<'_>,
+    ) -> String {
         let plan_mode = input.plan_mode.as_deref().unwrap_or("fast");
         tracing::info!(
             plan_mode = %plan_mode,
@@ -432,6 +516,11 @@ impl ChatService {
                 }
                 pctx.config_flags.remove("loop_mode.active");
                 tracing::info!("plan_mode.active flag SET in prompt context");
+                if input.request_mode == RequestMode::TextChat {
+                    "plan".to_string()
+                } else {
+                    "fast".to_string()
+                }
             }
             "loop" => {
                 let mut pctx = container.prompt_context.write().await;
@@ -442,6 +531,11 @@ impl ChatService {
                 }
                 pctx.config_flags.remove("plan_mode.active");
                 tracing::info!("loop_mode.active flag SET in prompt context");
+                if input.request_mode == RequestMode::TextChat {
+                    "loop".to_string()
+                } else {
+                    "fast".to_string()
+                }
             }
             "auto" => {
                 if input.request_mode == RequestMode::TextChat {
@@ -469,6 +563,12 @@ impl ChatService {
                             tracing::info!("no mode flags set (auto: simple)");
                         }
                     }
+                    classification
+                } else {
+                    let mut pctx = container.prompt_context.write().await;
+                    pctx.config_flags.remove("plan_mode.active");
+                    pctx.config_flags.remove("loop_mode.active");
+                    "fast".to_string()
                 }
             }
             _ => {
@@ -476,6 +576,7 @@ impl ChatService {
                 pctx.config_flags.remove("plan_mode.active");
                 pctx.config_flags.remove("loop_mode.active");
                 tracing::info!("plan/loop mode flags CLEARED (fast mode)");
+                "fast".to_string()
             }
         }
     }
@@ -555,6 +656,37 @@ impl ChatService {
         }
 
         resolved
+    }
+
+    async fn auto_select_turn_skills(
+        container: &ServiceContainer,
+        user_input: &str,
+        plan_mode: Option<&str>,
+        agent_config: Option<&SessionAgentConfig>,
+        enabled: bool,
+        skills: &mut Vec<String>,
+    ) {
+        if !enabled
+            || !skills.is_empty()
+            || plan_mode != Some("auto")
+            || agent_config.is_some_and(|config| !config.features.skills)
+        {
+            return;
+        }
+
+        let matches = container
+            .skill_search
+            .read()
+            .await
+            .search_scored(user_input, 2, 12);
+        for matched in matches {
+            if !skills.contains(&matched.summary.name) {
+                skills.push(matched.summary.name);
+            }
+        }
+        if !skills.is_empty() {
+            tracing::info!(skills = ?skills, "auto-selected existing skills for turn");
+        }
     }
 
     fn resolve_turn_knowledge(
@@ -701,7 +833,8 @@ impl ChatService {
             }
         }
 
-        let skills = Self::resolve_turn_skills(
+        let auto_select_skills = request.skills.is_none();
+        let mut skills = Self::resolve_turn_skills(
             request.skills,
             agent_config.as_ref(),
             existing_user_turns == 0,
@@ -718,6 +851,15 @@ impl ChatService {
             request.mcp_mode.as_deref(),
             request.mcp_servers.as_deref(),
             agent_config.as_ref(),
+        )
+        .await;
+        Self::auto_select_turn_skills(
+            container,
+            &request.user_input,
+            turn_cfg.plan_mode.as_deref(),
+            agent_config.as_ref(),
+            auto_select_skills,
+            &mut skills,
         )
         .await;
         let request_mode = request.request_mode.unwrap_or_default();
@@ -1203,6 +1345,15 @@ impl ChatService {
     ) -> Result<TurnResult, TurnError> {
         use crate::agent_service::AgentService;
 
+        let turn_started = Instant::now();
+
+        container
+            .prompt_context
+            .write()
+            .await
+            .active_skills
+            .clone_from(&input.skills);
+
         // 1. Build provider/tool execution settings for the root agent.
         let tool_calling_mode = Self::resolve_tool_calling_mode(container, input).await;
         let mut tool_defs = Self::build_turn_tool_definitions(container, input).await;
@@ -1218,7 +1369,18 @@ impl ChatService {
         // - "fast" (default/None): no plan mode prompts injected.
         // - "plan": always inject plan_mode_active prompt section.
         // - "auto": run a lightweight complexity classification, inject if complex.
-        Self::configure_plan_mode_prompt_flag(container, input).await;
+        let selected_orchestration_mode =
+            Self::configure_plan_mode_prompt_flag(container, input).await;
+        let reuse_decision = if input.request_mode == RequestMode::TextChat {
+            crate::capability_reuse::CapabilityReusePlanner::recommend(
+                container,
+                input.user_input,
+                &input.skills,
+            )
+            .await
+        } else {
+            crate::capability_reuse::CapabilityReuseDecision::default()
+        };
 
         // 1c. Inject Plan/Loop tool schema when respective mode is active.
         if input.request_mode == RequestMode::TextChat {
@@ -1231,6 +1393,14 @@ impl ChatService {
         let mut exec_config =
             Self::build_execution_config(input, tool_defs, tool_calling_mode, max_tool_iterations);
         exec_config.additional_read_dirs = Self::root_additional_read_dirs(container).await;
+        exec_config.trace_metadata = serde_json::json!({
+            "orchestration": {
+                "requested_mode": input.plan_mode.as_deref().unwrap_or("fast"),
+                "selected_mode": selected_orchestration_mode,
+                "selected_skills": input.skills,
+                "reuse": &reuse_decision,
+            }
+        });
 
         // 3. Delegate to AgentService.
         let mut result =
@@ -1259,6 +1429,18 @@ impl ChatService {
                     // resume from the partial tool-call state, instead of falling
                     // back to a destructive full-turn resend.
                     Self::persist_turn_checkpoint(container, input).await;
+                    Self::capture_skill_evolution(
+                        container,
+                        input,
+                        ExperienceOutcome::Failure,
+                        format!("LLM execution failed: {message}"),
+                        &[],
+                        vec![message.clone()],
+                        0,
+                        0,
+                        Self::elapsed_ms(turn_started),
+                    )
+                    .await;
                     return Err(TurnError::LlmError(message));
                 }
                 Err(AgentExecutionError::Cancelled {
@@ -1345,9 +1527,39 @@ impl ChatService {
                     }
 
                     // No checkpoint or post-turn optimization for cancelled turns.
+                    Self::capture_skill_evolution(
+                        container,
+                        input,
+                        ExperienceOutcome::Partial,
+                        format!(
+                            "Turn cancelled after {iterations} iterations and {} tool calls",
+                            tool_calls_executed.len()
+                        ),
+                        &tool_calls_executed,
+                        vec!["turn cancelled".to_string()],
+                        input_tokens,
+                        output_tokens,
+                        Self::elapsed_ms(turn_started),
+                    )
+                    .await;
                     return Err(TurnError::Cancelled);
                 }
-                Err(e) => return Err(TurnError::from(e)),
+                Err(error) => {
+                    let message = error.to_string();
+                    Self::capture_skill_evolution(
+                        container,
+                        input,
+                        ExperienceOutcome::Failure,
+                        format!("Agent execution failed: {message}"),
+                        &[],
+                        vec![message],
+                        0,
+                        0,
+                        Self::elapsed_ms(turn_started),
+                    )
+                    .await;
+                    return Err(TurnError::from(error));
+                }
             };
 
         // 4. Session-specific post-processing: persist final assistant message,
@@ -1357,7 +1569,15 @@ impl ChatService {
         // Persist the assistant output. Steering and follow-up TODOs produce an
         // interleaved sequence of assistant segments and user-message bubbles;
         // otherwise this is one consolidated assistant message.
-        let messages = Self::build_steered_messages(&result);
+        let mut messages = Self::build_steered_messages(&result);
+        Self::annotate_orchestration_decision(
+            &mut messages,
+            input.plan_mode.as_deref(),
+            &selected_orchestration_mode,
+            &input.skills,
+        );
+        Self::annotate_reuse_decision(&mut messages, &reuse_decision);
+        Self::annotate_trace_id(&mut messages, result.trace_id);
         for msg in &messages {
             if let Err(e) = container
                 .session_manager
@@ -1410,7 +1630,26 @@ impl ChatService {
             tracing::warn!(error = %e, "post-turn context optimization failed");
         }
 
+        Self::capture_skill_evolution(
+            container,
+            input,
+            ExperienceOutcome::Success,
+            format!(
+                "Completed in {} iterations with {} tool calls using {}",
+                result.iterations,
+                result.tool_calls_executed.len(),
+                result.model
+            ),
+            &result.tool_calls_executed,
+            Vec::new(),
+            result.input_tokens,
+            result.output_tokens,
+            Self::elapsed_ms(turn_started),
+        )
+        .await;
+
         Ok(TurnResult {
+            trace_id: result.trace_id,
             content: result.content,
             model: result.model,
             provider_id: result.provider_id,
@@ -1515,6 +1754,52 @@ impl ChatService {
             true,
         ));
         messages
+    }
+
+    fn annotate_orchestration_decision(
+        messages: &mut [Message],
+        requested_mode: Option<&str>,
+        selected_mode: &str,
+        selected_skills: &[String],
+    ) {
+        let Some(final_message) = messages.last_mut() else {
+            return;
+        };
+        if !final_message.metadata.is_object() {
+            final_message.metadata = serde_json::json!({});
+        }
+        final_message.metadata["orchestration"] = serde_json::json!({
+            "requested_mode": requested_mode.unwrap_or("fast"),
+            "selected_mode": selected_mode,
+            "selected_skills": selected_skills,
+        });
+    }
+
+    fn annotate_trace_id(messages: &mut [Message], trace_id: Option<uuid::Uuid>) {
+        let Some(trace_id) = trace_id else { return };
+        let Some(final_message) = messages.last_mut() else {
+            return;
+        };
+        if !final_message.metadata.is_object() {
+            final_message.metadata = serde_json::json!({});
+        }
+        final_message.metadata["trace_id"] = serde_json::json!(trace_id);
+    }
+
+    fn annotate_reuse_decision(
+        messages: &mut [Message],
+        decision: &crate::capability_reuse::CapabilityReuseDecision,
+    ) {
+        let Some(final_message) = messages.last_mut() else {
+            return;
+        };
+        if !final_message.metadata.is_object() {
+            final_message.metadata = serde_json::json!({});
+        }
+        if !final_message.metadata["orchestration"].is_object() {
+            final_message.metadata["orchestration"] = serde_json::json!({});
+        }
+        final_message.metadata["orchestration"]["reuse"] = serde_json::json!(decision);
     }
 
     /// Build one assistant message covering iteration blocks `[start, end)`.
@@ -2275,6 +2560,57 @@ mod tests {
     }
 
     #[test]
+    fn orchestration_decision_is_attached_to_the_final_assistant_message() {
+        let mut messages = vec![Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: "done".to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }];
+
+        ChatService::annotate_orchestration_decision(
+            &mut messages,
+            Some("auto"),
+            "plan",
+            &["rust-review".to_string()],
+        );
+
+        assert_eq!(
+            messages[0].metadata["orchestration"]["requested_mode"],
+            "auto"
+        );
+        assert_eq!(
+            messages[0].metadata["orchestration"]["selected_mode"],
+            "plan"
+        );
+        assert_eq!(
+            messages[0].metadata["orchestration"]["selected_skills"][0],
+            "rust-review"
+        );
+    }
+
+    #[test]
+    fn trace_id_is_attached_to_the_final_assistant_message() {
+        let trace_id = uuid::Uuid::new_v4();
+        let mut messages = vec![Message {
+            message_id: y_core::types::generate_message_id(),
+            role: Role::Assistant,
+            content: "done".to_string(),
+            tool_call_id: None,
+            tool_calls: vec![],
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }];
+
+        ChatService::annotate_trace_id(&mut messages, Some(trace_id));
+
+        assert_eq!(messages[0].metadata["trace_id"], trace_id.to_string());
+    }
+
+    #[test]
     fn test_extract_tool_call_records_preserves_json_error_object() {
         let tool_call = y_core::types::ToolCallRequest {
             id: "call_123".to_string(),
@@ -2331,6 +2667,7 @@ mod tests {
             request_mode: RequestMode::TextChat,
             working_directory: None,
             knowledge_collections: vec![],
+            skills: vec![],
             thinking: None,
             plan_mode: None,
             operation_mode: OperationMode::Default,
@@ -2369,6 +2706,7 @@ mod tests {
             request_mode: RequestMode::TextChat,
             working_directory: Some("/repo/workspace".into()),
             knowledge_collections: vec![],
+            skills: vec![],
             thinking: None,
             plan_mode: None,
             operation_mode: OperationMode::Default,
@@ -2393,6 +2731,131 @@ mod tests {
             ChatService::build_execution_config(&input, vec![], ToolCallingMode::default(), 8);
         assert_eq!(config.temperature, Some(1.0));
         assert_eq!(config.working_directory.as_deref(), Some("/repo/workspace"));
+    }
+
+    #[tokio::test]
+    async fn test_capture_skill_evolution_maps_turn_context_to_durable_experience() {
+        let (container, _tmp) = make_test_container().await;
+        let history = make_history();
+        let input = TurnInput {
+            user_input: "review this module",
+            session_id: SessionId::from_string("session-evolution"),
+            session_uuid: Uuid::new_v4(),
+            history: &history,
+            turn_number: 1,
+            provider_id: None,
+            request_mode: RequestMode::TextChat,
+            working_directory: None,
+            knowledge_collections: vec![],
+            skills: vec!["review-rust".to_string()],
+            thinking: None,
+            plan_mode: None,
+            operation_mode: OperationMode::Default,
+            agent_name: "chat-turn".into(),
+            toolcall_enabled: true,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: None,
+            max_completion_tokens: None,
+            max_iterations: None,
+            max_tool_calls: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+            mcp_mode: None,
+            mcp_servers: vec![],
+            image_generation_options: None,
+            pre_turn_message_count: None,
+        };
+        let tool_calls = vec![ToolCallRecord {
+            name: "FileRead".to_string(),
+            arguments: "{}".to_string(),
+            success: false,
+            duration_ms: 12,
+            result_content: "module source".to_string(),
+            url_meta: None,
+            metadata: None,
+        }];
+
+        ChatService::capture_skill_evolution(
+            &container,
+            &input,
+            y_skills::experience::ExperienceOutcome::Success,
+            "Completed in one iteration".to_string(),
+            &tool_calls,
+            vec![],
+            100,
+            50,
+            25,
+        )
+        .await;
+
+        let records = container
+            .skill_evolution_service
+            .load_experiences()
+            .await
+            .unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].skill_id.as_deref(), Some("review-rust"));
+        assert_eq!(records[0].task_description, "review this module");
+        assert_eq!(records[0].tool_calls[0].name, "FileRead");
+        assert_eq!(
+            records[0].error_messages,
+            vec!["tool call failed: FileRead"]
+        );
+        assert_eq!(records[0].token_usage.total, 150);
+    }
+
+    #[tokio::test]
+    async fn test_execute_turn_failure_captures_skill_experience() {
+        let (container, _tmp) = make_test_container().await;
+        let history = make_history();
+        let input = TurnInput {
+            user_input: "review this failing module",
+            session_id: SessionId::from_string("session-evolution-failure"),
+            session_uuid: Uuid::new_v4(),
+            history: &history,
+            turn_number: 1,
+            provider_id: None,
+            request_mode: RequestMode::TextChat,
+            working_directory: None,
+            knowledge_collections: vec![],
+            skills: vec!["review-rust".to_string()],
+            thinking: None,
+            plan_mode: None,
+            operation_mode: OperationMode::Default,
+            agent_name: "chat-turn".into(),
+            toolcall_enabled: true,
+            preferred_models: vec![],
+            provider_tags: vec![],
+            temperature: None,
+            max_completion_tokens: None,
+            max_iterations: None,
+            max_tool_calls: None,
+            trust_tier: None,
+            agent_allowed_tools: vec![],
+            prune_tool_history: false,
+            mcp_mode: None,
+            mcp_servers: vec![],
+            image_generation_options: None,
+            pre_turn_message_count: None,
+        };
+
+        let result = ChatService::execute_turn(&container, &input).await;
+        let records = container
+            .skill_evolution_service
+            .load_experiences()
+            .await
+            .unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].outcome,
+            y_skills::experience::ExperienceOutcome::Failure
+        );
+        assert_eq!(records[0].skill_id.as_deref(), Some("review-rust"));
+        assert!(!records[0].error_messages.is_empty());
     }
 
     #[tokio::test]
@@ -2584,6 +3047,7 @@ mod tests {
         let n = iteration_texts.len();
         let total_tools: usize = iteration_tool_counts.iter().sum();
         AgentExecutionResult {
+            trace_id: Some(uuid::Uuid::new_v4()),
             content,
             model: "test-model".into(),
             provider_id: None,
@@ -2765,6 +3229,101 @@ mod tests {
         assert!(prepared.session_created);
         assert!(!prepared.session_id.as_str().is_empty());
         assert!(!prepared.history.is_empty());
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_auto_selects_a_strong_existing_skill_match() {
+        use y_core::skill::{SkillManifest, SkillVersion};
+        use y_core::types::SkillId;
+
+        let (container, _tmp) = make_test_container().await;
+        let now = y_core::types::now();
+        container.skill_search.write().await.index(SkillManifest {
+            id: SkillId::new(),
+            name: "rust-error-review".to_string(),
+            description: "Review Rust error handling and diagnostics".to_string(),
+            version: SkillVersion("v1".to_string()),
+            tags: vec!["rust".to_string(), "error-handling".to_string()],
+            trigger_patterns: vec!["review rust errors".to_string()],
+            knowledge_bases: vec![],
+            root_content: "Review error propagation and diagnostics.".to_string(),
+            sub_documents: vec![],
+            token_estimate: 20,
+            created_at: now,
+            updated_at: now,
+            classification: None,
+            constraints: None,
+            security: None,
+            references: None,
+            author: None,
+            source_format: None,
+            source_hash: None,
+            state: None,
+            root_path: None,
+        });
+
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                user_input: "Please review the Rust error handling in this change".to_string(),
+                plan_mode: Some("auto".to_string()),
+                ..PrepareTurnRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(prepared.skills, ["rust-error-review"]);
+        assert_eq!(
+            prepared.history.last().unwrap().metadata["skills"][0],
+            "rust-error-review"
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_turn_explicit_empty_skills_disables_auto_selection() {
+        use y_core::skill::{SkillManifest, SkillVersion};
+        use y_core::types::SkillId;
+
+        let (container, _tmp) = make_test_container().await;
+        let now = y_core::types::now();
+        container.skill_search.write().await.index(SkillManifest {
+            id: SkillId::new(),
+            name: "rust-review".to_string(),
+            description: "Review Rust code".to_string(),
+            version: SkillVersion("v1".to_string()),
+            tags: vec!["rust".to_string()],
+            trigger_patterns: vec![],
+            knowledge_bases: vec![],
+            root_content: "Review Rust code.".to_string(),
+            sub_documents: vec![],
+            token_estimate: 10,
+            created_at: now,
+            updated_at: now,
+            classification: None,
+            constraints: None,
+            security: None,
+            references: None,
+            author: None,
+            source_format: None,
+            source_hash: None,
+            state: None,
+            root_path: None,
+        });
+
+        let prepared = ChatService::prepare_turn(
+            &container,
+            PrepareTurnRequest {
+                user_input: "Review this Rust change".to_string(),
+                skills: Some(vec![]),
+                plan_mode: Some("auto".to_string()),
+                ..PrepareTurnRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(prepared.skills.is_empty());
     }
 
     #[tokio::test]
@@ -3384,6 +3943,7 @@ skills = ["workspace-skill"]
         .await
         .expect("first turn should succeed");
         assert_eq!(first.skills, vec!["workspace-skill"]);
+        assert_eq!(first.as_turn_input().skills, vec!["workspace-skill"]);
 
         let second = ChatService::prepare_turn(
             &container,

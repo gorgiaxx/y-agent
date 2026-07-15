@@ -308,6 +308,7 @@ pub(crate) async fn execute_and_record_tool(
 
     let (tool_success, full_result, result_content, tool_metadata) = match execute_tool_call(
         container,
+        config,
         tc,
         &ctx.session_id,
         ctx.working_directory.as_deref(),
@@ -834,6 +835,7 @@ async fn track_file_history(
 /// access to the full `ServiceContainer`.
 async fn execute_tool_call(
     container: &ServiceContainer,
+    config: &AgentExecutionConfig,
     tc: &ToolCallRequest,
     session_id: &SessionId,
     working_dir: Option<&str>,
@@ -843,10 +845,27 @@ async fn execute_tool_call(
 ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
     // Intercept ToolSearch calls -- unified search across tools, skills, and agents.
     if tc.name == "ToolSearch" {
+        let workflows = crate::workflow_service::WorkflowService::list(&container.workflow_store)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "failed to load workflows for capability search");
+                Vec::new()
+            })
+            .into_iter()
+            .map(
+                |workflow| crate::tool_search_orchestrator::WorkflowSearchItem {
+                    id: workflow.id,
+                    name: workflow.name,
+                    description: workflow.description,
+                    tags: serde_json::from_str(&workflow.tags).unwrap_or_default(),
+                },
+            )
+            .collect::<Vec<_>>();
         let taxonomy = container.tool_taxonomy.read().await;
         let sources = crate::tool_search_orchestrator::CapabilitySearchSources {
             skill_search: Some(&container.skill_search),
             agent_registry: Some(&*container.agent_registry),
+            workflows: Some(&workflows),
         };
         let result = crate::tool_search_orchestrator::ToolSearchOrchestrator::handle_with_sources(
             &tc.arguments,
@@ -858,6 +877,34 @@ async fn execute_tool_call(
         .await;
 
         return result;
+    }
+
+    if matches!(
+        tc.name.as_str(),
+        "AgentCreate"
+            | "AgentUpdate"
+            | "AgentDeactivate"
+            | "AgentSearch"
+            | "AgentEvaluate"
+            | "AgentProposalList"
+            | "AgentProposalRefine"
+            | "AgentProposalDecide"
+    ) {
+        return super::dynamic_agent_tools::handle(container, config, tc, session_id).await;
+    }
+
+    if matches!(
+        tc.name.as_str(),
+        "SkillProposalList" | "SkillProposalRefine" | "SkillProposalDecide"
+    ) {
+        return super::skill_evolution_tools::handle(container, tc, session_id).await;
+    }
+
+    if matches!(
+        tc.name.as_str(),
+        "ToolCreate" | "ToolUpdate" | "ToolDelete" | "ToolGet" | "ToolList"
+    ) {
+        return super::dynamic_tool_tools::handle(container, config, tc).await;
     }
 
     // Intercept task calls -- delegate to a sub-agent via AgentDelegator.
@@ -955,6 +1002,31 @@ async fn execute_tool_call(
             "WorkflowUpdate" => return WO::handle_update(args, container).await,
             "WorkflowDelete" => return WO::handle_delete(args, container).await,
             "WorkflowValidate" => return WO::handle_validate(args, container),
+            "WorkflowRun" => {
+                let id = args
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| y_core::tool::ToolError::ValidationError {
+                        message: "'id' is required".to_string(),
+                    })?;
+                let parameters = args
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({}));
+                let execution =
+                    crate::workflow_run_service::WorkflowRunService::run(container, id, parameters)
+                        .await
+                        .map_err(|error| y_core::tool::ToolError::RuntimeError {
+                            name: "WorkflowRun".to_string(),
+                            message: error.to_string(),
+                        })?;
+                return Ok(y_core::tool::ToolOutput {
+                    success: true,
+                    content: serde_json::to_value(&execution).unwrap_or_default(),
+                    warnings: vec![],
+                    metadata: serde_json::json!({ "action": "WorkflowRun" }),
+                });
+            }
             "ScheduleCreate" => return WO::handle_schedule_create(args, container).await,
             "ScheduleList" => return WO::handle_schedule_list(args, container).await,
             "SchedulePause" => return WO::handle_schedule_pause(args, container).await,
@@ -965,6 +1037,7 @@ async fn execute_tool_call(
     }
 
     let tool_name = ToolName::from_string(&tc.name);
+    let definition = container.tool_registry.get_definition(&tool_name).await;
 
     let tool = container
         .tool_registry
@@ -976,7 +1049,7 @@ async fn execute_tool_call(
 
     let input = ToolInput {
         call_id: tc.id.clone(),
-        name: tool_name,
+        name: tool_name.clone(),
         arguments: tc.arguments.clone(),
         session_id: session_id.clone(),
         working_dir: working_dir.map(ToOwned::to_owned),
@@ -984,14 +1057,22 @@ async fn execute_tool_call(
         command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
     };
 
-    if let Some(tok) = cancel {
+    let result = if let Some(tok) = cancel {
         tokio::select! {
             result = tool.execute(input) => result,
             () = tok.cancelled() => Err(y_core::tool::ToolError::Cancelled),
         }
     } else {
         tool.execute(input).await
+    };
+    if definition.is_some_and(|definition| definition.tool_type == y_core::tool::ToolType::Dynamic)
+    {
+        container
+            .dynamic_tool_service
+            .record_execution(&tool_name, &config.agent_name)
+            .await;
     }
+    result
 }
 
 /// Route a `Task(skill-creator)` call through the skill-creation service so the
@@ -1166,6 +1247,692 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    #[derive(Debug)]
+    struct AgentRefinerDelegator;
+
+    #[async_trait::async_trait]
+    impl y_core::agent::AgentDelegator for AgentRefinerDelegator {
+        async fn delegate(
+            &self,
+            agent_name: &str,
+            input: serde_json::Value,
+            context_strategy: y_core::agent::ContextStrategyHint,
+            _session_id: Option<Uuid>,
+        ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
+            assert_eq!(agent_name, "agent-refiner");
+            assert_eq!(context_strategy, y_core::agent::ContextStrategyHint::None);
+            assert_eq!(input["constraints"]["active_mutation_allowed"], false);
+            Ok(y_core::agent::DelegationOutput {
+                text: serde_json::json!({
+                    "description": "Finds repository evidence and cites source files",
+                    "mode": "explore",
+                    "allowed_tools": ["FileRead"],
+                    "system_prompt": "Inspect repository evidence and cite source files before concluding.",
+                    "rationale": "Require grounded answers and reduce the inherited tool surface"
+                })
+                .to_string(),
+                tokens_used: 50,
+                input_tokens: 35,
+                output_tokens: 15,
+                model_used: "mock-refiner".to_string(),
+                duration_ms: 5,
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct SkillRefinerDelegator;
+
+    #[async_trait::async_trait]
+    impl y_core::agent::AgentDelegator for SkillRefinerDelegator {
+        async fn delegate(
+            &self,
+            agent_name: &str,
+            input: serde_json::Value,
+            context_strategy: y_core::agent::ContextStrategyHint,
+            _session_id: Option<Uuid>,
+        ) -> Result<y_core::agent::DelegationOutput, y_core::agent::DelegationError> {
+            assert_eq!(agent_name, "skill-refiner");
+            assert_eq!(context_strategy, y_core::agent::ContextStrategyHint::None);
+            assert_eq!(input["constraints"]["active_mutation_allowed"], false);
+            Ok(y_core::agent::DelegationOutput {
+                text: serde_json::json!({
+                    "root_content": "Review ownership, temporary lifetimes, and borrow extension before proposing edits.",
+                    "rationale": "Address the repeated user-corrected lifetime failure."
+                })
+                .to_string(),
+                tokens_used: 50,
+                input_tokens: 35,
+                output_tokens: 15,
+                model_used: "mock-refiner".to_string(),
+                duration_ms: 5,
+            })
+        }
+    }
+
+    fn test_execution_config(session_id: SessionId, tool_names: &[&str]) -> AgentExecutionConfig {
+        AgentExecutionConfig {
+            agent_name: "test-agent".to_string(),
+            system_prompt: String::new(),
+            max_iterations: 12,
+            max_tool_calls: 20,
+            tool_definitions: tool_names
+                .iter()
+                .map(|name| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": { "name": name }
+                    })
+                })
+                .collect(),
+            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            messages: Vec::new(),
+            provider_id: None,
+            preferred_models: Vec::new(),
+            provider_tags: Vec::new(),
+            fallback_provider_tags: Vec::new(),
+            request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: None,
+            additional_read_dirs: Vec::new(),
+            temperature: None,
+            max_tokens: Some(2_048),
+            thinking: None,
+            session_id: Some(session_id),
+            session_uuid: Uuid::new_v4(),
+            knowledge_collections: Vec::new(),
+            use_context_pipeline: false,
+            user_query: String::new(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: Vec::new(),
+            prune_tool_history: false,
+            response_format: None,
+            image_generation_options: None,
+            inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn dynamic_agent_tools_persist_activate_and_inherit_creator_limits() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut service_config = crate::ServiceConfig::default();
+        service_config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: temp.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let mut container = ServiceContainer::from_config(&service_config)
+            .await
+            .unwrap();
+        let session_id = SessionId::new();
+        let root_config = test_execution_config(
+            session_id.clone(),
+            &["AgentCreate", "AgentSearch", "AgentDeactivate", "FileRead"],
+        );
+
+        let create = ToolCallRequest {
+            id: "create-parent".to_string(),
+            name: "AgentCreate".to_string(),
+            arguments: serde_json::json!({
+                "name": "runtime-scout",
+                "description": "Finds repository evidence",
+                "allowed_tools": ["AgentCreate", "FileRead"]
+            }),
+        };
+        let created = execute_tool_call(
+            &container,
+            &root_config,
+            &create,
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(created.success);
+        let parent_id = created.content["agent"]["id"].as_str().unwrap();
+        assert_eq!(
+            created.content["agent"]["effective_permissions"]["max_iterations"],
+            12
+        );
+        assert_eq!(
+            created.content["agent"]["effective_permissions"]["max_tokens"],
+            2_048
+        );
+        assert!(container
+            .agent_registry
+            .lock()
+            .await
+            .get(parent_id)
+            .is_some());
+
+        let mut dynamic_config = test_execution_config(session_id.clone(), &[]);
+        dynamic_config.agent_name = parent_id.to_string();
+        dynamic_config.trust_tier = Some(TrustTier::Dynamic);
+        dynamic_config.agent_allowed_tools =
+            vec!["AgentCreate".to_string(), "FileRead".to_string()];
+        let create_child = ToolCallRequest {
+            id: "create-child".to_string(),
+            name: "AgentCreate".to_string(),
+            arguments: serde_json::json!({
+                "name": "runtime-child-scout",
+                "description": "Reads files selected by its parent",
+                "allowed_tools": ["FileRead"]
+            }),
+        };
+        let child = execute_tool_call(
+            &container,
+            &dynamic_config,
+            &create_child,
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(child.content["agent"]["delegation_depth"], 1);
+
+        execute_tool_call(
+            &container,
+            &root_config,
+            &ToolCallRequest {
+                id: "update-parent".to_string(),
+                name: "AgentUpdate".to_string(),
+                arguments: serde_json::json!({
+                    "id": parent_id,
+                    "description": "A deliberately regressed runtime definition"
+                }),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        use y_diagnostics::TraceStore;
+        let trace_store = container.diagnostics.store();
+        for version in [1_u64, 2] {
+            for sample in 0..5 {
+                let mut trace = y_diagnostics::Trace::new(root_config.session_uuid, parent_id);
+                trace.metadata = serde_json::json!({
+                    "dynamic_agent": { "id": parent_id, "version": version }
+                });
+                if version == 1 || sample == 0 {
+                    trace.complete();
+                } else {
+                    trace.fail();
+                }
+                trace_store.insert_trace(trace).await.unwrap();
+            }
+        }
+
+        let evaluate = execute_tool_call(
+            &container,
+            &root_config,
+            &ToolCallRequest {
+                id: "evaluate-agents".to_string(),
+                name: "AgentEvaluate".to_string(),
+                arguments: serde_json::json!({}),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(evaluate.content["regression_count"], 1);
+        assert_eq!(evaluate.content["proposal_count"], 1);
+        let proposal_id = evaluate.content["proposals"][0]["id"].as_str().unwrap();
+
+        let listed = execute_tool_call(
+            &container,
+            &root_config,
+            &ToolCallRequest {
+                id: "list-agent-proposals".to_string(),
+                name: "AgentProposalList".to_string(),
+                arguments: serde_json::json!({"agent_id": parent_id}),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.content["count"], 1);
+
+        container.agent_delegator = Arc::new(AgentRefinerDelegator);
+        let refined = execute_tool_call(
+            &container,
+            &root_config,
+            &ToolCallRequest {
+                id: "refine-agent-proposal".to_string(),
+                name: "AgentProposalRefine".to_string(),
+                arguments: serde_json::json!({
+                    "proposal_id": proposal_id,
+                    "instructions": "Prefer the minimum sufficient tool set"
+                }),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            refined.content["proposal"]["change"]["type"],
+            "candidate_update"
+        );
+        assert_eq!(refined.content["active_agent_mutation_performed"], false);
+        assert_eq!(
+            container
+                .dynamic_agent_service
+                .get(parent_id)
+                .unwrap()
+                .version,
+            2
+        );
+
+        let decided = execute_tool_call(
+            &container,
+            &root_config,
+            &ToolCallRequest {
+                id: "approve-agent-proposal".to_string(),
+                name: "AgentProposalDecide".to_string(),
+                arguments: serde_json::json!({
+                    "proposal_id": proposal_id,
+                    "decision": "approve",
+                    "reason": "Repeated execution evidence shows a regression"
+                }),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(decided.content["status"], "applied");
+        assert_eq!(decided.content["proposal"]["applied_version"], 3);
+        assert_eq!(
+            container
+                .dynamic_agent_service
+                .get(parent_id)
+                .unwrap()
+                .definition
+                .allowed_tools,
+            vec!["FileRead"]
+        );
+
+        let deactivate = ToolCallRequest {
+            id: "deactivate-parent".to_string(),
+            name: "AgentDeactivate".to_string(),
+            arguments: serde_json::json!({
+                "id": parent_id,
+                "reason": "specialized child is active"
+            }),
+        };
+        execute_tool_call(
+            &container,
+            &root_config,
+            &deactivate,
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(container
+            .agent_registry
+            .lock()
+            .await
+            .get(parent_id)
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn skill_proposal_tools_refine_without_mutation_then_promote_on_approval() {
+        use y_core::skill::{SkillManifest, SkillVersion};
+        use y_core::types::{now, SkillId};
+        use y_skills::experience::{
+            EvidenceEntry, EvidenceProvenance, ExperienceOutcome, TokenUsage, ToolCallRecord,
+        };
+        use y_skills::FilesystemSkillStore;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let skills_dir = temp.path().join("skills");
+        let timestamp = now();
+        FilesystemSkillStore::new(&skills_dir)
+            .unwrap()
+            .save_skill(&SkillManifest {
+                id: SkillId::from_string("skill-review-rust"),
+                name: "review-rust".to_string(),
+                description: "Reviews Rust ownership".to_string(),
+                version: SkillVersion("v1".to_string()),
+                tags: vec!["rust".to_string()],
+                trigger_patterns: vec![],
+                knowledge_bases: vec![],
+                root_content: "Review ownership carefully.".to_string(),
+                sub_documents: vec![],
+                token_estimate: 10,
+                created_at: timestamp,
+                updated_at: timestamp,
+                classification: None,
+                constraints: None,
+                security: None,
+                references: None,
+                author: None,
+                source_format: None,
+                source_hash: None,
+                state: None,
+                root_path: None,
+            })
+            .unwrap();
+        let mut service_config = crate::ServiceConfig::default();
+        service_config.skills_dir = Some(skills_dir.clone());
+        service_config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: temp.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let mut container = ServiceContainer::from_config(&service_config)
+            .await
+            .unwrap();
+        for _ in 0..3 {
+            container
+                .skill_evolution_service
+                .record_turn(crate::skill_evolution_service::TurnExperienceInput {
+                    skills: vec!["review-rust".to_string()],
+                    task_description: "Review the ownership module".to_string(),
+                    outcome: ExperienceOutcome::Failure,
+                    trajectory_summary: "Compilation failed after the review edit".to_string(),
+                    key_decisions: vec!["Changed the borrow strategy".to_string()],
+                    evidence: vec![EvidenceEntry {
+                        content: "Do not extend the temporary borrow".to_string(),
+                        provenance: EvidenceProvenance::UserCorrection,
+                    }],
+                    tool_calls: vec![ToolCallRecord {
+                        name: "ShellExec".to_string(),
+                        success: false,
+                        duration_ms: 25,
+                    }],
+                    error_messages: vec!["borrowed value does not live long enough".to_string()],
+                    duration_ms: 100,
+                    token_usage: TokenUsage::new(100, 50),
+                })
+                .await
+                .unwrap();
+        }
+        let session_id = SessionId::new();
+        let config = test_execution_config(
+            session_id.clone(),
+            &[
+                "SkillProposalList",
+                "SkillProposalRefine",
+                "SkillProposalDecide",
+            ],
+        );
+
+        let listed = execute_tool_call(
+            &container,
+            &config,
+            &ToolCallRequest {
+                id: "list-skill-proposals".to_string(),
+                name: "SkillProposalList".to_string(),
+                arguments: serde_json::json!({"skill_name": "review-rust"}),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.content["count"], 1);
+        let proposal_id = listed.content["proposals"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        container.agent_delegator = Arc::new(SkillRefinerDelegator);
+        let refined = execute_tool_call(
+            &container,
+            &config,
+            &ToolCallRequest {
+                id: "refine-skill-proposal".to_string(),
+                name: "SkillProposalRefine".to_string(),
+                arguments: serde_json::json!({"proposal_id": proposal_id}),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(refined.content["active_skill_mutation_performed"], false);
+        assert_eq!(
+            FilesystemSkillStore::new(&skills_dir)
+                .unwrap()
+                .load_skill("review-rust")
+                .unwrap()
+                .root_content,
+            "Review ownership carefully."
+        );
+
+        let decided = execute_tool_call(
+            &container,
+            &config,
+            &ToolCallRequest {
+                id: "approve-skill-proposal".to_string(),
+                name: "SkillProposalDecide".to_string(),
+                arguments: serde_json::json!({
+                    "proposal_id": proposal_id,
+                    "decision": "approve",
+                    "reason": "Repeated user-corrected failures"
+                }),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(decided.content["active_skill_mutation_performed"], true);
+        assert_eq!(decided.content["proposal"]["status"], "promoted");
+        assert!(FilesystemSkillStore::new(&skills_dir)
+            .unwrap()
+            .load_skill("review-rust")
+            .unwrap()
+            .root_content
+            .contains("temporary lifetimes"));
+    }
+
+    #[tokio::test]
+    async fn dynamic_tool_lifecycle_dispatch_is_config_gated_and_registry_synchronized() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut disabled_config = crate::ServiceConfig::default();
+        disabled_config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: temp.path().join("disabled-transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let disabled = ServiceContainer::from_config(&disabled_config)
+            .await
+            .unwrap();
+        assert!(!disabled
+            .tool_registry
+            .get_all_definitions()
+            .await
+            .iter()
+            .any(|definition| definition.name.as_str() == "ToolCreate"));
+
+        let session_id = SessionId::new();
+        let execution_config = test_execution_config(
+            session_id.clone(),
+            &[
+                "ToolCreate",
+                "ToolUpdate",
+                "ToolDelete",
+                "ToolGet",
+                "ToolList",
+            ],
+        );
+        let create_call = ToolCallRequest {
+            id: "create-dynamic-tool".to_string(),
+            name: "ToolCreate".to_string(),
+            arguments: serde_json::json!({
+                "name": "RuntimeEcho",
+                "description": "Echo structured input",
+                "parameters": {"type": "object"},
+                "interpreter": "bash",
+                "source": "read input; printf '%s' \"$input\""
+            }),
+        };
+        assert!(execute_tool_call(
+            &disabled,
+            &execution_config,
+            &create_call,
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .is_err());
+
+        let enabled_temp = tempfile::TempDir::new().unwrap();
+        let mut enabled_config = crate::ServiceConfig::default();
+        enabled_config.tools.allow_dynamic_tools = true;
+        enabled_config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: enabled_temp.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let enabled = ServiceContainer::from_config(&enabled_config)
+            .await
+            .unwrap();
+        assert!(enabled
+            .tool_registry
+            .get_all_definitions()
+            .await
+            .iter()
+            .any(|definition| definition.name.as_str() == "ToolCreate"));
+
+        let created = execute_tool_call(
+            &enabled,
+            &execution_config,
+            &create_call,
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(created.content["tool"]["version"], 1);
+        assert!(enabled
+            .tool_registry
+            .get_tool(&ToolName::from_string("RuntimeEcho"))
+            .await
+            .is_some());
+
+        let updated = execute_tool_call(
+            &enabled,
+            &execution_config,
+            &ToolCallRequest {
+                id: "update-dynamic-tool".to_string(),
+                name: "ToolUpdate".to_string(),
+                arguments: serde_json::json!({
+                    "name": "RuntimeEcho",
+                    "source": "printf 'v2'"
+                }),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.content["tool"]["version"], 2);
+
+        let listed = execute_tool_call(
+            &enabled,
+            &execution_config,
+            &ToolCallRequest {
+                id: "list-dynamic-tools".to_string(),
+                name: "ToolList".to_string(),
+                arguments: serde_json::json!({}),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed.content["count"], 1);
+
+        execute_tool_call(
+            &enabled,
+            &execution_config,
+            &ToolCallRequest {
+                id: "delete-dynamic-tool".to_string(),
+                name: "ToolDelete".to_string(),
+                arguments: serde_json::json!({
+                    "name": "RuntimeEcho",
+                    "reason": "Test lifecycle cleanup"
+                }),
+            },
+            &session_id,
+            None,
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(enabled
+            .tool_registry
+            .get_tool(&ToolName::from_string("RuntimeEcho"))
+            .await
+            .is_none());
+    }
+
     #[test]
     fn test_strip_url_tool_result_removes_navigation_and_favicon() {
         let content = serde_json::json!({
@@ -1286,38 +2053,9 @@ mod tests {
             cancel_token: None,
             injected_steers: Vec::new(),
         };
-        let config = AgentExecutionConfig {
-            agent_name: "test-agent".to_string(),
-            system_prompt: String::new(),
-            max_iterations: 1,
-            max_tool_calls: 1,
-            tool_definitions: Vec::new(),
-            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
-            tool_dialect: y_core::provider::ToolDialect::default(),
-            messages: Vec::new(),
-            provider_id: None,
-            preferred_models: Vec::new(),
-            provider_tags: Vec::new(),
-            fallback_provider_tags: Vec::new(),
-            request_mode: y_core::provider::RequestMode::TextChat,
-            working_directory: None,
-            additional_read_dirs: Vec::new(),
-            temperature: None,
-            max_tokens: None,
-            thinking: None,
-            session_id: Some(session_id),
-            session_uuid: Uuid::new_v4(),
-            knowledge_collections: Vec::new(),
-            use_context_pipeline: false,
-            user_query: String::new(),
-            external_trace_id: None,
-            trust_tier: None,
-            agent_allowed_tools: Vec::new(),
-            prune_tool_history: false,
-            response_format: None,
-            image_generation_options: None,
-            inherited_constraints: None,
-        };
+        let mut config = test_execution_config(session_id, &[]);
+        config.max_iterations = 1;
+        config.max_tool_calls = 1;
         let (tx, _rx) = crate::chat::TurnEventSender::channel();
 
         let answer = tokio::time::timeout(

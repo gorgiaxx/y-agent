@@ -525,6 +525,7 @@ pub type FollowUpQueues =
 
 #[derive(Debug, Clone)]
 pub struct TurnResult {
+    pub trace_id: Option<Uuid>,
     pub content: String,
     pub model: String,
     pub provider_id: Option<String>,
@@ -591,6 +592,7 @@ pub struct TurnInput<'a> {
     pub request_mode: RequestMode,
     pub working_directory: Option<String>,
     pub knowledge_collections: Vec<String>,
+    pub skills: Vec<String>,
     pub thinking: Option<ThinkingConfig>,
     pub plan_mode: Option<String>,
     pub operation_mode: OperationMode,
@@ -716,6 +718,7 @@ impl PreparedTurn {
             request_mode: self.request_mode,
             working_directory: self.working_directory.clone(),
             knowledge_collections: self.knowledge_collections.clone(),
+            skills: self.skills.clone(),
             thinking: self.thinking.clone(),
             plan_mode: self.plan_mode.clone(),
             operation_mode: self.operation_mode,

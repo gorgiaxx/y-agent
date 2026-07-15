@@ -618,6 +618,22 @@ impl SchedulerService {
         workflow_id: &str,
         workflow_name: &str,
     ) -> Result<ExecutionSummary, SchedulerServiceError> {
+        Self::execute_workflow_with_parameters(
+            manager,
+            workflow_id,
+            workflow_name,
+            serde_json::Value::Object(serde_json::Map::new()),
+        )
+        .await
+    }
+
+    /// Manually execute a workflow with explicit input parameter values.
+    pub async fn execute_workflow_with_parameters(
+        manager: &SchedulerManager,
+        workflow_id: &str,
+        workflow_name: &str,
+        parameter_values: serde_json::Value,
+    ) -> Result<ExecutionSummary, SchedulerServiceError> {
         let now = chrono::Utc::now();
         let execution_id = format!("exec-wf-{}", uuid::Uuid::new_v4());
 
@@ -626,9 +642,11 @@ impl SchedulerService {
             "workflow_name": workflow_name,
             "trigger": "manual_execute",
             "trigger_time": now.to_rfc3339(),
+            "parameters": parameter_values,
         });
 
         if let Some(dispatcher) = manager.dispatcher().await {
+            let workflow_parameters = request_summary["parameters"].clone();
             // Real dispatch path.
             let execution = y_scheduler::ScheduleExecution {
                 execution_id: execution_id.clone(),
@@ -657,10 +675,7 @@ impl SchedulerService {
 
             tokio::spawn(async move {
                 let dispatch_start = std::time::Instant::now();
-                match dispatcher
-                    .dispatch(&wf_id, serde_json::Value::Object(serde_json::Map::new()))
-                    .await
-                {
+                match dispatcher.dispatch(&wf_id, workflow_parameters).await {
                     Ok(result) => {
                         let duration_ms =
                             u64::try_from(dispatch_start.elapsed().as_millis()).unwrap_or(0);

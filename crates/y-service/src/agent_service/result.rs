@@ -304,6 +304,7 @@ pub(crate) async fn build_final_result(
     };
 
     Ok(AgentExecutionResult {
+        trace_id: ctx.trace_id,
         content: final_content,
         model: final_model,
         provider_id: final_provider_id,
