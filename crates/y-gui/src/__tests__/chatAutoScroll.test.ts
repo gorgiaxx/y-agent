@@ -7,6 +7,7 @@ import {
   reduceChatScrollState,
   resolveFollowOutputBehavior,
   resolveFollowScrollTop,
+  resolveInitialTopMostItemIndex,
   shouldShowScrollToBottomButton,
 } from '../components/chat-panel/chatAutoScroll';
 
@@ -80,6 +81,11 @@ describe('chat auto scroll', () => {
 
   it('exports the bottom threshold used by the panel logic', () => {
     expect(AUTO_SCROLL_BOTTOM_THRESHOLD_PX).toBe(24);
+  });
+
+  it('initializes a newly opened virtualized session at its last item', () => {
+    expect(resolveInitialTopMostItemIndex(120)).toBe(119);
+    expect(resolveInitialTopMostItemIndex(0)).toBe(0);
   });
 
   it('disables follow mode when the user scrolls away from the bottom', () => {

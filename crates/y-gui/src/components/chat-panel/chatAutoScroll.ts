@@ -96,3 +96,8 @@ export function resolveFollowScrollTop({
 
   return Math.max(0, scrollHeight - clientHeight);
 }
+
+/** Initial item index for a newly mounted virtualized session. */
+export function resolveInitialTopMostItemIndex(itemCount: number): number {
+  return Math.max(0, itemCount - 1);
+}
