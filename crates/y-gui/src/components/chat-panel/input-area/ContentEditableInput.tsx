@@ -87,6 +87,7 @@ export interface ContentEditableInputHandle {
   extractContent: () => { text: string; skills: string[] };
   getPlainText: () => string;
   setText: (text: string) => void;
+  setContent: (content: { text: string; skills: string[] }) => void;
   clear: () => void;
   insertSkillMention: (skillName: string) => void;
   hasContent: () => boolean;
@@ -148,6 +149,17 @@ export const ContentEditableInput = forwardRef<ContentEditableInputHandle, Conte
       setText(text: string) {
         if (!editableRef.current) return;
         editableRef.current.textContent = text;
+      },
+      setContent(content: { text: string; skills: string[] }) {
+        if (!editableRef.current) return;
+        editableRef.current.textContent = content.text;
+        for (const skillName of content.skills) {
+          if (editableRef.current.childNodes.length > 0) {
+            editableRef.current.appendChild(document.createTextNode('\u00A0'));
+          }
+          editableRef.current.appendChild(createSkillMention(skillName));
+          editableRef.current.appendChild(document.createTextNode('\u00A0'));
+        }
       },
       clear() {
         if (!editableRef.current) return;

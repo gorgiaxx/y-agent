@@ -17,6 +17,7 @@ import type { GuiCommandDef } from '../../../commands';
 import type { ProviderInfo, SkillInfo, KnowledgeCollectionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions, UserPromptTemplate } from '../../../types';
 import { DEFAULT_IMAGE_GENERATION_OPTIONS } from '../../../constants/imageGeneration';
 import type { PendingEdit } from '../../../hooks/useChat';
+import type { SessionInputDraft } from '../../../hooks/sessionInputState';
 import { useCloseOnOutsideClick } from '../../../hooks/useCloseOnOutsideClick';
 import './InputArea.css';
 
@@ -109,6 +110,11 @@ export interface InputEditProps {
   onRewindDraftConsumed?: () => void;
 }
 
+export interface InputDraftProps {
+  content: SessionInputDraft;
+  onContentChange: (content: SessionInputDraft) => void;
+}
+
 export interface InputFeatureProps {
   /** Current thinking effort level (null = model default). */
   thinkingEffort?: ThinkingEffort | null;
@@ -167,6 +173,7 @@ interface InputAreaProps {
   mcp: InputMcpProps;
   dialogs: InputDialogProps;
   edit: InputEditProps;
+  draft?: InputDraftProps;
   features: InputFeatureProps;
 }
 
@@ -177,7 +184,7 @@ export function InputArea(props: InputAreaProps) {
     expanded = false, onExpandChange, onClearSession, onAddContextReset,
     isCompacting = false, sessionId, skills = [], knowledgeCollections = [],
     hasCustomPrompt = false, onManagePrompts, onSessionPromptApplied,
-    provider, mcp, dialogs, edit, features,
+    provider, mcp, dialogs, edit, draft, features,
   } = props;
 
   // Destructure grouped props with defaults.
@@ -192,6 +199,10 @@ export function InputArea(props: InputAreaProps) {
     onPermissionApproveAlways,
   } = dialogs;
   const { pendingEdit, onCancelEdit, rewindDraft, onRewindDraftConsumed } = edit;
+  const {
+    content = { text: '', skills: [] },
+    onContentChange,
+  } = draft ?? {};
   const {
     thinkingEffort, onThinkingEffortChange,
     planMode: controlledPlanMode, onPlanModeChange,
@@ -216,6 +227,7 @@ export function InputArea(props: InputAreaProps) {
   const promptPickerRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
   const mcpDropdownRef = useRef<HTMLDivElement>(null);
+  const draftRestoredRef = useRef(false);
   const sendingRef = useRef(false);
   const lastCompEndRef = useRef<number>(0);
   const { attachments, removeAttachment: removeAttachmentById, clearAttachments: clearAttachmentList, handlePaste: handlePasteAttachment, pickFiles: pickAttachmentFiles } = useInputAttachments();
@@ -351,9 +363,16 @@ export function InputArea(props: InputAreaProps) {
     setInputHasText(hasContent);
   }, []);
 
+  const publishContent = useCallback(() => {
+    const nextContent = contentEditableRef.current?.extractContent() ?? { text: '', skills: [] };
+    onContentChange?.(nextContent);
+  }, [onContentChange]);
+
   const resetInput = useCallback(() => {
     contentEditableRef.current?.clear();
-  }, []);
+    setInputHasText(false);
+    onContentChange?.({ text: '', skills: [] });
+  }, [onContentChange]);
 
   const exitCommandMode = useCallback(() => {
     setCommandMode(false);
@@ -371,9 +390,10 @@ export function InputArea(props: InputAreaProps) {
         contentEditableRef.current?.setText(`/${cmd.name} `);
         contentEditableRef.current?.placeCursorAtEnd();
         updateHasContent();
+        publishContent();
       }
     },
-    [onCommand, resetInput, exitCommandMode, updateHasContent],
+    [onCommand, resetInput, exitCommandMode, updateHasContent, publishContent],
   );
 
   const handleSkillSelect = useCallback(
@@ -382,8 +402,9 @@ export function InputArea(props: InputAreaProps) {
       contentEditableRef.current?.removeSlashCommandText();
       contentEditableRef.current?.insertSkillMention(skillName);
       updateHasContent();
+      publishContent();
     },
-    [exitCommandMode, updateHasContent],
+    [exitCommandMode, updateHasContent, publishContent],
   );
 
   const toggleKbCollection = useCallback((name: string) => {
@@ -578,6 +599,7 @@ export function InputArea(props: InputAreaProps) {
 
   const handleInput = useCallback((plainText: string) => {
     updateHasContent();
+    publishContent();
 
     if (plainText.startsWith('/') && !plainText.includes('\n')) {
       const query = plainText.slice(1).split(/\s+/)[0];
@@ -601,24 +623,36 @@ export function InputArea(props: InputAreaProps) {
     } else {
       if (commandMode) exitCommandMode();
     }
-  }, [commandMode, exitCommandMode, updateHasContent, skills, knowledgeCollections]);
+  }, [commandMode, exitCommandMode, updateHasContent, publishContent, skills, knowledgeCollections]);
+
+  // InputArea is remounted for each session. Restore that session's draft once,
+  // while keeping subsequent contenteditable updates uncontrolled for cursor stability.
+  useEffect(() => {
+    if (draftRestoredRef.current) return;
+    draftRestoredRef.current = true;
+    if (!content.text && content.skills.length === 0) return;
+    contentEditableRef.current?.setContent(content);
+    queueMicrotask(updateHasContent);
+  }, [content, updateHasContent]);
 
   // When entering edit mode, populate with the message content.
   useEffect(() => {
     if (pendingEdit) {
       contentEditableRef.current?.setText(pendingEdit.content);
+      onContentChange?.({ text: pendingEdit.content, skills: [] });
       // Defer state update to avoid cascading render inside effect.
       queueMicrotask(exitCommandMode);
       contentEditableRef.current?.focus();
       contentEditableRef.current?.placeCursorAtEnd();
       queueMicrotask(updateHasContent);
     }
-  }, [pendingEdit, exitCommandMode, updateHasContent]);
+  }, [pendingEdit, exitCommandMode, updateHasContent, onContentChange]);
 
   // Populate input with draft text from rewind/undo operations.
   useEffect(() => {
     if (rewindDraft) {
       contentEditableRef.current?.setText(rewindDraft);
+      onContentChange?.({ text: rewindDraft, skills: [] });
       // Defer state update to avoid cascading render inside effect.
       queueMicrotask(exitCommandMode);
       contentEditableRef.current?.focus();
@@ -626,7 +660,7 @@ export function InputArea(props: InputAreaProps) {
       queueMicrotask(updateHasContent);
       onRewindDraftConsumed?.();
     }
-  }, [rewindDraft, exitCommandMode, updateHasContent, onRewindDraftConsumed]);
+  }, [rewindDraft, exitCommandMode, updateHasContent, onContentChange, onRewindDraftConsumed]);
 
   const handleTranslate = useCallback(async () => {
     if (translating) return;
@@ -637,8 +671,9 @@ export function InputArea(props: InputAreaProps) {
       contentEditableRef.current?.setText(translated);
       contentEditableRef.current?.placeCursorAtEnd();
       updateHasContent();
+      onContentChange?.({ text: translated, skills: [] });
     }
-  }, [translating, translate, updateHasContent]);
+  }, [translating, translate, updateHasContent, onContentChange]);
 
   return (
     <div className={`input-area ${expanded ? 'input-area--expanded' : ''}`}>

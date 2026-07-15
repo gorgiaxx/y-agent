@@ -19,6 +19,13 @@ import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { getVisiblePendingEdit } from '../hooks/chatEditState';
 import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
+import {
+  createSessionInputStates,
+  getSessionInputState,
+  setSessionDraft,
+  setSessionProvider,
+  type SessionInputDraft,
+} from '../hooks/sessionInputState';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
 import type { ThinkingEffort, PlanMode, McpMode, RequestMode, SteerMessage, TodoItem } from '../types';
 
@@ -36,11 +43,37 @@ export function ChatView() {
   const viewRouting = useViewRouting();
   const panelCtx = usePanelContext();
   const backgroundTasks = useBackgroundTasksContext();
+  const createSession = sessionHooks.createSession;
 
   const rewind = useRewind();
 
   // Draft text to populate in the input box after rewind/undo.
   const [rewindDraft, setRewindDraft] = useState<string | null>(null);
+
+  const sessionInputKey = sessionHooks.activeSessionId ?? '__no_session__';
+  const [sessionInputStates, setSessionInputStates] = useState(createSessionInputStates);
+  const activeInputState = getSessionInputState(
+    sessionInputStates,
+    sessionInputKey,
+    providerHooks.selectedProviderId,
+  );
+  const handleDraftChange = useCallback((draft: SessionInputDraft) => {
+    setSessionInputStates((previous) => setSessionDraft(previous, sessionInputKey, draft));
+  }, [sessionInputKey]);
+  const handleProviderChange = useCallback((providerId: string) => {
+    setSessionInputStates((previous) => (
+      setSessionProvider(previous, sessionInputKey, providerId)
+    ));
+  }, [sessionInputKey]);
+  const createSessionWithInputState = useCallback(async (title?: string) => {
+    const session = await createSession(title);
+    if (session) {
+      setSessionInputStates((previous) => (
+        setSessionProvider(previous, session.id, activeInputState.providerId)
+      ));
+    }
+    return session;
+  }, [activeInputState.providerId, createSession]);
 
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
   const [planMode, setPlanMode] = useState<PlanMode>(() => {
@@ -62,7 +95,7 @@ export function ChatView() {
   // MCP mode + manual-mode server selection are per-session, remembered per active session.
   const [mcpModeBySession, setMcpModeBySession] = useState<Record<string, McpMode>>({});
   const [mcpServersBySession, setMcpServersBySession] = useState<Record<string, string[]>>({});
-  const mcpSessionKey = sessionHooks.activeSessionId ?? '__no_session__';
+  const mcpSessionKey = sessionInputKey;
   const mcpMode: McpMode = mcpModeBySession[mcpSessionKey] ?? 'disabled';
   const selectedMcpServers = mcpServersBySession[mcpSessionKey] ?? [];
 
@@ -123,7 +156,7 @@ export function ChatView() {
   } = useChatHandlers({
     session: {
       activeSessionId: sessionHooks.activeSessionId,
-      createSession: sessionHooks.createSession,
+      createSession: createSessionWithInputState,
       selectSession: sessionHooks.selectSession,
       deleteSession: sessionHooks.deleteSession,
       refreshSessions: sessionHooks.refreshSessions,
@@ -150,7 +183,7 @@ export function ChatView() {
       refreshWorkspaces: workspaceHooks.refreshWorkspaces,
     },
     config: {
-      selectedProviderId: providerHooks.selectedProviderId,
+      selectedProviderId: activeInputState.providerId,
       thinkingEffort,
       planMode,
     },
@@ -314,6 +347,7 @@ export function ChatView() {
             toolResults={chatHooks.toolResults}
             getStreamSegments={chatHooks.getStreamSegments}
             contextResetPoints={chatHooks.contextResetPoints}
+            onUndoContextReset={chatHooks.removeContextReset}
             compactPoints={chatHooks.compactPoints}
           />
         </ChatSearchProvider>
@@ -378,8 +412,8 @@ export function ChatView() {
         }}
         provider={{
           providers: providerHooks.providers,
-          selectedProviderId: providerHooks.selectedProviderId,
-          onSelectProvider: providerHooks.setSelectedProviderId,
+          selectedProviderId: activeInputState.providerId,
+          onSelectProvider: handleProviderChange,
           providerIcons: providerHooks.providerIconMap,
         }}
         mcp={{
@@ -405,6 +439,10 @@ export function ChatView() {
           rewindDraft,
           onRewindDraftConsumed: () => setRewindDraft(null),
         }}
+        draft={{
+          content: activeInputState.draft,
+          onContentChange: handleDraftChange,
+        }}
         features={{
           thinkingEffort,
           onThinkingEffortChange: setThinkingEffort,
@@ -420,7 +458,7 @@ export function ChatView() {
         activeModel={statusBarMeta.provider}
         activeProviderIcon={
           (statusBarMeta.providerId ? providerHooks.providerIconMap[statusBarMeta.providerId] : undefined)
-          ?? (providerHooks.selectedProviderId !== 'auto' ? providerHooks.providerIconMap[providerHooks.selectedProviderId] : undefined)
+          ?? (activeInputState.providerId !== 'auto' ? providerHooks.providerIconMap[activeInputState.providerId] : undefined)
           ?? null
         }
         lastTokens={statusBarMeta.tokens}
