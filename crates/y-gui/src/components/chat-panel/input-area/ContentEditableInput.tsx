@@ -102,8 +102,8 @@ export interface ContentEditableInputHandle {
 
 interface ContentEditableInputProps {
   disabled: boolean;
-  /** When true, a run is streaming but the input stays editable for steering. */
-  steerActive?: boolean;
+  /** When true, a run is streaming but the input stays editable for TODOs. */
+  runActive?: boolean;
   translating: boolean;
   isCompacting: boolean;
   attachments: Attachment[];
@@ -122,7 +122,7 @@ export const ContentEditableInput = forwardRef<ContentEditableInputHandle, Conte
   function ContentEditableInput(
     {
       disabled,
-      steerActive = false,
+      runActive = false,
       translating,
       isCompacting,
       attachments,
@@ -242,12 +242,12 @@ export const ContentEditableInput = forwardRef<ContentEditableInputHandle, Conte
         <div
           ref={editableRef}
           className="input-editable"
-          contentEditable={(!disabled || steerActive) && !translating}
+          contentEditable={(!disabled || runActive) && !translating}
           onInput={handleInput}
           onPaste={onPaste}
           onKeyDown={onKeyDown}
           onCompositionEnd={onCompositionEnd}
-          data-placeholder={isCompacting ? 'Compacting context, please wait...' : steerActive ? 'Steer the agent... (Enter to queue, applied at next step)' : disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
+          data-placeholder={isCompacting ? 'Compacting context, please wait...' : runActive ? 'Add a TODO... (Enter to queue)' : disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
           role="textbox"
           aria-multiline="true"
           suppressContentEditableWarning

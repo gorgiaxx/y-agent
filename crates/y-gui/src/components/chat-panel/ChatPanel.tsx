@@ -19,6 +19,7 @@ import {
   reduceChatScrollState,
   resolveFollowOutputBehavior,
   resolveFollowScrollTop,
+  resolveInitialTopMostItemIndex,
   shouldShowScrollToBottomButton,
   type ChatScrollState,
 } from './chatAutoScroll';
@@ -351,8 +352,6 @@ function ChatPanelInner({
     if (firstMessageIdRef.current !== firstMessageId) {
       firstMessageIdRef.current = firstMessageId;
       scrollStateRef.current = INITIAL_CHAT_SCROLL_STATE;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setScrollState(INITIAL_CHAT_SCROLL_STATE);
       virtuosoRef.current?.scrollToIndex({ index: 'LAST' });
     }
   }, [messages, useFlatList]);
@@ -558,6 +557,7 @@ function ChatPanelInner({
             data={displayItems}
             computeItemKey={(_index, item) => getDisplayItemKey(item)}
             itemContent={renderItem}
+            initialTopMostItemIndex={resolveInitialTopMostItemIndex(displayItems.length)}
             followOutput={followOutput}
             atBottomStateChange={handleAtBottomStateChange}
             atBottomThreshold={24}

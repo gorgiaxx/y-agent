@@ -31,6 +31,10 @@
   border-radius: var(--radius-sm);
 }
 
+.todo-queue-item--steering {
+  box-shadow: inset 2px 0 0 var(--accent, #6ea8fe);
+}
+
 .todo-queue-index {
   display: inline-flex;
   flex: 0 0 20px;
@@ -55,6 +59,13 @@
   white-space: nowrap;
 }
 
+.todo-queue-status {
+  color: var(--accent, #6ea8fe);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
 .todo-queue-action {
   display: inline-flex;
   align-items: center;
@@ -72,6 +83,13 @@
 .todo-queue-action:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
+}
+
+.todo-queue-action:disabled {
+  background: transparent;
+  color: var(--text-disabled, var(--text-secondary));
+  cursor: default;
+  opacity: 0.45;
 }
 
 .todo-queue-action--danger:hover {

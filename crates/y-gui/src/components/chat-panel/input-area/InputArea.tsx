@@ -143,12 +143,9 @@ interface InputAreaProps {
   onStop?: () => void;
   onCommand?: (commandName: string) => boolean;
   disabled: boolean;
-  /** When true, a run is streaming: typing is allowed and Enter/Send enqueues
-   *  a steering message instead of starting a new turn. */
-  steerActive?: boolean;
-  /** Called with the message text to enqueue while a run is streaming. */
-  onSteer?: (text: string) => void;
-  /** Called for explicit `/todo <task>` input. */
+  /** When true, a run is streaming and new input is appended to its TODO list. */
+  runActive?: boolean;
+  /** Called for active-run input or explicit `/todo <task>` input. */
   onTodo?: (text: string) => void;
   sendOnEnter: boolean;
   expanded?: boolean;
@@ -180,7 +177,7 @@ interface InputAreaProps {
 export function InputArea(props: InputAreaProps) {
   const {
     onSend, onStop, onCommand, disabled, sendOnEnter,
-    steerActive = false, onSteer, onTodo,
+    runActive = false, onTodo,
     expanded = false, onExpandChange, onClearSession, onAddContextReset,
     isCompacting = false, sessionId, skills = [], knowledgeCollections = [],
     hasCustomPrompt = false, onManagePrompts, onSessionPromptApplied,
@@ -463,21 +460,16 @@ export function InputArea(props: InputAreaProps) {
     // Prevent double-send from rapid Enter key events (common on Windows).
     if (sendingRef.current) return;
 
-    // Streaming input defaults to steering. Only an explicit /todo prefix
-    // routes the text to deferred FIFO work.
-    if (steerActive) {
+    // All input submitted during an active run is deferred in the TODO list.
+    if (runActive) {
       const { text } = contentEditableRef.current?.extractContent() ?? { text: '' };
       const route = routeStreamingInput(text);
       if (!route.text) {
-        if (route.kind === 'todo') onTodo?.('');
+        onTodo?.('');
         return;
       }
       sendingRef.current = true;
-      if (route.kind === 'todo') {
-        onTodo?.(route.text);
-      } else {
-        onSteer?.(route.text);
-      }
+      onTodo?.(route.text);
       resetInput();
       exitCommandMode();
       queueMicrotask(() => { sendingRef.current = false; });
@@ -534,7 +526,7 @@ export function InputArea(props: InputAreaProps) {
     exitCommandMode();
     // Release on next microtask so any queued keydown events are still blocked.
     queueMicrotask(() => { sendingRef.current = false; });
-  }, [disabled, steerActive, onSteer, onTodo, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions, clearAttachmentList]);
+  }, [disabled, runActive, onTodo, onSend, onCommand, resetInput, exitCommandMode, selectedKbCollections, thinkingEffort, attachments, planMode, operationMode, mcpMode, selectedMcpServers, requestMode, imageGenOptions, clearAttachmentList]);
 
   const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
     // Try image paste first; fall back to plain text.
@@ -734,8 +726,8 @@ export function InputArea(props: InputAreaProps) {
         {/* Editable div with inline skill mentions */}
         <ContentEditableInput
           ref={contentEditableRef}
-          disabled={disabled && !steerActive}
-          steerActive={steerActive}
+          disabled={disabled && !runActive}
+          runActive={runActive}
           translating={translating}
           isCompacting={isCompacting}
           attachments={attachments}
