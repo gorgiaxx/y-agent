@@ -5,6 +5,8 @@
 pub mod code_summary;
 mod path_utils;
 
+pub mod agent_management;
+pub mod dynamic_tool_management;
 pub mod file_edit;
 pub mod file_read;
 pub mod file_write;
@@ -14,6 +16,7 @@ pub mod knowledge_search;
 pub mod loop_tool;
 pub mod plan;
 pub mod shell_exec;
+pub mod skill_evolution;
 pub mod task;
 pub mod tool_search;
 pub mod user_interaction;
@@ -53,6 +56,70 @@ pub async fn register_builtin_tools(
     let browser_tool = Arc::new(y_browser::BrowserTool::new(browser_config));
 
     let mut tools: Vec<(Arc<dyn y_core::tool::Tool>, y_core::tool::ToolDefinition)> = vec![
+        (
+            Arc::new(agent_management::AgentCreateTool::new()),
+            agent_management::AgentCreateTool::tool_definition(),
+        ),
+        (
+            Arc::new(agent_management::AgentUpdateTool::new()),
+            agent_management::AgentUpdateTool::tool_definition(),
+        ),
+        (
+            Arc::new(agent_management::AgentDeactivateTool::new()),
+            agent_management::AgentDeactivateTool::tool_definition(),
+        ),
+        (
+            Arc::new(agent_management::AgentSearchTool::new()),
+            agent_management::AgentSearchTool::tool_definition(),
+        ),
+        (
+            Arc::new(agent_management::AgentEvaluateTool::new()),
+            agent_management::AgentEvaluateTool::tool_definition(),
+        ),
+        (
+            Arc::new(agent_management::AgentProposalListTool::new()),
+            agent_management::AgentProposalListTool::tool_definition(),
+        ),
+        (
+            Arc::new(agent_management::AgentProposalRefineTool::new()),
+            agent_management::AgentProposalRefineTool::tool_definition(),
+        ),
+        (
+            Arc::new(agent_management::AgentProposalDecideTool::new()),
+            agent_management::AgentProposalDecideTool::tool_definition(),
+        ),
+        (
+            Arc::new(skill_evolution::SkillProposalListTool::new()),
+            skill_evolution::SkillProposalListTool::tool_definition(),
+        ),
+        (
+            Arc::new(skill_evolution::SkillProposalRefineTool::new()),
+            skill_evolution::SkillProposalRefineTool::tool_definition(),
+        ),
+        (
+            Arc::new(skill_evolution::SkillProposalDecideTool::new()),
+            skill_evolution::SkillProposalDecideTool::tool_definition(),
+        ),
+        (
+            Arc::new(dynamic_tool_management::ToolCreateTool::new()),
+            dynamic_tool_management::ToolCreateTool::tool_definition(),
+        ),
+        (
+            Arc::new(dynamic_tool_management::ToolUpdateTool::new()),
+            dynamic_tool_management::ToolUpdateTool::tool_definition(),
+        ),
+        (
+            Arc::new(dynamic_tool_management::ToolDeleteTool::new()),
+            dynamic_tool_management::ToolDeleteTool::tool_definition(),
+        ),
+        (
+            Arc::new(dynamic_tool_management::ToolGetTool::new()),
+            dynamic_tool_management::ToolGetTool::tool_definition(),
+        ),
+        (
+            Arc::new(dynamic_tool_management::ToolListTool::new()),
+            dynamic_tool_management::ToolListTool::tool_definition(),
+        ),
         (
             Arc::new(file_read::FileReadTool::new()),
             file_read::FileReadTool::tool_definition(),
@@ -124,6 +191,10 @@ pub async fn register_builtin_tools(
         (
             Arc::new(workflow::WorkflowValidateTool::new()),
             workflow::WorkflowValidateTool::tool_definition(),
+        ),
+        (
+            Arc::new(workflow::WorkflowRunTool::new()),
+            workflow::WorkflowRunTool::tool_definition(),
         ),
         (
             Arc::new(workflow::ScheduleListTool::new()),
@@ -240,8 +311,9 @@ mod tests {
         let registry = ToolRegistryImpl::new(ToolRegistryConfig::default());
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None, None).await;
         // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch
-        // + 11 workflow/schedule + 1 plan + 1 loop = 24
-        assert_eq!(registry.len().await, 24);
+        // + 12 workflow/schedule + 1 plan + 1 loop + 8 dynamic-agent lifecycle
+        // + 3 governed skill-evolution + 5 dynamic-tool lifecycle tools = 41
+        assert_eq!(registry.len().await, 41);
     }
 
     #[tokio::test]
@@ -259,8 +331,8 @@ mod tests {
             None,
         )
         .await;
-        // 24 + KnowledgeSearch = 25
-        assert_eq!(registry.len().await, 25);
+        // 41 + KnowledgeSearch = 42
+        assert_eq!(registry.len().await, 42);
     }
 
     #[tokio::test]
@@ -271,6 +343,10 @@ mod tests {
         let names: Vec<&str> = index.iter().map(|e| e.name.as_str()).collect();
         assert!(names.contains(&"FileRead"));
         assert!(names.contains(&"FileWrite"));
+        assert!(names.contains(&"AgentCreate"));
+        assert!(names.contains(&"SkillProposalRefine"));
+        assert!(names.contains(&"ToolCreate"));
+        assert!(names.contains(&"WorkflowRun"));
         assert!(names.contains(&"FileEdit"));
         assert!(names.contains(&"ShellExec"));
         assert!(names.contains(&"ToolSearch"));

@@ -196,6 +196,8 @@ pub fn validate_definition(def: &DynamicAgentDefinition) -> Result<(), Validatio
     let reserved = [
         "tool-engineer",
         "agent-architect",
+        "agent-refiner",
+        "skill-refiner",
         "compaction-summarizer",
         "title-generator",
         "task-intent-analyzer",
@@ -835,7 +837,7 @@ mod tests {
         ));
     }
 
-    /// T-MA-P1-08: All 8 built-in agent names are reserved.
+    /// T-MA-P1-08: Built-in agent names are reserved.
     #[test]
     fn test_reserved_name_all_builtins() {
         let reserved_names = [
@@ -846,6 +848,8 @@ mod tests {
             "capability-assessor",
             "tool-engineer",
             "agent-architect",
+            "agent-refiner",
+            "skill-refiner",
         ];
 
         let creator = default_creator_snapshot();

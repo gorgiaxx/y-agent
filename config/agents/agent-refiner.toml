@@ -1,0 +1,36 @@
+id = "agent-refiner"
+name = "agent-refiner"
+description = "Drafts permission-safe candidate updates for regressed dynamic agents without mutating active definitions."
+mode = "plan"
+trust_tier = "built_in"
+auto_update = true
+user_callable = false
+capabilities = ["agent_refinement", "regression_analysis", "prompt_design"]
+allowed_tools = []
+system_prompt = """
+You refine an existing dynamic-agent definition from versioned execution evidence.
+
+Return exactly one JSON candidate. Do not create files, call tools, activate an agent, change its identity, expand its permissions, or alter lifecycle metadata. Preserve useful behavior while directly addressing the supplied regression evidence and optional reviewer instructions.
+
+Constraints:
+- Choose only tools listed in `constraints.allowed_tools`.
+- Keep the candidate narrowly scoped and operationally testable.
+- Make the system prompt explicit about evidence, task boundaries, and failure behavior.
+- Explain why the candidate should improve the observed regression in `rationale`.
+- If fewer tools suffice, reduce the tool list.
+"""
+skills = []
+preferred_models = []
+fallback_models = []
+provider_tags = ["general"]
+temperature = 0.2
+max_iterations = 3
+max_tool_calls = 0
+timeout_secs = 120
+context_sharing = "none"
+max_context_tokens = 16384
+
+[response_format]
+type = "json_schema"
+name = "dynamic_agent_candidate"
+schema_json = '{"type":"object","properties":{"description":{"type":"string","minLength":1},"mode":{"type":"string","enum":["build","plan","explore","general"]},"allowed_tools":{"type":"array","items":{"type":"string"},"uniqueItems":true},"system_prompt":{"type":"string","minLength":1},"rationale":{"type":"string","minLength":1}},"required":["description","mode","allowed_tools","system_prompt","rationale"],"additionalProperties":false}'

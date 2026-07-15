@@ -195,6 +195,10 @@ pub fn agent_update(
         updated.definition.mode = mode;
     }
     if let Some(tools) = params.allowed_tools {
+        updated
+            .effective_permissions
+            .tools_allowed
+            .retain(|tool| tools.contains(tool));
         updated.definition.allowed_tools = tools;
     }
     if let Some(prompt) = params.system_prompt {
@@ -457,5 +461,41 @@ mod tests {
         assert_eq!(updated.definition.description, "Updated description");
         assert_eq!(updated.definition.mode, AgentMode::Plan);
         assert_eq!(updated.version, 2);
+    }
+
+    #[test]
+    fn test_agent_update_reduces_effective_tool_permissions() {
+        let store = DynamicAgentStore::new();
+        let created = agent_create(
+            &store,
+            AgentCreateParams {
+                name: "permission-reduction".to_string(),
+                description: "Tests permission reduction".to_string(),
+                mode: AgentMode::General,
+                capabilities: vec![],
+                allowed_tools: vec!["FileRead".to_string(), "SearchCode".to_string()],
+                system_prompt: String::new(),
+                context_sharing: ContextStrategy::None,
+            },
+            "parent",
+            &default_creator(),
+        )
+        .agent
+        .unwrap();
+
+        let updated = agent_update(
+            &store,
+            AgentUpdateParams {
+                id: created.id,
+                description: None,
+                mode: None,
+                allowed_tools: Some(vec!["FileRead".to_string()]),
+                system_prompt: None,
+            },
+        )
+        .agent
+        .unwrap();
+
+        assert_eq!(updated.effective_permissions.tools_allowed, ["FileRead"]);
     }
 }

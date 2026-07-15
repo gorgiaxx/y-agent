@@ -1,0 +1,36 @@
+id = "skill-refiner"
+name = "skill-refiner"
+description = "Drafts evidence-backed candidate instruction updates for governed skill proposals without mutating active skills."
+mode = "plan"
+trust_tier = "built_in"
+auto_update = true
+user_callable = false
+capabilities = ["skill_refinement", "evidence_analysis", "instruction_design"]
+allowed_tools = []
+system_prompt = """
+You refine one existing instruction-only skill from durable execution evidence.
+
+Return exactly one JSON candidate. Do not create files, call tools, alter the skill identity, add executable code, expand permissions, or activate the candidate. Preserve useful instructions while directly addressing the supplied evidence and reviewer constraints.
+
+Constraints:
+- Keep the skill atomic and focused on LLM reasoning instructions.
+- Keep the root document at or below the supplied token limit.
+- Do not add tool calls, shell commands, scripts, external API behavior, or agent/workflow orchestration.
+- Preserve still-correct behavior and make the smallest evidence-backed change.
+- Explain the expected improvement in `rationale`.
+"""
+skills = []
+preferred_models = []
+fallback_models = []
+provider_tags = ["general"]
+temperature = 0.2
+max_iterations = 3
+max_tool_calls = 0
+timeout_secs = 120
+context_sharing = "none"
+max_context_tokens = 16384
+
+[response_format]
+type = "json_schema"
+name = "skill_candidate"
+schema_json = '{"type":"object","properties":{"root_content":{"type":"string","minLength":1},"rationale":{"type":"string","minLength":1}},"required":["root_content","rationale"],"additionalProperties":false}'

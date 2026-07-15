@@ -571,6 +571,14 @@ impl AgentRegistry {
                 include_str!("../../../../config/agents/agent-architect.toml"),
             ),
             (
+                "agent-refiner",
+                include_str!("../../../../config/agents/agent-refiner.toml"),
+            ),
+            (
+                "skill-refiner",
+                include_str!("../../../../config/agents/skill-refiner.toml"),
+            ),
+            (
                 "skill-ingestion",
                 include_str!("../../../../config/agents/skill-ingestion.toml"),
             ),
@@ -761,7 +769,7 @@ mod tests {
         registry.register(dynamic_def).unwrap();
         assert!(registry.get("dyn-helper").is_some());
 
-        assert_eq!(registry.count(), 20); // 17 built-in + 1 user-tier default + 1 user + 1 dynamic
+        assert_eq!(registry.count(), 22); // 19 built-in + 1 user-tier default + 1 user + 1 dynamic
     }
 
     /// T-MA-R2-02: Registry ships built-in tool-engineer and agent-architect.
@@ -946,7 +954,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 17);
+        assert_eq!(builtins.len(), 19);
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
         // user-1 plus the shipped user-tier default (general-purpose).
@@ -1047,7 +1055,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             .unwrap();
 
         let builtins = registry.list_by_tier(TrustTier::BuiltIn);
-        assert_eq!(builtins.len(), 17);
+        assert_eq!(builtins.len(), 19);
         assert!(builtins.iter().all(|d| d.trust_tier == TrustTier::BuiltIn));
 
         let user_defs = registry.list_by_tier(TrustTier::UserDefined);
@@ -1139,7 +1147,9 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         assert_eq!(def.mode, AgentMode::Build);
         assert_eq!(def.trust_tier, TrustTier::BuiltIn);
         assert!(def.allowed_tools.contains(&"FileRead".to_string()));
-        assert!(def.allowed_tools.contains(&"ShellExec".to_string()));
+        assert!(def.allowed_tools.contains(&"ToolCreate".to_string()));
+        assert!(def.allowed_tools.contains(&"ToolUpdate".to_string()));
+        assert!(!def.allowed_tools.contains(&"ShellExec".to_string()));
     }
 
     /// T-MA-P4-12: Agent architect excludes `ShellExec` from its allowlist.
@@ -1275,7 +1285,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
         );
     }
 
-    /// T-MA-P4-14: Registry loads all 17 built-in agents at startup.
+    /// T-MA-P4-14: Registry loads every built-in agent at startup.
     #[test]
     fn test_registry_loads_all_builtin_agents() {
         let registry = AgentRegistry::new();
@@ -1287,6 +1297,8 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             "capability-assessor",
             "tool-engineer",
             "agent-architect",
+            "agent-refiner",
+            "skill-refiner",
             "skill-ingestion",
             "skill-security-check",
             "skill-creator",
@@ -1308,7 +1320,7 @@ system_prompt = "You run on {{OS}} ({{ARCH}})."
             assert!(!def.system_prompt.is_empty());
         }
 
-        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 17);
+        assert_eq!(registry.list_by_tier(TrustTier::BuiltIn).len(), 19);
     }
 
     /// Override a built-in agent with `register_or_override`.

@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Unified Agent Framework: orchestrator (DAG engine, channels, checkpointing) + agent lifecycle (definitions, registry, pool, delegation)"
 
+[features]
+default = []
+dynamic_agent_persistence = []
+dynamic_agent_evolution = ["dynamic_agent_persistence"]
+
 [dependencies]
 y-core = { workspace = true }
 async-trait = { workspace = true }
@@ -20,6 +25,17 @@ toml = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "persistent_dynamic_store"
+path = "tests/persistent_dynamic_store.rs"
+required-features = ["dynamic_agent_persistence"]
+
+[[test]]
+name = "persistent_dynamic_proposals"
+path = "tests/persistent_dynamic_proposals.rs"
+required-features = ["dynamic_agent_evolution"]
