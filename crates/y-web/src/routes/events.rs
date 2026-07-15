@@ -79,11 +79,6 @@ pub enum SseEvent {
     },
     /// `session:title_updated` -- auto-generated title is ready.
     TitleUpdated { session_id: String, title: String },
-    /// `chat:steer_queue` -- a session's steering queue changed (add/delete).
-    SteerQueueUpdated {
-        session_id: String,
-        queue: serde_json::Value,
-    },
     /// `chat:follow_up_queue` -- a session's follow-up queue changed.
     FollowUpQueueUpdated {
         session_id: String,
@@ -118,7 +113,6 @@ impl SseEvent {
             SseEvent::PermissionRequest { .. } => "chat:PermissionRequest",
             SseEvent::PlanReviewRequest { .. } => "chat:PlanReview",
             SseEvent::TitleUpdated { .. } => "session:title_updated",
-            SseEvent::SteerQueueUpdated { .. } => "chat:steer_queue",
             SseEvent::DiagnosticsEvent(_) => "diagnostics:event",
             SseEvent::KbBatchProgress { .. } => "kb:batch_progress",
             SseEvent::KbEntryIngested(_) => "kb:entry_ingested",
@@ -134,7 +128,6 @@ impl SseEvent {
             | SseEvent::PermissionRequest { session_id, .. }
             | SseEvent::PlanReviewRequest { session_id, .. }
             | SseEvent::TitleUpdated { session_id, .. }
-            | SseEvent::SteerQueueUpdated { session_id, .. }
             | SseEvent::FollowUpQueueUpdated { session_id, .. } => Some(session_id),
             _ => None,
         }
@@ -215,19 +208,4 @@ async fn event_stream(State(state): State<AppState>, Query(query): Query<EventsQ
 /// SSE route group.
 pub fn router() -> Router<AppState> {
     Router::new().route("/api/v1/events", get(event_stream))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn steer_queue_event_name_and_session_filter() {
-        let event = SseEvent::SteerQueueUpdated {
-            session_id: "sess-9".to_string(),
-            queue: serde_json::json!([]),
-        };
-        assert_eq!(event.event_name(), "chat:steer_queue");
-        assert_eq!(event.session_id(), Some("sess-9"));
-    }
 }
