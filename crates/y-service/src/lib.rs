@@ -81,10 +81,11 @@ pub use background_tasks::{
 };
 pub use bot::{BotConfig, BotPersona, BotService, BotServiceError};
 pub use chat::{
-    ChatService, FollowUpMessage, FollowUpQueues, PendingInteractions, PendingPermissions,
-    PermissionPromptResponse, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError,
-    ResendTurnRequest, SteerMessage, SteeringQueues, ToolCallRecord, TurnError, TurnEvent,
-    TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
+    ChatService, FollowUpMessage, FollowUpQueues, FollowUpStatus, PendingInteractions,
+    PendingPermissions, PermissionPromptResponse, PrepareTurnError, PrepareTurnRequest,
+    PreparedTurn, ResendTurnError, ResendTurnRequest, SteerFollowUpError, SteerMessage,
+    SteeringSlots, ToolCallRecord, TurnError, TurnEvent, TurnEventSender, TurnInput,
+    TurnMetaSummary, TurnResult, UnsteerFollowUpError,
 };
 pub use config::ServiceConfig;
 pub use config_service::{list_provider_models, ConfigService, CONFIG_SECTIONS};

@@ -33,12 +33,13 @@ use crate::skill_evolution_service::TurnExperienceInput;
 
 // Re-export types from chat_types for backward compatibility.
 pub use crate::chat_types::{
-    FollowUpMessage, FollowUpQueueError, FollowUpQueueState, FollowUpQueues, OperationMode,
-    PendingInteractions, PendingPermissions, PendingPlanReviews, PermissionPromptResponse,
-    PlanReviewDecision, PrepareTurnError, PrepareTurnRequest, PreparedTurn, ResendTurnError,
-    ResendTurnRequest, SessionAgentConfig, SessionAgentFeatures, SteerMessage, SteeringQueues,
-    ToolCallRecord, TurnCancellationToken, TurnError, TurnEvent, TurnEventSender, TurnInput,
-    TurnMetaSummary, TurnResult,
+    FollowUpMessage, FollowUpQueueError, FollowUpQueueState, FollowUpQueues, FollowUpStatus,
+    OperationMode, PendingInteractions, PendingPermissions, PendingPlanReviews, PendingRunInput,
+    PermissionPromptResponse, PlanReviewDecision, PrepareTurnError, PrepareTurnRequest,
+    PreparedTurn, ResendTurnError, ResendTurnRequest, SessionAgentConfig, SessionAgentFeatures,
+    SteerFollowUpError, SteerMessage, SteeringSlots, ToolCallRecord, TurnCancellationToken,
+    TurnError, TurnEvent, TurnEventSender, TurnInput, TurnMetaSummary, TurnResult,
+    UnsteerFollowUpError,
 };
 
 // ---------------------------------------------------------------------------
@@ -66,68 +67,127 @@ struct ResolvedTurnConfig {
     working_directory: Option<String>,
 }
 impl ChatService {
-    // -- Steering queue management -----------------------------------------
-    //
-    // Per-session FIFO queues of user messages enqueued while a turn is
-    // streaming. The agent execution loop drains them at LLM-call boundaries
-    // (see `agent_service::executor`). These methods are the only mutators;
-    // presentation layers call them via the transport endpoints.
+    // -- Steering management -----------------------------------------------
 
-    /// Enqueue a steering message for a session. Returns the created entry.
-    pub async fn add_steer(
+    /// Promote one queued TODO to the session's single pending steer slot.
+    /// The TODO status change and slot assignment share a consistent lock
+    /// order so the executor cannot close the run between those state changes.
+    pub async fn steer_follow_up(
         container: &ServiceContainer,
         session_id: &SessionId,
-        text: String,
-    ) -> SteerMessage {
-        let steer = SteerMessage::new(text);
-        let mut queues = container.session_state.steering_queues.lock().await;
-        queues
-            .entry(session_id.clone())
-            .or_default()
-            .push(steer.clone());
-        steer
-    }
+        follow_up_id: &str,
+    ) -> Result<SteerMessage, SteerFollowUpError> {
+        let mut slots = container.session_state.steering_slots.lock().await;
+        if slots.contains_key(session_id) {
+            return Err(SteerFollowUpError::SteerAlreadyPending {
+                session_id: session_id.clone(),
+            });
+        }
 
-    /// List the pending steering messages for a session (FIFO order).
-    pub async fn list_steers(
-        container: &ServiceContainer,
-        session_id: &SessionId,
-    ) -> Vec<SteerMessage> {
-        let queues = container.session_state.steering_queues.lock().await;
-        queues.get(session_id).cloned().unwrap_or_default()
-    }
-
-    /// Remove a single steering message by id. Returns true if it was present.
-    pub async fn delete_steer(
-        container: &ServiceContainer,
-        session_id: &SessionId,
-        steer_id: &str,
-    ) -> bool {
-        let mut queues = container.session_state.steering_queues.lock().await;
-        let Some(queue) = queues.get_mut(session_id) else {
-            return false;
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(state) = queues.get_mut(session_id).filter(|state| state.accepting) else {
+            return Err(SteerFollowUpError::RunNotAccepting {
+                session_id: session_id.clone(),
+            });
         };
-        let before = queue.len();
-        queue.retain(|s| s.id != steer_id);
-        queue.len() != before
+        let Some(follow_up) = state.queue.iter_mut().find(|item| item.id == follow_up_id) else {
+            return Err(SteerFollowUpError::TodoNotFound {
+                session_id: session_id.clone(),
+                follow_up_id: follow_up_id.to_string(),
+            });
+        };
+        follow_up.status = FollowUpStatus::Steering;
+        let steer = SteerMessage {
+            id: follow_up.id.clone(),
+            text: follow_up.text.clone(),
+            created_at: follow_up.created_at,
+        };
+        slots.insert(session_id.clone(), steer.clone());
+        Ok(steer)
     }
 
-    /// Take all pending steering messages for a session, leaving it empty.
-    pub async fn drain_steers(
+    /// Move the session's pending steer back to its original TODO position.
+    pub async fn unsteer_follow_up(
         container: &ServiceContainer,
         session_id: &SessionId,
-    ) -> Vec<SteerMessage> {
-        let mut queues = container.session_state.steering_queues.lock().await;
-        queues
-            .get_mut(session_id)
-            .map(std::mem::take)
-            .unwrap_or_default()
+        follow_up_id: &str,
+    ) -> Result<FollowUpMessage, UnsteerFollowUpError> {
+        let mut slots = container.session_state.steering_slots.lock().await;
+        let Some(steer) = slots.get(session_id) else {
+            return Err(UnsteerFollowUpError::SteerNotFound {
+                session_id: session_id.clone(),
+                follow_up_id: follow_up_id.to_string(),
+            });
+        };
+        if steer.id != follow_up_id {
+            return Err(UnsteerFollowUpError::SteerNotFound {
+                session_id: session_id.clone(),
+                follow_up_id: follow_up_id.to_string(),
+            });
+        }
+
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(state) = queues.get_mut(session_id).filter(|state| state.accepting) else {
+            return Err(UnsteerFollowUpError::RunNotAccepting {
+                session_id: session_id.clone(),
+            });
+        };
+        let Some(follow_up) = state.queue.iter_mut().find(|item| item.id == follow_up_id) else {
+            return Err(UnsteerFollowUpError::SteerNotFound {
+                session_id: session_id.clone(),
+                follow_up_id: follow_up_id.to_string(),
+            });
+        };
+
+        follow_up.status = FollowUpStatus::Pending;
+        let restored = follow_up.clone();
+        slots.remove(session_id);
+        Ok(restored)
     }
 
-    /// Clear a session's steering queue (called at run start).
-    pub async fn clear_steers(container: &ServiceContainer, session_id: &SessionId) {
-        let mut queues = container.session_state.steering_queues.lock().await;
-        queues.remove(session_id);
+    /// Take the single pending steer at an LLM-call boundary.
+    pub async fn take_pending_steer(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+    ) -> Option<SteerMessage> {
+        let mut slots = container.session_state.steering_slots.lock().await;
+        let steer = slots.remove(session_id)?;
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(state) = queues.get_mut(session_id) {
+            state.queue.retain(|item| item.id != steer.id);
+        }
+        Some(steer)
+    }
+
+    /// Clear a stale pending steer when a fresh run starts.
+    pub async fn clear_pending_steer(container: &ServiceContainer, session_id: &SessionId) {
+        let mut slots = container.session_state.steering_slots.lock().await;
+        let Some(steer) = slots.remove(session_id) else {
+            return;
+        };
+        let mut queues = container
+            .session_state
+            .follow_up_queues
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(item) = queues
+            .get_mut(session_id)
+            .and_then(|state| state.queue.iter_mut().find(|item| item.id == steer.id))
+        {
+            item.status = FollowUpStatus::Pending;
+        }
     }
 
     // -- Follow-up queue management ----------------------------------------
@@ -154,13 +214,16 @@ impl ChatService {
     }
 
     /// Close and discard a streaming run's remaining TODO/follow-up state.
-    pub fn finish_follow_up_run(container: &ServiceContainer, session_id: &SessionId) {
-        let mut queues = container
-            .session_state
-            .follow_up_queues
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        queues.remove(session_id);
+    pub async fn finish_follow_up_run(container: &ServiceContainer, session_id: &SessionId) {
+        {
+            let mut queues = container
+                .session_state
+                .follow_up_queues
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            queues.remove(session_id);
+        }
+        Self::clear_pending_steer(container, session_id).await;
     }
 
     /// Enqueue a follow-up message for an accepting streaming run.
@@ -215,7 +278,9 @@ impl ChatService {
             return false;
         };
         let before = state.queue.len();
-        state.queue.retain(|item| item.id != follow_up_id);
+        state
+            .queue
+            .retain(|item| item.id != follow_up_id || item.status == FollowUpStatus::Steering);
         state.queue.len() != before
     }
 
@@ -235,19 +300,25 @@ impl ChatService {
             .unwrap_or_default()
     }
 
-    /// Take the oldest TODO item, or atomically close acceptance when empty.
-    pub fn take_next_follow_up_or_close(
+    /// Take the next active-run input, prioritizing the single pending steer,
+    /// or atomically close acceptance when no input remains.
+    pub async fn take_next_run_input_or_close(
         container: &ServiceContainer,
         session_id: &SessionId,
-    ) -> Option<FollowUpMessage> {
+    ) -> Option<PendingRunInput> {
+        let mut slots = container.session_state.steering_slots.lock().await;
         let mut queues = container
             .session_state
             .follow_up_queues
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let state = queues.get_mut(session_id)?;
+        if let Some(steer) = slots.remove(session_id) {
+            state.queue.retain(|item| item.id != steer.id);
+            return Some(PendingRunInput::Steer(steer));
+        }
         if let Some(item) = state.queue.pop_front() {
-            Some(item)
+            Some(PendingRunInput::FollowUp(item))
         } else {
             state.accepting = false;
             None
@@ -807,10 +878,9 @@ impl ChatService {
             (session, true)
         };
         let session_id = session.id.clone();
-        // A fresh run starts with an empty steering queue. Steers are enqueued
-        // by the client only while a run is streaming, so clearing here just
-        // guards against stale entries leaking across runs.
-        Self::clear_steers(container, &session_id).await;
+        // A fresh run starts without a pending steer. Clearing here guards
+        // against stale state leaking across interrupted runs.
+        Self::clear_pending_steer(container, &session_id).await;
         Self::clear_follow_ups(container, &session_id);
         let agent_config = Self::resolve_session_agent_config(container, &session)
             .await
@@ -999,8 +1069,8 @@ impl ChatService {
             .get_session(&request.session_id)
             .await
             .map_err(|e| ResendTurnError::TranscriptReadFailed(e.to_string()))?;
-        // Start the resend run with an empty steering queue (see prepare_turn).
-        Self::clear_steers(container, &request.session_id).await;
+        // Start the resend run without a stale pending steer (see prepare_turn).
+        Self::clear_pending_steer(container, &request.session_id).await;
         let agent_config = Self::resolve_session_agent_config(container, &session)
             .await
             .map_err(ResendTurnError::SessionAgentNotFound)?;
@@ -1262,11 +1332,48 @@ impl ChatService {
         })
     }
 
+    /// Resolve a provider by exact ID, or by an unambiguous model match.
+    fn find_provider_metadata<'a>(
+        metadata: &'a [y_core::provider::ProviderMetadata],
+        provider_id: Option<&str>,
+        model: &str,
+    ) -> Option<&'a y_core::provider::ProviderMetadata> {
+        if let Some(provider_id) = provider_id {
+            if let Some(found) = metadata
+                .iter()
+                .find(|candidate| candidate.id.to_string() == provider_id)
+            {
+                return Some(found);
+            }
+        }
+
+        let mut model_matches = metadata.iter().filter(|candidate| candidate.model == model);
+        let first = model_matches.next()?;
+        model_matches.next().is_none().then_some(first)
+    }
+
+    /// Refresh cached turn metadata against the current provider configuration.
+    pub async fn reconcile_turn_meta(
+        container: &ServiceContainer,
+        mut meta: crate::chat_types::TurnMeta,
+    ) -> crate::chat_types::TurnMeta {
+        let pool = container.provider_pool().await;
+        let metadata = pool.list_metadata();
+        if let Some(provider) =
+            Self::find_provider_metadata(&metadata, meta.provider_id.as_deref(), &meta.model)
+        {
+            meta.provider_id = Some(provider.id.to_string());
+            meta.model.clone_from(&provider.model);
+            meta.context_window = provider.context_window;
+        }
+        meta
+    }
+
     /// Look up metadata for the last completed LLM turn in a session.
     ///
     /// Queries the diagnostics store for the most recent trace belonging to
-    /// the session, extracts the model from the last Generation observation,
-    /// and resolves `context_window` from the provider pool by model match.
+    /// the session and reconciles model metadata against the current provider
+    /// configuration.
     ///
     /// Returns `None` if no trace data exists for this session.
     pub async fn get_last_turn_meta(
@@ -1293,7 +1400,25 @@ impl ChatService {
             .rev()
             .find(|o| o.obs_type == y_diagnostics::ObservationType::Generation);
 
-        let model = last_gen.and_then(|o| o.model.clone()).unwrap_or_default();
+        let observed_model = last_gen.and_then(|o| o.model.clone()).unwrap_or_default();
+        let persisted_provider_id = container
+            .session_manager
+            .read_display_transcript(&SessionId(session_id.to_string()))
+            .await
+            .ok()
+            .and_then(|messages| {
+                messages.into_iter().rev().find_map(|message| {
+                    (message.role == Role::Assistant)
+                        .then(|| {
+                            message
+                                .metadata
+                                .get("provider_id")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToOwned::to_owned)
+                        })
+                        .flatten()
+                })
+            });
         let (last_cache_read, last_cache_write) = last_gen.map_or((0, 0), |o| {
             let read = o
                 .metadata
@@ -1315,9 +1440,14 @@ impl ChatService {
 
         let pool = container.provider_pool().await;
         let metadata_list = pool.list_metadata();
-        let matched = metadata_list.iter().find(|m| m.model == model);
+        let matched = Self::find_provider_metadata(
+            &metadata_list,
+            persisted_provider_id.as_deref(),
+            &observed_model,
+        );
         let context_window = matched.map_or(0, |m| m.context_window);
         let provider_id = matched.map(|m| m.id.to_string());
+        let model = matched.map_or(observed_model, |m| m.model.clone());
 
         Ok(Some(TurnMetaSummary {
             provider_id,
@@ -1831,6 +1961,10 @@ impl ChatService {
             "iteration_reasoning_durations_ms": &result.iteration_reasoning_durations_ms[start..end],
             "iteration_tool_counts": &result.iteration_tool_counts[start..end],
         });
+
+        if let Some(provider_id) = result.provider_id.as_ref() {
+            meta["provider_id"] = serde_json::Value::String(provider_id.clone());
+        }
 
         if is_final {
             meta["input_tokens"] = serde_json::json!(result.input_tokens);
@@ -2934,70 +3068,6 @@ mod tests {
         assert_eq!(msgs[1].content, "working\nphase done");
     }
 
-    #[tokio::test]
-    async fn steer_queue_add_list_preserves_fifo_order() {
-        let (container, _tmp) = make_test_container().await;
-        let sid = SessionId("steer-sess".into());
-
-        let a = ChatService::add_steer(&container, &sid, "first".into()).await;
-        let b = ChatService::add_steer(&container, &sid, "second".into()).await;
-
-        let listed = ChatService::list_steers(&container, &sid).await;
-        assert_eq!(listed.len(), 2);
-        assert_eq!(listed[0].id, a.id);
-        assert_eq!(listed[0].text, "first");
-        assert_eq!(listed[1].id, b.id);
-        assert_eq!(listed[1].text, "second");
-    }
-
-    #[tokio::test]
-    async fn steer_queue_delete_removes_only_matching_id() {
-        let (container, _tmp) = make_test_container().await;
-        let sid = SessionId("steer-sess".into());
-        let a = ChatService::add_steer(&container, &sid, "keep".into()).await;
-        let b = ChatService::add_steer(&container, &sid, "drop".into()).await;
-
-        assert!(ChatService::delete_steer(&container, &sid, &b.id).await);
-        assert!(!ChatService::delete_steer(&container, &sid, "missing").await);
-
-        let listed = ChatService::list_steers(&container, &sid).await;
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id, a.id);
-    }
-
-    #[tokio::test]
-    async fn steer_queue_drain_takes_all_and_empties() {
-        let (container, _tmp) = make_test_container().await;
-        let sid = SessionId("steer-sess".into());
-        ChatService::add_steer(&container, &sid, "one".into()).await;
-        ChatService::add_steer(&container, &sid, "two".into()).await;
-
-        let drained = ChatService::drain_steers(&container, &sid).await;
-        assert_eq!(drained.len(), 2);
-        assert_eq!(drained[0].text, "one");
-        assert_eq!(drained[1].text, "two");
-
-        assert!(ChatService::list_steers(&container, &sid).await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn steer_queue_clear_and_isolation_between_sessions() {
-        let (container, _tmp) = make_test_container().await;
-        let sid_a = SessionId("sess-a".into());
-        let sid_b = SessionId("sess-b".into());
-        ChatService::add_steer(&container, &sid_a, "a1".into()).await;
-        ChatService::add_steer(&container, &sid_b, "b1".into()).await;
-
-        ChatService::clear_steers(&container, &sid_a).await;
-
-        assert!(ChatService::list_steers(&container, &sid_a)
-            .await
-            .is_empty());
-        let b = ChatService::list_steers(&container, &sid_b).await;
-        assert_eq!(b.len(), 1);
-        assert_eq!(b[0].text, "b1");
-    }
-
     fn steer_user_msg(text: &str) -> Message {
         Message {
             message_id: y_core::types::generate_message_id(),
@@ -4088,19 +4158,27 @@ max_iterations = 1
         assert_eq!(list[0].id, msg1.id);
         assert_eq!(list[1].id, msg2.id);
 
-        let first = ChatService::take_next_follow_up_or_close(&container, &sid)
-            .expect("first TODO should be queued");
+        let Some(PendingRunInput::FollowUp(first)) =
+            ChatService::take_next_run_input_or_close(&container, &sid).await
+        else {
+            panic!("first TODO should be queued");
+        };
         assert_eq!(first.id, msg1.id);
         assert_eq!(
             ChatService::list_follow_ups(&container, &sid),
             vec![msg2.clone()]
         );
 
-        let second = ChatService::take_next_follow_up_or_close(&container, &sid)
-            .expect("second TODO should be queued");
+        let Some(PendingRunInput::FollowUp(second)) =
+            ChatService::take_next_run_input_or_close(&container, &sid).await
+        else {
+            panic!("second TODO should be queued");
+        };
         assert_eq!(second.id, msg2.id);
 
-        assert!(ChatService::take_next_follow_up_or_close(&container, &sid).is_none());
+        assert!(ChatService::take_next_run_input_or_close(&container, &sid)
+            .await
+            .is_none());
         assert!(matches!(
             ChatService::add_follow_up(&container, &sid, "too late".into()),
             Err(FollowUpQueueError::RunNotAccepting { .. })
@@ -4200,30 +4278,105 @@ max_iterations = 1
     }
 
     #[tokio::test]
-    async fn test_follow_up_queue_independent_from_steering() {
+    async fn test_promote_follow_up_to_single_pending_steer() {
         let (container, _tmp) = make_test_container().await;
-        let sid = SessionId("test-followup-steer".into());
+        let sid = SessionId("test-promote-followup".into());
         ChatService::begin_follow_up_run(&container, &sid);
 
-        // Add both steer and follow-up.
-        ChatService::add_steer(&container, &sid, "steer msg".into()).await;
-        ChatService::add_follow_up(&container, &sid, "follow-up msg".into())
+        let first = ChatService::add_follow_up(&container, &sid, "steer this".into())
+            .expect("active run should accept TODO");
+        let second = ChatService::add_follow_up(&container, &sid, "keep queued".into())
             .expect("active run should accept TODO");
 
-        // Both queues should be independent.
-        let steers = ChatService::list_steers(&container, &sid).await;
-        let follow_ups = ChatService::list_follow_ups(&container, &sid);
-        assert_eq!(steers.len(), 1);
-        assert_eq!(follow_ups.len(), 1);
-        assert_eq!(steers[0].text, "steer msg");
-        assert_eq!(follow_ups[0].text, "follow-up msg");
+        let steer = ChatService::steer_follow_up(&container, &sid, &first.id)
+            .await
+            .expect("first TODO should become the pending steer");
 
-        // Draining one should not affect the other.
-        let drained_follow_ups = ChatService::drain_follow_ups(&container, &sid);
-        assert_eq!(drained_follow_ups.len(), 1);
+        assert_eq!(steer.id, first.id);
+        assert_eq!(steer.text, first.text);
+        let queued = ChatService::list_follow_ups(&container, &sid);
+        assert_eq!(queued.len(), 2);
+        assert_eq!(queued[0].id, first.id);
+        assert_eq!(queued[0].status, crate::chat::FollowUpStatus::Steering);
+        assert_eq!(queued[1], second);
+        assert!(matches!(
+            ChatService::steer_follow_up(&container, &sid, &first.id).await,
+            Err(crate::chat::SteerFollowUpError::SteerAlreadyPending { session_id })
+                if session_id == sid
+        ));
 
-        let steers_after = ChatService::list_steers(&container, &sid).await;
-        assert_eq!(steers_after.len(), 1);
+        let pending = ChatService::take_pending_steer(&container, &sid)
+            .await
+            .expect("promoted TODO should be available at the next boundary");
+        assert_eq!(pending.id, first.id);
+        assert_eq!(ChatService::list_follow_ups(&container, &sid), vec![second]);
+        assert!(ChatService::take_pending_steer(&container, &sid)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_withdraw_pending_steer_restores_todo_in_original_position() {
+        let (container, _tmp) = make_test_container().await;
+        let sid = SessionId("test-withdraw-steer".into());
+        ChatService::begin_follow_up_run(&container, &sid);
+
+        let first = ChatService::add_follow_up(&container, &sid, "first".into()).unwrap();
+        let second = ChatService::add_follow_up(&container, &sid, "second".into()).unwrap();
+        let third = ChatService::add_follow_up(&container, &sid, "third".into()).unwrap();
+        ChatService::steer_follow_up(&container, &sid, &second.id)
+            .await
+            .expect("second TODO should enter steering state");
+
+        let restored = ChatService::unsteer_follow_up(&container, &sid, &second.id)
+            .await
+            .expect("pending steer should be withdrawable");
+
+        assert_eq!(restored.status, crate::chat::FollowUpStatus::Pending);
+        assert_eq!(
+            ChatService::list_follow_ups(&container, &sid),
+            vec![first, second, third]
+        );
+        assert!(ChatService::take_pending_steer(&container, &sid)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_reconcile_turn_meta_uses_current_provider_configuration() {
+        let (container, _tmp) = make_test_container().await;
+        let pool_config: y_provider::ProviderPoolConfig = toml::from_str(
+            r#"
+            [[providers]]
+            id = "configured-provider"
+            provider_type = "openai"
+            model = "configured-model"
+            context_window = 1000000
+            api_key = "test"
+            "#,
+        )
+        .expect("provider config should parse");
+        container.reload_providers(&pool_config).await;
+
+        let resolved = ChatService::reconcile_turn_meta(
+            &container,
+            crate::chat_types::TurnMeta {
+                provider_id: Some("configured-provider".into()),
+                model: "stale-model".into(),
+                input_tokens: 123,
+                output_tokens: 45,
+                cost_usd: 0.5,
+                context_window: 256_000,
+                context_tokens_used: 100,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            },
+        )
+        .await;
+
+        assert_eq!(resolved.model, "configured-model");
+        assert_eq!(resolved.context_window, 1_000_000);
+        assert_eq!(resolved.context_tokens_used, 100);
     }
     // -----------------------------------------------------------------------
     // Retry data-loss regression tests

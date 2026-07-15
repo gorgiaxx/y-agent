@@ -436,7 +436,7 @@ pub(crate) async fn execute_inner(
         // turns before building the next LLM request. This is the LLM-call
         // boundary -- protocol-valid because the prior iteration appended all
         // its tool results before looping back here.
-        drain_and_inject_steers(container, progress.as_ref(), &mut ctx).await;
+        take_and_inject_steer(container, progress.as_ref(), &mut ctx).await;
 
         // Intra-turn pruning: remove failed tool call branches from
         // working_history before building the next LLM request.
@@ -612,35 +612,10 @@ pub(crate) async fn execute_inner(
                     continue;
                 }
 
-                // No tool calls. If steers are queued, fold this response into
-                // history as an intermediate turn and keep looping so the model
-                // incorporates them; otherwise finalize.
-                let pending = crate::ChatService::drain_steers(container, &ctx.session_id).await;
-                if !pending.is_empty() {
-                    result::emit_llm_response(
-                        progress.as_ref(),
-                        &response,
-                        &iter_data,
-                        ctx.iteration,
-                        vec![],
-                        iter_ctx_window,
-                        &config.agent_name,
-                    );
-                    fold_response_and_inject_steers(
-                        progress.as_ref(),
-                        &response,
-                        iter_reasoning_duration_ms,
-                        &mut ctx,
-                        pending,
-                    );
-                    continue;
-                }
-
-                // No tool calls, no steers. Check follow-up queue: if the
-                // user enqueued messages while the run was streaming (but
-                // intended for after the run stops), inject them and continue
-                // the loop for another LLM call.
-                if drain_and_inject_follow_ups(
+                // At a natural stop, atomically select a pending steer first,
+                // then the oldest TODO. If neither exists, close input
+                // acceptance and finalize the run.
+                if inject_next_run_input(
                     container,
                     progress.as_ref(),
                     &response,
@@ -649,7 +624,9 @@ pub(crate) async fn execute_inner(
                     iter_reasoning_duration_ms,
                     &mut ctx,
                     &config.agent_name,
-                ) {
+                )
+                .await
+                {
                     continue;
                 }
 
@@ -693,60 +670,56 @@ pub(crate) async fn execute_inner(
     }
 }
 
-/// Drain the session's steering queue and inject each entry into the running
-/// conversation as a user message. Records each injection in `ctx.injected_steers`
-/// (with the iteration boundary) and emits a `SteerInjected` progress event so
-/// the GUI can render the bubble live and drop the item from its queue.
+/// Take the session's single pending steer and inject it into the running
+/// conversation as a user message. Records the injection in
+/// `ctx.injected_steers` and emits a `SteerInjected` progress event.
 ///
-/// Returns `true` if any steer was injected. Shared by the root turn and every
-/// sub-agent (the queue is keyed by session id, so whichever loop is active
-/// drains it).
-pub(crate) async fn drain_and_inject_steers(
+/// Returns `true` if a steer was injected. Shared by the root turn and every
+/// sub-agent; whichever loop owns the session takes the pending slot.
+pub(crate) async fn take_and_inject_steer(
     container: &ServiceContainer,
     progress: Option<&TurnEventSender>,
     ctx: &mut ToolExecContext,
 ) -> bool {
-    let steers = crate::ChatService::drain_steers(container, &ctx.session_id).await;
-    if steers.is_empty() {
+    let Some(steer) = crate::ChatService::take_pending_steer(container, &ctx.session_id).await
+    else {
         return false;
-    }
-    inject_steers(progress, ctx, steers);
+    };
+    inject_steer(progress, ctx, steer);
     true
 }
 
-/// Inject already-drained steers into `ctx.working_history` as user messages, in
-/// FIFO order, anchoring each at the current iteration boundary.
-fn inject_steers(
+/// Inject the pending steer into `ctx.working_history`, anchoring it at the
+/// current iteration boundary.
+fn inject_steer(
     progress: Option<&TurnEventSender>,
     ctx: &mut ToolExecContext,
-    steers: Vec<crate::chat::SteerMessage>,
+    steer: crate::chat::SteerMessage,
 ) {
     let after_iteration = ctx.iteration_texts.len();
-    for steer in steers {
-        let message = y_core::types::Message {
-            message_id: y_core::types::generate_message_id(),
-            role: Role::User,
-            content: steer.text.clone(),
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            // Tag so the GUI can render this persisted user message as an inline
-            // steer chip instead of a normal user bubble. Display-only: providers
-            // serialize role/content/tool_calls, so this never reaches the LLM.
-            metadata: serde_json::json!({ "kind": "steer", "steer_id": steer.id }),
-        };
-        ctx.working_history.push(message.clone());
-        ctx.injected_steers.push(InjectedSteer {
-            steer_id: steer.id.clone(),
-            message,
-            after_iteration,
+    let message = y_core::types::Message {
+        message_id: y_core::types::generate_message_id(),
+        role: Role::User,
+        content: steer.text.clone(),
+        tool_call_id: None,
+        tool_calls: vec![],
+        timestamp: y_core::types::now(),
+        // Tag so the GUI can render this persisted user message as an inline
+        // steer chip instead of a normal user bubble. Display-only: providers
+        // serialize role/content/tool_calls, so this never reaches the LLM.
+        metadata: serde_json::json!({ "kind": "steer", "steer_id": steer.id }),
+    };
+    ctx.working_history.push(message.clone());
+    ctx.injected_steers.push(InjectedSteer {
+        steer_id: steer.id.clone(),
+        message,
+        after_iteration,
+    });
+    if let Some(tx) = progress {
+        let _ = tx.send(crate::chat::TurnEvent::SteerInjected {
+            steer_id: steer.id,
+            text: steer.text,
         });
-        if let Some(tx) = progress {
-            let _ = tx.send(crate::chat::TurnEvent::SteerInjected {
-                steer_id: steer.id,
-                text: steer.text,
-            });
-        }
     }
 }
 
@@ -806,15 +779,15 @@ async fn try_fallback_prompt_based_tool_calls(
 }
 
 /// Fold a no-tool-call response into history as an intermediate assistant turn,
-/// then inject the given (already-drained) steers. Used at the final boundary so
-/// the loop can continue and the model incorporates the steers (mirrors codex's
+/// then inject the pending steer. Used at the final boundary so the loop can
+/// continue and the model incorporates the steer (mirrors codex's
 /// `needs_follow_up`). The caller emits the LLM-response event beforehand.
-fn fold_response_and_inject_steers(
+fn fold_response_and_inject_steer(
     progress: Option<&TurnEventSender>,
     response: &y_core::provider::ChatResponse,
     iter_reasoning_duration_ms: Option<u64>,
     ctx: &mut ToolExecContext,
-    steers: Vec<crate::chat::SteerMessage>,
+    steer: crate::chat::SteerMessage,
 ) {
     let iter_content = {
         let raw = response.content.clone().unwrap_or_default();
@@ -840,18 +813,18 @@ fn fold_response_and_inject_steers(
     let assistant_msg = result::build_assistant_msg(response, out_content, vec![]);
     ctx.working_history.push(assistant_msg.clone());
     ctx.new_messages.push(assistant_msg);
-    inject_steers(progress, ctx, steers);
+    inject_steer(progress, ctx, steer);
 }
 
 /// Drain the session's follow-up queue and inject each entry into the
 /// running conversation as a user message after the agent's natural stop.
 ///
 /// Returns `true` if follow-ups were injected (the loop should continue),
-/// `false` if the queue was empty (the loop should finalize).
+/// `false` if no input remained (the loop should finalize).
 ///
 /// The current LLM response is folded into history as an intermediate
 /// assistant turn before injecting the follow-up user messages.
-fn drain_and_inject_follow_ups(
+async fn inject_next_run_input(
     container: &ServiceContainer,
     progress: Option<&TurnEventSender>,
     response: &y_core::provider::ChatResponse,
@@ -861,10 +834,27 @@ fn drain_and_inject_follow_ups(
     ctx: &mut ToolExecContext,
     agent_name: &str,
 ) -> bool {
-    let Some(follow_up) =
-        crate::ChatService::take_next_follow_up_or_close(container, &ctx.session_id)
+    let Some(next_input) =
+        crate::ChatService::take_next_run_input_or_close(container, &ctx.session_id).await
     else {
         return false;
+    };
+
+    let follow_up = match next_input {
+        crate::chat::PendingRunInput::Steer(steer) => {
+            result::emit_llm_response(
+                progress,
+                response,
+                data,
+                ctx.iteration,
+                vec![],
+                context_window,
+                agent_name,
+            );
+            fold_response_and_inject_steer(progress, response, reasoning_duration_ms, ctx, steer);
+            return true;
+        }
+        crate::chat::PendingRunInput::FollowUp(follow_up) => follow_up,
     };
 
     // Emit the current response as an intermediate turn.
@@ -983,37 +973,36 @@ mod tests {
     }
 
     #[test]
-    fn inject_steers_appends_user_messages_and_records_boundary() {
+    fn inject_steer_appends_user_message_and_records_boundary() {
         // Two completed iterations already, so the injection boundary is 2.
         let mut ctx = make_test_ctx(SessionId("s".into()), vec!["a\n".into(), "b\n".into()]);
         let (tx, mut rx) = crate::chat::TurnEventSender::channel();
-        let s1 = crate::chat::SteerMessage::new("steer one".into());
-        let s2 = crate::chat::SteerMessage::new("steer two".into());
-        let (id1, id2) = (s1.id.clone(), s2.id.clone());
+        let steer = crate::chat::SteerMessage::new("steer one".into());
+        let steer_id = steer.id.clone();
 
-        super::inject_steers(Some(&tx), &mut ctx, vec![s1, s2]);
+        super::inject_steer(Some(&tx), &mut ctx, steer);
 
-        assert_eq!(ctx.working_history.len(), 2);
+        assert_eq!(ctx.working_history.len(), 1);
         assert_eq!(ctx.working_history[0].role, Role::User);
         assert_eq!(ctx.working_history[0].content, "steer one");
-        assert_eq!(ctx.working_history[1].content, "steer two");
 
-        // Each injected user message is tagged so the GUI renders it as an
+        // The injected user message is tagged so the GUI renders it as an
         // inline steer chip rather than a normal user bubble.
         assert_eq!(ctx.working_history[0].metadata["kind"], "steer");
-        assert_eq!(ctx.working_history[0].metadata["steer_id"], id1.as_str());
-        assert_eq!(ctx.working_history[1].metadata["steer_id"], id2.as_str());
+        assert_eq!(
+            ctx.working_history[0].metadata["steer_id"],
+            steer_id.as_str()
+        );
 
-        assert_eq!(ctx.injected_steers.len(), 2);
+        assert_eq!(ctx.injected_steers.len(), 1);
         assert_eq!(ctx.injected_steers[0].after_iteration, 2);
-        assert_eq!(ctx.injected_steers[0].steer_id, id1);
-        assert_eq!(ctx.injected_steers[1].steer_id, id2);
+        assert_eq!(ctx.injected_steers[0].steer_id, steer_id);
 
         let mut events = Vec::new();
         while let Ok((ev, _session_id)) = rx.try_recv() {
             events.push(ev);
         }
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
             crate::chat::TurnEvent::SteerInjected { text, .. } if text == "steer one"
@@ -1021,25 +1010,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn drain_and_inject_steers_drains_then_reports_empty() {
+    async fn take_and_inject_steer_consumes_the_single_pending_slot() {
         let (container, _tmp) = make_test_container().await;
         let sid = SessionId("drain-sess".into());
-        crate::ChatService::add_steer(&container, &sid, "hello".into()).await;
-        crate::ChatService::add_steer(&container, &sid, "world".into()).await;
+        crate::ChatService::begin_follow_up_run(&container, &sid);
+        let todo = crate::ChatService::add_follow_up(&container, &sid, "hello".into())
+            .expect("active run should accept TODO");
+        crate::ChatService::steer_follow_up(&container, &sid, &todo.id)
+            .await
+            .expect("TODO should become the pending steer");
 
         let mut ctx = make_test_ctx(sid.clone(), Vec::new());
-        let injected = super::drain_and_inject_steers(&container, None, &mut ctx).await;
+        let injected = super::take_and_inject_steer(&container, None, &mut ctx).await;
         assert!(injected);
-        assert_eq!(ctx.working_history.len(), 2);
-        assert_eq!(ctx.injected_steers.len(), 2);
-        assert!(crate::ChatService::list_steers(&container, &sid)
-            .await
-            .is_empty());
+        assert_eq!(ctx.working_history.len(), 1);
+        assert_eq!(ctx.injected_steers.len(), 1);
 
-        // Nothing left to drain.
-        let again = super::drain_and_inject_steers(&container, None, &mut ctx).await;
+        // Nothing remains in the single pending slot.
+        let again = super::take_and_inject_steer(&container, None, &mut ctx).await;
         assert!(!again);
-        assert_eq!(ctx.working_history.len(), 2);
+        assert_eq!(ctx.working_history.len(), 1);
     }
 
     #[tokio::test]
@@ -1079,16 +1069,19 @@ mod tests {
         let mut ctx = make_test_ctx(sid.clone(), Vec::new());
         let (tx, mut rx) = crate::chat::TurnEventSender::channel();
 
-        assert!(super::drain_and_inject_follow_ups(
-            &container,
-            Some(&tx),
-            &response,
-            &data,
-            128,
-            None,
-            &mut ctx,
-            "test-agent",
-        ));
+        assert!(
+            super::inject_next_run_input(
+                &container,
+                Some(&tx),
+                &response,
+                &data,
+                128,
+                None,
+                &mut ctx,
+                "test-agent",
+            )
+            .await
+        );
 
         assert_eq!(ctx.working_history.len(), 2);
         assert_eq!(ctx.working_history[1].content, "first");

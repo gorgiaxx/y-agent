@@ -45,6 +45,8 @@ pub struct ProviderInfo {
     pub provider_type: String,
     /// Provider capabilities used for request shaping.
     pub capabilities: Vec<ProviderCapability>,
+    /// Configured context-window size in tokens.
+    pub context_window: usize,
 }
 
 /// Request to test a provider configuration.
@@ -149,6 +151,7 @@ impl SystemService {
                 model: m.model.clone(),
                 provider_type: format!("{:?}", m.provider_type),
                 capabilities: m.capabilities.clone(),
+                context_window: m.context_window,
             })
             .collect()
     }

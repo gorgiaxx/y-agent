@@ -280,6 +280,8 @@ export interface TodoItem {
   text: string;
   /** Unix epoch milliseconds when the TODO was enqueued. */
   created_at: number;
+  /** Pending TODOs execute normally; steering TODOs await LLM-boundary injection. */
+  status: 'pending' | 'steering';
 }
 
 /** Emitted when a queued steer is injected at an LLM-call boundary. */
@@ -432,6 +434,7 @@ export interface ProviderInfo {
   model: string;
   provider_type: string;
   capabilities: string[];
+  context_window: number;
 }
 
 /** Snapshot of backend in-memory collection sizes (from `memory_stats`). */

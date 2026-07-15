@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 
 import { useChat } from '../hooks/useChat';
-import { useSteering } from '../hooks/useSteering';
 import { useTodoQueue } from '../hooks/useTodoQueue';
 import { useSessions } from '../hooks/useSessions';
 import { useConfig } from '../hooks/useConfig';
@@ -20,7 +19,6 @@ import type { EditorTab, EditorSurface } from '../components/agents/types';
 
 import {
   ChatContext,
-  SteeringContext,
   TodoQueueContext,
   SessionsContext,
   AgentSessionsContext,
@@ -59,7 +57,6 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
   const sessionHooks = useSessions();
   const agentSessionHooks = useSessions(activeAgentId);
   const chatHooks = useChat(sessionHooks.activeSessionId);
-  const steeringHooks = useSteering();
   const todoQueueHooks = useTodoQueue();
   const configHooks = useConfig();
   const themeCtx = useThemeProvider(configHooks.config.theme);
@@ -210,8 +207,7 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
         <SessionsContext.Provider value={sessionHooks}>
           <AgentSessionsContext.Provider value={agentSessionHooks}>
             <ChatContext.Provider value={chatHooks}>
-              <SteeringContext.Provider value={steeringHooks}>
-                <TodoQueueContext.Provider value={todoQueueHooks}>
+              <TodoQueueContext.Provider value={todoQueueHooks}>
                   <WorkspacesContext.Provider value={workspaceHooks}>
                     <SkillsContext.Provider value={skillHooks}>
                       <KnowledgeContext.Provider value={knowledgeHooks}>
@@ -239,8 +235,7 @@ export function GlobalProviders({ children, onRunWizard }: GlobalProvidersProps)
                       </KnowledgeContext.Provider>
                     </SkillsContext.Provider>
                   </WorkspacesContext.Provider>
-                </TodoQueueContext.Provider>
-              </SteeringContext.Provider>
+              </TodoQueueContext.Provider>
             </ChatContext.Provider>
           </AgentSessionsContext.Provider>
         </SessionsContext.Provider>

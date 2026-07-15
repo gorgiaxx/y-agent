@@ -185,20 +185,6 @@ pub struct ResumePlanRequest {
     pub from_task_id: String,
 }
 
-/// Request body for `POST /api/v1/chat/steer`.
-#[derive(Debug, Deserialize)]
-pub struct SteerAddRequest {
-    pub session_id: String,
-    pub text: String,
-}
-
-/// Request body for `DELETE /api/v1/chat/steer`.
-#[derive(Debug, Deserialize)]
-pub struct SteerDeleteRequest {
-    pub session_id: String,
-    pub steer_id: String,
-}
-
 // ---------------------------------------------------------------------------
 // SseEventSink -- EventSink implementation for SSE transport
 // ---------------------------------------------------------------------------
@@ -1075,14 +1061,19 @@ async fn last_turn_meta(
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Tier 1: in-memory cache.
-    {
+    let cached = {
         let cache = state
             .turn_meta_cache
             .lock()
             .map_err(|_| ApiError::Internal("lock poisoned".into()))?;
-        if let Some(meta) = cache.get(&session_id) {
-            return Ok(Json(serde_json::to_value(meta).unwrap_or_default()));
+        cache.get(&session_id).cloned()
+    };
+    if let Some(meta) = cached {
+        let meta = ChatService::reconcile_turn_meta(&state.container, meta).await;
+        if let Ok(mut cache) = state.turn_meta_cache.lock() {
+            cache.insert(session_id, meta.clone());
         }
+        return Ok(Json(serde_json::to_value(meta).unwrap_or_default()));
     }
 
     // Tier 2: diagnostics database.
@@ -1103,6 +1094,7 @@ async fn last_turn_meta(
                 cache_read_tokens: s.cache_read_tokens,
                 cache_write_tokens: s.cache_write_tokens,
             };
+            let meta = ChatService::reconcile_turn_meta(&state.container, meta).await;
             if let Ok(mut cache) = state.turn_meta_cache.lock() {
                 cache.insert(session_id, meta.clone());
             }
@@ -1110,55 +1102,6 @@ async fn last_turn_meta(
         }
         None => Ok(Json(serde_json::Value::Null)),
     }
-}
-
-// ---------------------------------------------------------------------------
-// Steering queue
-// ---------------------------------------------------------------------------
-
-/// Broadcast a session's current steering queue over SSE so all clients sync.
-async fn broadcast_steer_queue(state: &AppState, session_id: &SessionId) {
-    let queue = ChatService::list_steers(&state.container, session_id).await;
-    let _ = state.event_tx.send(SseEvent::SteerQueueUpdated {
-        session_id: session_id.0.clone(),
-        queue: serde_json::to_value(&queue).unwrap_or_else(|_| serde_json::Value::Array(vec![])),
-    });
-}
-
-/// `POST /api/v1/chat/steer` -- enqueue a steering message for a session.
-async fn steer_add(
-    State(state): State<AppState>,
-    Json(body): Json<SteerAddRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let text = body.text.trim();
-    if text.is_empty() {
-        return Err(ApiError::BadRequest("steer text must not be empty".into()));
-    }
-    let sid = SessionId(body.session_id);
-    let steer = ChatService::add_steer(&state.container, &sid, text.to_string()).await;
-    broadcast_steer_queue(&state, &sid).await;
-    Ok(Json(steer))
-}
-
-/// `DELETE /api/v1/chat/steer` -- remove a pending steering message by id.
-async fn steer_delete(
-    State(state): State<AppState>,
-    Json(body): Json<SteerDeleteRequest>,
-) -> Result<impl IntoResponse, ApiError> {
-    let sid = SessionId(body.session_id);
-    let deleted = ChatService::delete_steer(&state.container, &sid, &body.steer_id).await;
-    broadcast_steer_queue(&state, &sid).await;
-    Ok(Json(serde_json::json!({ "deleted": deleted })))
-}
-
-/// `GET /api/v1/chat/steer/{session_id}` -- list pending steering messages.
-async fn steer_list(
-    State(state): State<AppState>,
-    Path(session_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
-    let sid = SessionId(session_id);
-    let steers = ChatService::list_steers(&state.container, &sid).await;
-    Ok(Json(steers))
 }
 
 // ---------------------------------------------------------------------------
@@ -1175,6 +1118,13 @@ pub struct FollowUpAddRequest {
 /// Request body for `DELETE /api/v1/chat/follow-up`.
 #[derive(Debug, Deserialize)]
 pub struct FollowUpDeleteRequest {
+    pub session_id: String,
+    pub follow_up_id: String,
+}
+
+/// Request body for `POST /api/v1/chat/follow-up/steer`.
+#[derive(Debug, Deserialize)]
+pub struct FollowUpSteerRequest {
     pub session_id: String,
     pub follow_up_id: String,
 }
@@ -1204,6 +1154,32 @@ async fn follow_up_add(
         .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     broadcast_follow_up_queue(&state, &sid);
     Ok(Json(msg))
+}
+
+/// `POST /api/v1/chat/follow-up/steer` -- promote one TODO to the pending steer.
+async fn follow_up_steer(
+    State(state): State<AppState>,
+    Json(body): Json<FollowUpSteerRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(body.session_id);
+    let steer = ChatService::steer_follow_up(&state.container, &sid, &body.follow_up_id)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    broadcast_follow_up_queue(&state, &sid);
+    Ok(Json(steer))
+}
+
+/// `DELETE /api/v1/chat/follow-up/steer` -- return the pending steer to TODO.
+async fn follow_up_unsteer(
+    State(state): State<AppState>,
+    Json(body): Json<FollowUpSteerRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let sid = SessionId(body.session_id);
+    let follow_up = ChatService::unsteer_follow_up(&state.container, &sid, &body.follow_up_id)
+        .await
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    broadcast_follow_up_queue(&state, &sid);
+    Ok(Json(follow_up))
 }
 
 /// `DELETE /api/v1/chat/follow-up` -- remove a pending follow-up message by id.
@@ -1268,8 +1244,10 @@ pub fn router() -> Router<AppState> {
             get(last_turn_meta),
         )
         .route("/api/v1/chat/plan-runs/{session_id}", get(list_plan_runs))
-        .route("/api/v1/chat/steer", post(steer_add).delete(steer_delete))
-        .route("/api/v1/chat/steer/{session_id}", get(steer_list))
+        .route(
+            "/api/v1/chat/follow-up/steer",
+            post(follow_up_steer).delete(follow_up_unsteer),
+        )
         .route(
             "/api/v1/chat/follow-up",
             post(follow_up_add).delete(follow_up_delete),
@@ -1354,24 +1332,13 @@ mod tests {
     }
 
     #[test]
-    fn test_steer_add_request_deserializes() {
-        let req: SteerAddRequest = serde_json::from_value(serde_json::json!({
+    fn test_follow_up_steer_request_deserializes() {
+        let req: FollowUpSteerRequest = serde_json::from_value(serde_json::json!({
             "session_id": "sess-1",
-            "text": "focus on the failing test"
+            "follow_up_id": "todo-123"
         }))
-        .expect("steer add request should deserialize");
+        .expect("follow-up steer request should deserialize");
         assert_eq!(req.session_id, "sess-1");
-        assert_eq!(req.text, "focus on the failing test");
-    }
-
-    #[test]
-    fn test_steer_delete_request_deserializes() {
-        let req: SteerDeleteRequest = serde_json::from_value(serde_json::json!({
-            "session_id": "sess-1",
-            "steer_id": "abc-123"
-        }))
-        .expect("steer delete request should deserialize");
-        assert_eq!(req.session_id, "sess-1");
-        assert_eq!(req.steer_id, "abc-123");
+        assert_eq!(req.follow_up_id, "todo-123");
     }
 }

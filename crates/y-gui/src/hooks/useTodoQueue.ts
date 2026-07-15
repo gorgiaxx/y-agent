@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { logger, transport } from '../lib';
-import type { TodoItem } from '../types';
+import type { SteerMessage, TodoItem } from '../types';
 import { chatBusSubscribers, type ChatBusEvent } from './chatBus';
 import {
   addTodo as addToQueue,
   createTodoQueues,
   getTodoQueue,
+  markTodoPending,
+  markTodoSteering,
   removeTodo as removeFromQueue,
   setTodoQueue,
   type TodoQueues,
@@ -15,6 +17,8 @@ import {
 export interface UseTodoQueueReturn {
   todosFor: (sessionId: string | null) => TodoItem[];
   addTodo: (sessionId: string, text: string) => Promise<void>;
+  steerTodo: (sessionId: string, todoId: string) => Promise<void>;
+  unsteerTodo: (sessionId: string, todoId: string) => Promise<void>;
   deleteTodo: (sessionId: string, todoId: string) => Promise<void>;
 }
 
@@ -28,6 +32,8 @@ export function useTodoQueue(): UseTodoQueueReturn {
         setQueues((prev) => setTodoQueue(prev, event.session_id, event.queue));
       } else if (event.type === 'todo_injected') {
         setQueues((prev) => removeFromQueue(prev, event.session_id, event.todo_id));
+      } else if (event.type === 'steer_injected') {
+        setQueues((prev) => removeFromQueue(prev, event.session_id, event.steer_id));
       } else if (event.type === 'complete' || event.type === 'error') {
         setQueues((prev) => setTodoQueue(prev, event.payload.session_id, []));
       }
@@ -68,8 +74,35 @@ export function useTodoQueue(): UseTodoQueueReturn {
     }
   }, []);
 
+  const steerTodo = useCallback(async (sessionId: string, todoId: string) => {
+    setQueues((prev) => markTodoSteering(prev, sessionId, todoId));
+    try {
+      await transport.invoke<SteerMessage>('chat_steer_follow_up', {
+        sessionId,
+        followUpId: todoId,
+      });
+    } catch (error) {
+      setQueues((prev) => markTodoPending(prev, sessionId, todoId));
+      logger.error('[useTodoQueue] steer TODO failed:', error);
+      throw error;
+    }
+  }, []);
+
+  const unsteerTodo = useCallback(async (sessionId: string, todoId: string) => {
+    try {
+      await transport.invoke<TodoItem>('chat_unsteer_follow_up', {
+        sessionId,
+        followUpId: todoId,
+      });
+      setQueues((prev) => markTodoPending(prev, sessionId, todoId));
+    } catch (error) {
+      logger.error('[useTodoQueue] unsteer TODO failed:', error);
+      throw error;
+    }
+  }, []);
+
   return useMemo(
-    () => ({ todosFor, addTodo, deleteTodo }),
-    [todosFor, addTodo, deleteTodo],
+    () => ({ todosFor, addTodo, steerTodo, unsteerTodo, deleteTodo }),
+    [todosFor, addTodo, steerTodo, unsteerTodo, deleteTodo],
   );
 }

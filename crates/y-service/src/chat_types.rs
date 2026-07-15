@@ -439,11 +439,11 @@ pub type ActivePlanExecutions =
     std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, ActivePlanExecution>>>;
 
 // ---------------------------------------------------------------------------
-// Steering queue
+// Steering
 // ---------------------------------------------------------------------------
 
-/// A queued steering message: user text awaiting injection into a running
-/// turn at the next LLM-call boundary.
+/// A steering message awaiting injection into a running turn at the next
+/// LLM-call boundary.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SteerMessage {
     pub id: String,
@@ -463,10 +463,10 @@ impl SteerMessage {
     }
 }
 
-/// Per-session FIFO queue of pending steering messages, keyed by session id.
-/// Drained at LLM-call boundaries by the agent execution loop.
-pub type SteeringQueues =
-    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<SessionId, Vec<SteerMessage>>>>;
+/// Per-session pending steering slot, keyed by session id. A run can have at
+/// most one pending steer at a time.
+pub type SteeringSlots =
+    std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<SessionId, SteerMessage>>>;
 
 // ---------------------------------------------------------------------------
 // Follow-up queue
@@ -482,6 +482,20 @@ pub struct FollowUpMessage {
     pub text: String,
     /// Unix epoch milliseconds when the follow-up was enqueued.
     pub created_at: i64,
+    /// Current queue state. Steering items stay visible until injection.
+    #[serde(default)]
+    pub status: FollowUpStatus,
+}
+
+/// Lifecycle state for an active-run TODO.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpStatus {
+    /// Waiting for normal FIFO follow-up execution.
+    #[default]
+    Pending,
+    /// Reserved for injection at the next LLM boundary.
+    Steering,
 }
 
 /// Runtime state for one session's TODO/follow-up queue.
@@ -501,6 +515,39 @@ pub enum FollowUpQueueError {
     RunNotAccepting { session_id: SessionId },
 }
 
+/// Error returned when a queued TODO cannot be promoted to the pending steer.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SteerFollowUpError {
+    #[error("session {session_id} is not accepting TODO items")]
+    RunNotAccepting { session_id: SessionId },
+    #[error("TODO item {follow_up_id} was not found in session {session_id}")]
+    TodoNotFound {
+        session_id: SessionId,
+        follow_up_id: String,
+    },
+    #[error("session {session_id} already has a pending steer")]
+    SteerAlreadyPending { session_id: SessionId },
+}
+
+/// Error returned when a pending steer cannot be moved back to the TODO queue.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum UnsteerFollowUpError {
+    #[error("session {session_id} is not accepting TODO items")]
+    RunNotAccepting { session_id: SessionId },
+    #[error("TODO item {follow_up_id} is not the pending steer in session {session_id}")]
+    SteerNotFound {
+        session_id: SessionId,
+        follow_up_id: String,
+    },
+}
+
+/// The next user input selected at a natural LLM stop boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingRunInput {
+    Steer(SteerMessage),
+    FollowUp(FollowUpMessage),
+}
+
 impl FollowUpMessage {
     /// Build a follow-up with a freshly generated id and current timestamp.
     pub fn new(text: String) -> Self {
@@ -508,6 +555,7 @@ impl FollowUpMessage {
             id: Uuid::new_v4().to_string(),
             text,
             created_at: chrono::Utc::now().timestamp_millis(),
+            status: FollowUpStatus::Pending,
         }
     }
 }

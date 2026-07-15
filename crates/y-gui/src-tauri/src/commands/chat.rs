@@ -533,71 +533,6 @@ pub async fn chat_cancel(state: State<'_, AppState>, run_id: String) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
-// Steering queue commands
-// ---------------------------------------------------------------------------
-
-/// Payload emitted on `chat:steer_queue` when a session's queue changes.
-#[derive(Debug, Serialize, Clone)]
-pub struct SteerQueuePayload {
-    pub session_id: String,
-    pub queue: Vec<SteerMessage>,
-}
-
-/// Emit the current steering queue for a session so the UI stays in sync.
-async fn emit_steer_queue(app: &AppHandle, state: &AppState, session_id: &SessionId) {
-    let queue = ChatService::list_steers(&state.container, session_id).await;
-    let _ = app.emit(
-        "chat:steer_queue",
-        SteerQueuePayload {
-            session_id: session_id.0.clone(),
-            queue,
-        },
-    );
-}
-
-/// Enqueue a steering message for a session (injected at the next LLM boundary).
-#[tauri::command]
-pub async fn chat_add_steer(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    text: String,
-) -> Result<SteerMessage, String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Err("steer text must not be empty".to_string());
-    }
-    let sid = SessionId(session_id);
-    let steer = ChatService::add_steer(&state.container, &sid, trimmed.to_string()).await;
-    emit_steer_queue(&app, &state, &sid).await;
-    Ok(steer)
-}
-
-/// Remove a pending steering message by id.
-#[tauri::command]
-pub async fn chat_delete_steer(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    steer_id: String,
-) -> Result<bool, String> {
-    let sid = SessionId(session_id);
-    let deleted = ChatService::delete_steer(&state.container, &sid, &steer_id).await;
-    emit_steer_queue(&app, &state, &sid).await;
-    Ok(deleted)
-}
-
-/// List the pending steering messages for a session (FIFO order).
-#[tauri::command]
-pub async fn chat_list_steers(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> Result<Vec<SteerMessage>, String> {
-    let sid = SessionId(session_id);
-    Ok(ChatService::list_steers(&state.container, &sid).await)
-}
-
-// ---------------------------------------------------------------------------
 // Follow-up queue commands
 // ---------------------------------------------------------------------------
 
@@ -637,6 +572,38 @@ pub async fn chat_add_follow_up(
         .map_err(|error| error.to_string())?;
     emit_follow_up_queue(&app, &state, &sid);
     Ok(msg)
+}
+
+/// Promote one queued TODO to the session's single pending steer.
+#[tauri::command]
+pub async fn chat_steer_follow_up(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    follow_up_id: String,
+) -> Result<SteerMessage, String> {
+    let sid = SessionId(session_id);
+    let steer = ChatService::steer_follow_up(&state.container, &sid, &follow_up_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    emit_follow_up_queue(&app, &state, &sid);
+    Ok(steer)
+}
+
+/// Return the session's pending steer to its original TODO position.
+#[tauri::command]
+pub async fn chat_unsteer_follow_up(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    follow_up_id: String,
+) -> Result<FollowUpMessage, String> {
+    let sid = SessionId(session_id);
+    let follow_up = ChatService::unsteer_follow_up(&state.container, &sid, &follow_up_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    emit_follow_up_queue(&app, &state, &sid);
+    Ok(follow_up)
 }
 
 /// Remove a pending follow-up message by id.
@@ -683,14 +650,19 @@ pub async fn session_last_turn_meta(
     session_id: String,
 ) -> Result<Option<TurnMeta>, String> {
     // --- Tier 1: in-memory cache ---
-    {
+    let cached = {
         let cache = state
             .turn_meta_cache
             .lock()
             .map_err(|_| "lock poisoned".to_string())?;
-        if let Some(meta) = cache.get(&session_id) {
-            return Ok(Some(meta.clone()));
+        cache.get(&session_id).cloned()
+    };
+    if let Some(meta) = cached {
+        let meta = ChatService::reconcile_turn_meta(&state.container, meta).await;
+        if let Ok(mut cache) = state.turn_meta_cache.lock() {
+            cache.insert(session_id, meta.clone());
         }
+        return Ok(Some(meta));
     }
 
     // --- Tier 2: diagnostics database via service layer ---
@@ -710,6 +682,7 @@ pub async fn session_last_turn_meta(
         },
         None => return Ok(None),
     };
+    let meta = ChatService::reconcile_turn_meta(&state.container, meta).await;
 
     // Warm the in-memory cache so subsequent switches are instant.
     if let Ok(mut cache) = state.turn_meta_cache.lock() {

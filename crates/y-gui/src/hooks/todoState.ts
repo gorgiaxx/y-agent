@@ -17,13 +17,17 @@ export function setTodoQueue(
   sessionId: string,
   queue: TodoItem[],
 ): TodoQueues {
-  if (queue.length === 0) {
+  const normalized = queue.map((item) => ({
+    ...item,
+    status: item.status ?? 'pending',
+  }));
+  if (normalized.length === 0) {
     if (!(sessionId in state)) return state;
     const next = { ...state };
     delete next[sessionId];
     return next;
   }
-  return { ...state, [sessionId]: queue };
+  return { ...state, [sessionId]: normalized };
 }
 
 /** Append an optimistic TODO without duplicating its authoritative echo. */
@@ -34,7 +38,43 @@ export function addTodo(
 ): TodoQueues {
   const existing = state[sessionId] ?? [];
   if (existing.some((candidate) => candidate.id === item.id)) return state;
-  return { ...state, [sessionId]: [...existing, item] };
+  return {
+    ...state,
+    [sessionId]: [...existing, { ...item, status: item.status ?? 'pending' }],
+  };
+}
+
+function setTodoStatus(
+  state: TodoQueues,
+  sessionId: string,
+  todoId: string,
+  status: TodoItem['status'],
+): TodoQueues {
+  const existing = state[sessionId];
+  if (!existing) return state;
+  let changed = false;
+  const queue = existing.map((item) => {
+    if (item.id !== todoId || item.status === status) return item;
+    changed = true;
+    return { ...item, status };
+  });
+  return changed ? { ...state, [sessionId]: queue } : state;
+}
+
+export function markTodoSteering(
+  state: TodoQueues,
+  sessionId: string,
+  todoId: string,
+): TodoQueues {
+  return setTodoStatus(state, sessionId, todoId, 'steering');
+}
+
+export function markTodoPending(
+  state: TodoQueues,
+  sessionId: string,
+  todoId: string,
+): TodoQueues {
+  return setTodoStatus(state, sessionId, todoId, 'pending');
 }
 
 export function removeTodo(

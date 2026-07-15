@@ -77,9 +77,9 @@ pub struct SessionState {
     /// Control channels for approved plans whose phases are executing.
     pub active_plan_executions: crate::chat_types::ActivePlanExecutions,
 
-    /// Per-session steering queues. Holds user messages enqueued while a turn
-    /// is streaming; drained and injected at LLM-call boundaries.
-    pub steering_queues: crate::chat::SteeringQueues,
+    /// Per-session pending steering slots. A TODO promoted by the user is
+    /// injected at the next LLM-call boundary.
+    pub steering_slots: crate::chat::SteeringSlots,
 
     /// Per-session follow-up queues. Holds user messages enqueued while a
     /// turn is streaming but intended for processing after the run stops.
@@ -99,7 +99,7 @@ impl Default for SessionState {
             pending_permissions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             pending_plan_reviews: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             active_plan_executions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            steering_queues: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            steering_slots: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             follow_up_queues: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
             session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
@@ -1851,6 +1851,7 @@ mod tests {
                 capabilities: vec![],
                 max_concurrency: 5,
                 context_window: 128_000,
+                max_output_tokens: None,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
                 api_key: None,
@@ -1889,6 +1890,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 5,
                     context_window: 128_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     api_key: None,
@@ -1928,6 +1930,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 2,
                     context_window: 32_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     api_key: None,
@@ -1978,6 +1981,7 @@ mod tests {
                 capabilities: vec![],
                 max_concurrency: 1,
                 context_window: 32_000,
+                max_output_tokens: None,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
                 api_key: Some("sk-test".into()),
@@ -2041,6 +2045,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 3,
                     context_window: 64_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     api_key: None,

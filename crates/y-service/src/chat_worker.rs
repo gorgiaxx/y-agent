@@ -279,7 +279,7 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
 
             // Cancellation and provider errors can bypass the natural
             // empty-queue boundary. Close acceptance before the terminal event.
-            ChatService::finish_follow_up_run(&container, &sid_clone);
+            ChatService::finish_follow_up_run(&container, &sid_clone).await;
 
             match turn_result {
                 Ok(result) => {
@@ -338,7 +338,7 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
         let final_run_id = match result {
             Ok(rid) => rid,
             Err(payload) => {
-                ChatService::finish_follow_up_run(&container, &sid_clone);
+                ChatService::finish_follow_up_run(&container, &sid_clone).await;
                 let detail = panic_message(payload.as_ref());
                 let location = take_panic_location();
                 let location_suffix = location

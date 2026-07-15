@@ -15,7 +15,6 @@ import type {
   ChatErrorPayload,
   ChatStartedPayload,
   ProgressPayload,
-  SteerMessage,
   TodoItem,
 } from '../types';
 import {
@@ -50,7 +49,6 @@ export type ChatBusEvent =
   | { type: 'tool_start'; session_id: string; name: string; input_preview: string; agent_name?: string; sub_session?: boolean }
   | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown>; agent_name?: string; sub_session?: boolean }
   | { type: 'steer_injected'; run_id: string; session_id: string; steer_id: string; text: string }
-  | { type: 'steer_queue'; session_id: string; queue: SteerMessage[] }
   | { type: 'todo_injected'; run_id: string; session_id: string; todo_id: string; text: string }
   | { type: 'todo_queue'; session_id: string; queue: TodoItem[] }
   | { type: 'heartbeat'; run_id: string; session_id: string };
@@ -289,23 +287,14 @@ async function initialiseChatBus() {
   });
   chatUnlistenFns.push(u3);
 
-  const u4 = await transport.listen<{ session_id: string; queue: SteerMessage[] }>(
-    'chat:steer_queue',
-    (e) => {
-      const { session_id, queue } = e.payload;
-      notifyChatSubscribers({ type: 'steer_queue', session_id, queue: queue ?? [] });
-    },
-  );
-  chatUnlistenFns.push(u4);
-
-  const u5 = await transport.listen<{ session_id: string; queue: TodoItem[] }>(
+  const u4 = await transport.listen<{ session_id: string; queue: TodoItem[] }>(
     'chat:follow_up_queue',
     (e) => {
       const { session_id, queue } = e.payload;
       notifyChatSubscribers({ type: 'todo_queue', session_id, queue: queue ?? [] });
     },
   );
-  chatUnlistenFns.push(u5);
+  chatUnlistenFns.push(u4);
 }
 
 // Kick off immediately so events are never missed due to mount timing.
