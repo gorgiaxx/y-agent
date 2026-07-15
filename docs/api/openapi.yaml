@@ -1021,30 +1021,32 @@ paths:
                 items:
                   type: object
 
-  /api/v1/chat/steer:
+  /api/v1/chat/follow-up/steer:
     post:
-      operationId: addSteer
+      operationId: steerFollowUp
       tags: [Chat]
-      summary: Enqueue a steering message for a session
+      summary: Promote one queued TODO to the pending steer
       description: |
-        Steering messages are injected at the next LLM boundary, allowing
-        the user to redirect an in-progress turn without interrupting it.
-        Triggers a `chat:steer_queue` SSE event.
+        Marks the selected TODO as `steering` and assigns it to the session's
+        single pending steer slot. The TODO remains visible until the steer is
+        injected at the next LLM boundary. A second promotion is rejected
+        while a steer is already pending. Triggers a
+        `chat:follow_up_queue` SSE event.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [session_id, text]
+              required: [session_id, follow_up_id]
               properties:
                 session_id:
                   type: string
-                text:
+                follow_up_id:
                   type: string
       responses:
         "200":
-          description: The added steering message
+          description: The promoted steering message
           content:
             application/json:
               schema:
@@ -1052,48 +1054,34 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
     delete:
-      operationId: deleteSteer
+      operationId: unsteerFollowUp
       tags: [Chat]
-      summary: Remove a pending steering message by id
+      summary: Return the pending steer to the TODO queue
+      description: |
+        Changes the selected TODO from `steering` back to `pending` if the
+        steer has not yet been injected. The TODO keeps its original queue
+        position. Triggers a `chat:follow_up_queue` SSE event.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [session_id, steer_id]
+              required: [session_id, follow_up_id]
               properties:
                 session_id:
                   type: string
-                steer_id:
+                follow_up_id:
                   type: string
       responses:
         "200":
-          description: Whether the steer was deleted
+          description: The restored pending TODO
           content:
             application/json:
               schema:
                 type: object
-                properties:
-                  deleted:
-                    type: boolean
-
-  /api/v1/chat/steer/{session_id}:
-    get:
-      operationId: listSteers
-      tags: [Chat]
-      summary: List pending steering messages for a session (FIFO order)
-      parameters:
-        - $ref: "#/components/parameters/SessionId"
-      responses:
-        "200":
-          description: Steering message list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /api/v1/chat/follow-up:
     post:
@@ -1101,8 +1089,8 @@ paths:
       tags: [Chat]
       summary: Enqueue a follow-up message for a session
       description: |
-        Follow-up messages are processed after the current run stops,
-        starting a new turn automatically. Triggers a
+        Follow-up messages are processed in FIFO order after the current task
+        naturally stops. Triggers a
         `chat:follow_up_queue` SSE event.
       requestBody:
         required: true
