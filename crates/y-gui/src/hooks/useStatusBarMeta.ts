@@ -43,6 +43,13 @@ interface UseStatusBarMetaParams {
   rootAgentNames?: string[];
 }
 
+export function shouldApplyMessageStatusFallback(
+  activeSessionId: string | null,
+  authoritativeSessionId: string | null,
+): boolean {
+  return activeSessionId !== null && authoritativeSessionId !== activeSessionId;
+}
+
 export function useStatusBarMeta({
   activeSessionId,
   messages,
@@ -53,6 +60,7 @@ export function useStatusBarMeta({
   rootAgentNames = [DEFAULT_ROOT_AGENT_NAME],
 }: UseStatusBarMetaParams): StatusBarMeta {
   const [meta, setMeta] = useState<StatusBarMeta>({});
+  const authoritativeSessionRef = useRef<string | null>(null);
 
   // Track last response metadata for status bar.
   const applyMeta = useCallback((turnMeta: TurnMeta | null) => {
@@ -77,15 +85,35 @@ export function useStatusBarMeta({
     });
   }, []);
 
+  const applyFallbackMeta = useCallback((fallback: StatusBarMeta) => {
+    startTransition(() => {
+      setMeta((previous) => ({
+        ...fallback,
+        providerId: fallback.providerId ?? previous.providerId,
+      }));
+    });
+  }, []);
+
   // On session switch: restore from backend-cached metadata.
   useEffect(() => {
+    authoritativeSessionRef.current = null;
+    applyMeta(null);
     if (!activeSessionId) {
-      applyMeta(null);
       return;
     }
+    let cancelled = false;
     transport.invoke<TurnMeta | null>('session_last_turn_meta', { sessionId: activeSessionId })
-      .then(applyMeta)
-      .catch(() => applyMeta(null));
+      .then((turnMeta) => {
+        if (cancelled) return;
+        if (turnMeta) authoritativeSessionRef.current = activeSessionId;
+        applyMeta(turnMeta);
+      })
+      .catch(() => {
+        if (!cancelled) applyMeta(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [activeSessionId, applyMeta]);
 
   // Listen directly to chat:complete events for status bar meta.
@@ -105,6 +133,7 @@ export function useStatusBarMeta({
       const payload = e.payload;
       // Only update if the event belongs to the currently viewed session.
       if (payload.session_id !== activeSessionIdRef.current) return;
+      authoritativeSessionRef.current = payload.session_id;
       startTransition(() => {
         setMeta({
           provider: payload.model || payload.provider_id || undefined,
@@ -136,6 +165,7 @@ export function useStatusBarMeta({
         // Context occupancy is the total prompt size (fresh + cache); fall back
         // to fresh input_tokens for older events without the field.
         const occupancy = ev.context_tokens_used ?? ev.input_tokens;
+        authoritativeSessionRef.current = activeSessionIdRef.current;
         startTransition(() => {
           setMeta((prev) => ({
             ...prev,
@@ -159,6 +189,10 @@ export function useStatusBarMeta({
   // Guarded: skip while streaming or loading.
   useEffect(() => {
     if (isStreaming || isLoadingMessages) return;
+    if (!shouldApplyMessageStatusFallback(
+      activeSessionId,
+      authoritativeSessionRef.current,
+    )) return;
 
     const lastAssistant = [...messages].reverse().find(
       (m) => m.role === 'assistant' && !m.id?.startsWith('streaming-'),
@@ -187,10 +221,9 @@ export function useStatusBarMeta({
       ?? (usage?.cache_write_tokens as number | undefined);
 
     if (model || tokens || cost != null || contextWindow != null) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMeta((prev) => ({
+      applyFallbackMeta({
         provider: model || undefined,
-        providerId: providerId || prev.providerId,
+        providerId: providerId || undefined,
         tokens: tokens && contextTokensUsed
           ? { input: contextTokensUsed, output: tokens.output }
           : tokens,
@@ -199,9 +232,15 @@ export function useStatusBarMeta({
         contextTokensUsed: contextTokensUsed ?? undefined,
         cacheReadTokens,
         cacheWriteTokens,
-      }));
+      });
     }
-  }, [messages, isStreaming, isLoadingMessages]);
+  }, [
+    activeSessionId,
+    applyFallbackMeta,
+    messages,
+    isStreaming,
+    isLoadingMessages,
+  ]);
 
   return meta;
 }
