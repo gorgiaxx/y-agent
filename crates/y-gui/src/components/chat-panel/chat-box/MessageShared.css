@@ -154,6 +154,50 @@
   flex-shrink: 0;
 }
 
+.feedback-correction {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+}
+
+.feedback-correction textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.feedback-correction-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-xs);
+}
+
+.feedback-submit {
+  color: var(--accent);
+}
+
+.feedback-error {
+  margin-top: var(--space-xs);
+  color: var(--status-error, #d94c4c);
+  font-size: 12px;
+}
+
+.message-bubble:has(.feedback-correction) .message-actions,
+.message-bubble:has(.feedback-error) .message-actions {
+  opacity: 1;
+}
+
 /* ==========================================================================
    Markdown prose (assistant / system)
    ========================================================================== */

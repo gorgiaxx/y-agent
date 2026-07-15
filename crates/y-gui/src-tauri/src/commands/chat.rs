@@ -59,6 +59,7 @@ fn is_default_chat_kind(kind: &str) -> bool {
 pub struct ChatCompletePayload {
     pub run_id: String,
     pub session_id: String,
+    pub trace_id: Option<uuid::Uuid>,
     pub content: String,
     pub model: String,
     pub provider_id: Option<String>,
@@ -74,7 +75,29 @@ pub struct ChatCompletePayload {
     pub context_tokens_used: u64,
 }
 
-/// Tool call summary in the completion payload.
+/// Persist idempotent diagnostics-trace feedback for governed evolution.
+#[tauri::command]
+pub async fn chat_feedback(
+    state: State<'_, AppState>,
+    feedback_id: uuid::Uuid,
+    trace_id: uuid::Uuid,
+    score: f64,
+    comment: Option<String>,
+) -> Result<y_service::evolution_feedback::EvolutionFeedbackOutcome, String> {
+    y_service::evolution_feedback::EvolutionFeedbackService::new(
+        state.container.diagnostics.store(),
+        Arc::clone(&state.container.skill_evolution_service),
+    )
+    .record(y_service::evolution_feedback::EvolutionFeedbackInput {
+        feedback_id,
+        trace_id,
+        score,
+        comment,
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 /// Tool call summary in the completion payload.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCallInfo {
@@ -1469,6 +1492,7 @@ mod tests {
 
         assert_eq!(typed.run_id, "run-1");
         assert_eq!(typed.session_id, "session-1");
+        assert!(typed.trace_id.is_none());
         assert_eq!(typed.model, "");
         assert_eq!(typed.input_tokens, 0);
         assert_eq!(typed.output_tokens, 0);

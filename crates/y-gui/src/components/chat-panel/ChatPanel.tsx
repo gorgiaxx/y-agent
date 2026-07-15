@@ -80,13 +80,15 @@ function buildDisplayItems(
   error: string | null,
 ): DisplayItem[] {
   const items: DisplayItem[] = [];
-  // The global `error` state and the message's `stream_error` may differ in
-  // their string representation: the chat:error event wraps the raw message in
-  // `TurnError::LlmError` (`"LLM error: {msg}"`), while the backend persists
-  // the raw `message` as `stream_error`. Check containment both ways so the
-  // error is not rendered twice (once in the bubble, once as a banner).
+  // The terminal failure bubble is the authoritative display for the current
+  // run. Event and persisted errors may use completely different wording, so
+  // do not rely on text equality for the final message. Keep text matching for
+  // older messages so unrelated load/operation errors still get a banner.
+  const terminalStreamError = messages[messages.length - 1]?.metadata?.stream_error;
+  const terminalErrorAlreadyRendered = typeof terminalStreamError === 'string'
+    && terminalStreamError.length > 0;
   const errorAlreadyRenderedInMessage = error
-    ? messages.some((message) => {
+    ? terminalErrorAlreadyRendered || messages.some((message) => {
       const se = message.metadata?.stream_error;
       if (typeof se !== 'string' || se.length === 0) return false;
       return se === error || error.includes(se) || se.includes(error);

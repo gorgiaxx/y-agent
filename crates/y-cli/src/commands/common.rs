@@ -50,6 +50,7 @@ pub(crate) async fn run_single_turn(
         request_mode: y_core::provider::RequestMode::TextChat,
         working_directory,
         knowledge_collections: vec![],
+        skills: vec![],
         thinking: None,
         plan_mode: None,
         operation_mode: y_service::chat_types::OperationMode::Default,

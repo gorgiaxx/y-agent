@@ -83,6 +83,15 @@ pub struct ChatResponse {
     pub cost_usd: f64,
     pub tool_calls: Vec<ToolCallRecord>,
     pub iterations: usize,
+    pub trace_id: Option<uuid::Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeedbackRequest {
+    pub feedback_id: uuid::Uuid,
+    pub trace_id: uuid::Uuid,
+    pub score: f64,
+    pub comment: Option<String>,
 }
 
 /// Tool call record in the response.
@@ -339,6 +348,7 @@ async fn chat_turn(
         .map_err(|e| ApiError::Internal(format!("{e}")))?;
 
     Ok(Json(ChatResponse {
+        trace_id: result.trace_id,
         content: result.content,
         model: result.model,
         session_id: session_id.0,
@@ -356,6 +366,37 @@ async fn chat_turn(
             .collect(),
         iterations: result.iterations,
     }))
+}
+
+/// `POST /api/v1/chat/feedback` -- persist idempotent trace-linked user feedback.
+async fn chat_feedback(
+    State(state): State<AppState>,
+    Json(body): Json<FeedbackRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let service = y_service::evolution_feedback::EvolutionFeedbackService::new(
+        state.container.diagnostics.store(),
+        Arc::clone(&state.container.skill_evolution_service),
+    );
+    let outcome = service
+        .record(y_service::evolution_feedback::EvolutionFeedbackInput {
+            feedback_id: body.feedback_id,
+            trace_id: body.trace_id,
+            score: body.score,
+            comment: body.comment,
+        })
+        .await
+        .map_err(|error| match error {
+            y_service::evolution_feedback::EvolutionFeedbackError::TraceNotFound { .. } => {
+                ApiError::NotFound(error.to_string())
+            }
+            y_service::evolution_feedback::EvolutionFeedbackError::Validation { .. } => {
+                ApiError::BadRequest(error.to_string())
+            }
+            y_service::evolution_feedback::EvolutionFeedbackError::Storage { .. } => {
+                ApiError::Internal(error.to_string())
+            }
+        })?;
+    Ok(Json(outcome))
 }
 
 /// `POST /api/v1/chat/send` -- async chat turn, returns immediately, streams via SSE.
@@ -1195,6 +1236,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/chat", post(chat_turn))
         .route("/api/v1/chat/send", post(chat_send))
+        .route("/api/v1/chat/feedback", post(chat_feedback))
         .route("/api/v1/chat/cancel", post(chat_cancel))
         .route("/api/v1/chat/undo", post(chat_undo))
         .route("/api/v1/chat/resend", post(chat_resend))
@@ -1238,6 +1280,22 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn feedback_request_requires_stable_feedback_and_trace_ids() {
+        let feedback_id = uuid::Uuid::new_v4();
+        let trace_id = uuid::Uuid::new_v4();
+        let request: FeedbackRequest = serde_json::from_value(serde_json::json!({
+            "feedback_id": feedback_id,
+            "trace_id": trace_id,
+            "score": 0.0,
+            "comment": "The answer missed the requested constraint"
+        }))
+        .unwrap();
+
+        assert_eq!(request.feedback_id, feedback_id);
+        assert_eq!(request.trace_id, trace_id);
+    }
 
     #[test]
     fn test_resume_plan_request_deserializes() {

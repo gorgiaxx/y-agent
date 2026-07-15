@@ -510,6 +510,7 @@ export function useChatStreaming(
                   cost: payload.cost_usd,
                   context_window: payload.context_window,
                   metadata: {
+                    ...(payload.trace_id ? { trace_id: payload.trace_id } : {}),
                     tool_results:
                       mergeToolResultMetadata(
                         [],

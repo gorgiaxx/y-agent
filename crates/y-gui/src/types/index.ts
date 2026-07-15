@@ -91,6 +91,7 @@ export type ChatStartedPayload = ChatStarted;
 export interface ChatCompletePayload {
   run_id: string;
   session_id: string;
+  trace_id?: string;
   content: string;
   model: string;
   provider_id?: string;

@@ -385,6 +385,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             // Chat
             commands::chat::chat_send,
+            commands::chat::chat_feedback,
             commands::chat::chat_cancel,
             commands::chat::chat_add_steer,
             commands::chat::chat_delete_steer,

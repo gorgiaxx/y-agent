@@ -12,7 +12,8 @@
  *   AssistantMessageShell -- shared layout wrapper for assistant messages
  */
 
-import { useState, useCallback, lazy, memo, Suspense } from 'react';
+import { useState, useCallback, useRef, lazy, memo, Suspense } from 'react';
+import type { FormEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,6 +28,11 @@ import {
 import type { Message } from '../../../types';
 import { escapeThinkTags, extractThinkTags } from './messageUtils';
 import { formatMessageTime } from '../../../utils/formatMessageTime';
+import {
+  createFeedbackId,
+  submitAssistantFeedback,
+  type AssistantFeedbackRating,
+} from '../../../lib/assistantFeedback';
 import './MessageShared.css';
 import './AssistantBubble.css';
 
@@ -126,8 +132,8 @@ export const MarkdownSegment = memo(function MarkdownSegment(
 export interface ActionBarProps {
   /** Text content to copy / share (typically the final answer, think-tags stripped). */
   content: string;
-  /** Session ID for future feedback submission. */
-  sessionId?: string;
+  /** Diagnostics trace receiving explicit evolution feedback. */
+  traceId?: string;
   /** Fork the conversation at this message index. */
   onFork?: (messageIndex: number) => void;
   /** 0-based index of this message in the display list (used for forking). */
@@ -135,9 +141,14 @@ export interface ActionBarProps {
 }
 
 /** Action bar shown on hover for assistant / system messages. */
-export function ActionBar({ content, onFork, messageIndex }: ActionBarProps) {
+export function ActionBar({ content, traceId, onFork, messageIndex }: ActionBarProps) {
   const [copied, setCopied] = useState(false);
-  const [feedback, setFeedback] = useState<'good' | 'bad' | null>(null);
+  const [feedback, setFeedback] = useState<AssistantFeedbackRating | null>(null);
+  const [pendingFeedback, setPendingFeedback] = useState<AssistantFeedbackRating | null>(null);
+  const [showCorrection, setShowCorrection] = useState(false);
+  const [correction, setCorrection] = useState('');
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  const feedbackIds = useRef<Partial<Record<AssistantFeedbackRating, string>>>({});
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(content).then(() => {
@@ -161,43 +172,118 @@ export function ActionBar({ content, onFork, messageIndex }: ActionBarProps) {
     }
   }, [onFork, messageIndex]);
 
+  const submitFeedback = useCallback(async (
+    rating: AssistantFeedbackRating,
+    comment?: string,
+  ) => {
+    if (!traceId || pendingFeedback) return;
+    const feedbackId = feedbackIds.current[rating] ?? createFeedbackId();
+    feedbackIds.current[rating] = feedbackId;
+    setPendingFeedback(rating);
+    setFeedbackError(null);
+    try {
+      await submitAssistantFeedback({ traceId, feedbackId, rating, comment });
+      setFeedback(rating);
+      setShowCorrection(false);
+      setCorrection('');
+    } catch (error) {
+      setFeedbackError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPendingFeedback(null);
+    }
+  }, [pendingFeedback, traceId]);
+
+  const handleBadFeedback = useCallback(() => {
+    if (feedback === 'bad') return;
+    setFeedbackError(null);
+    setShowCorrection(true);
+  }, [feedback]);
+
+  const handleCorrectionSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submitFeedback('bad', correction);
+  }, [correction, submitFeedback]);
+
   return (
-    <div className="message-actions">
-      <button className="action-btn" onClick={handleCopy} title="Copy message">
-        {copied ? <Check size={14} /> : <Copy size={14} />}
-        <span className="action-label">{copied ? 'Copied' : 'Copy'}</span>
-      </button>
-
-      <button className="action-btn" onClick={handleShare} title="Share message">
-        <Share2 size={14} />
-        <span className="action-label">Share</span>
-      </button>
-
-      {onFork && messageIndex !== undefined && (
-        <button className="action-btn" onClick={handleFork} title="Fork conversation from here" aria-label="Fork conversation from here">
-          <GitBranch size={14} />
-          <span className="action-label">Fork</span>
+    <>
+      <div className="message-actions">
+        <button className="action-btn" onClick={handleCopy} title="Copy message">
+          {copied ? <Check size={14} /> : <Copy size={14} />}
+          <span className="action-label">{copied ? 'Copied' : 'Copy'}</span>
         </button>
+
+        <button className="action-btn" onClick={handleShare} title="Share message">
+          <Share2 size={14} />
+          <span className="action-label">Share</span>
+        </button>
+
+        {onFork && messageIndex !== undefined && (
+          <button className="action-btn" onClick={handleFork} title="Fork conversation from here" aria-label="Fork conversation from here">
+            <GitBranch size={14} />
+            <span className="action-label">Fork</span>
+          </button>
+        )}
+
+        {traceId && (
+          <>
+            <span className="action-divider" />
+            <button
+              className={`action-btn feedback-btn ${feedback === 'good' ? 'active' : ''}`}
+              onClick={() => void submitFeedback('good')}
+              title="Good response"
+              aria-label="Good response"
+              aria-pressed={feedback === 'good'}
+              disabled={pendingFeedback !== null || feedback === 'good'}
+            >
+              <ThumbsUp size={14} />
+            </button>
+
+            <button
+              className={`action-btn feedback-btn ${feedback === 'bad' ? 'active' : ''}`}
+              onClick={handleBadFeedback}
+              title="Bad response"
+              aria-label="Bad response"
+              aria-pressed={feedback === 'bad'}
+              disabled={pendingFeedback !== null || feedback === 'bad'}
+            >
+              <ThumbsDown size={14} />
+            </button>
+          </>
+        )}
+      </div>
+      {traceId && showCorrection && (
+        <form className="feedback-correction" onSubmit={handleCorrectionSubmit}>
+          <textarea
+            value={correction}
+            onChange={(event) => setCorrection(event.target.value)}
+            placeholder="What should be corrected?"
+            aria-label="Feedback correction"
+            rows={2}
+            autoFocus
+          />
+          <div className="feedback-correction-actions">
+            <button
+              type="button"
+              className="action-btn"
+              onClick={() => {
+                setShowCorrection(false);
+                setFeedbackError(null);
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="action-btn feedback-submit"
+              disabled={!correction.trim() || pendingFeedback !== null}
+            >
+              Submit correction
+            </button>
+          </div>
+        </form>
       )}
-
-      <span className="action-divider" />
-
-      <button
-        className={`action-btn feedback-btn ${feedback === 'good' ? 'active' : ''}`}
-        onClick={() => setFeedback(feedback === 'good' ? null : 'good')}
-        title="Good response"
-      >
-        <ThumbsUp size={14} />
-      </button>
-
-      <button
-        className={`action-btn feedback-btn ${feedback === 'bad' ? 'active' : ''}`}
-        onClick={() => setFeedback(feedback === 'bad' ? null : 'bad')}
-        title="Bad response"
-      >
-        <ThumbsDown size={14} />
-      </button>
-    </div>
+      {feedbackError && <div className="feedback-error" role="alert">{feedbackError}</div>}
+    </>
   );
 }
 
@@ -230,6 +316,9 @@ export function AssistantMessageShell({
 
   // Fallback: strip think tags from the raw content.
   const effectiveCopyContent = copyContent ?? extractThinkTags(message.content).strippedContent;
+  const traceId = typeof message.metadata?.trace_id === 'string'
+    ? message.metadata.trace_id
+    : undefined;
 
   return (
     <div className={`message-bubble ${message.role}`}>
@@ -250,7 +339,12 @@ export function AssistantMessageShell({
 
         {children}
 
-        <ActionBar content={effectiveCopyContent} onFork={onFork} messageIndex={messageIndex} />
+        <ActionBar
+          content={effectiveCopyContent}
+          traceId={traceId}
+          onFork={onFork}
+          messageIndex={messageIndex}
+        />
 
         <div className="message-footer">
           <span className="message-time">

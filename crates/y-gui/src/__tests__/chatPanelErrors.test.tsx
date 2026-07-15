@@ -313,4 +313,32 @@ describe('ChatPanel error dedup with prefix mismatch', () => {
     // No duplicate global error banner.
     expect(html).not.toContain('chat-error');
   });
+
+  it('suppresses the global error banner when the terminal error bubble uses different wording', () => {
+    const persistedError = 'provider stream closed before a final response was received';
+    const eventError = 'LLM request failed after the provider retry budget was exhausted';
+    const messages: Message[] = [
+      userMessage('user-1', 'write a function'),
+      {
+        id: 'error-run-1',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-04-24T00:00:01.000Z',
+        tool_calls: [],
+        metadata: { stream_error: persistedError },
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <ChatPanel
+        messages={messages}
+        isStreaming={false}
+        isLoading={false}
+        error={eventError}
+      />,
+    );
+
+    expect(html).toContain(persistedError);
+    expect(html).not.toContain('chat-error');
+  });
 });

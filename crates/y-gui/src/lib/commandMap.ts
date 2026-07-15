@@ -299,6 +299,8 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
 
   // -- Chat --
   chat_send:           { method: 'POST', path: '/api/v1/chat/send', body: chatSendBody },
+  chat_feedback:       { method: 'POST', path: '/api/v1/chat/feedback',
+                         body: (a) => ({ feedback_id: arg(a, 'feedbackId', 'feedback_id'), trace_id: arg(a, 'traceId', 'trace_id'), score: arg(a, 'score'), comment: arg(a, 'comment') }) },
   chat_cancel:         { method: 'POST', path: '/api/v1/chat/cancel', body: (a) => ({ run_id: a.runId }) },
   chat_undo:           { method: 'POST', path: '/api/v1/chat/undo',
                          body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id'), checkpoint_id: arg(a, 'checkpointId', 'checkpoint_id') }) },

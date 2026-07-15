@@ -127,6 +127,27 @@ describe('HttpTransport contract mapping', () => {
     });
   });
 
+  it('maps trace-linked assistant feedback to the evolution endpoint', async () => {
+    const { calls } = installFetchMock({ duplicate: false });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('chat_feedback', {
+      feedbackId: '22222222-2222-4222-8222-222222222222',
+      traceId: '11111111-1111-4111-8111-111111111111',
+      score: 0,
+      comment: 'The answer ignored the rollback constraint.',
+    });
+
+    expect(calls[0].url).toBe('http://localhost:3000/api/v1/chat/feedback');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      feedback_id: '22222222-2222-4222-8222-222222222222',
+      trace_id: '11111111-1111-4111-8111-111111111111',
+      score: 0,
+      comment: 'The answer ignored the rollback constraint.',
+    });
+  });
+
   it('maps TODO queue additions to the shared follow-up endpoint', async () => {
     const { calls } = installFetchMock({ id: 'todo-1', text: 'run tests', created_at: 1 });
     const transport = new HttpTransport('http://localhost:3000');
