@@ -165,6 +165,45 @@ describe('HttpTransport contract mapping', () => {
     });
   });
 
+  it('maps TODO steering to the atomic follow-up steer endpoint', async () => {
+    const { calls } = installFetchMock({ id: 'todo-1', text: 'run tests', created_at: 1 });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('chat_steer_follow_up', {
+      sessionId: 'session-1',
+      followUpId: 'todo-1',
+    });
+
+    expect(calls[0].url).toBe('http://localhost:3000/api/v1/chat/follow-up/steer');
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      session_id: 'session-1',
+      follow_up_id: 'todo-1',
+    });
+  });
+
+  it('maps TODO steer withdrawal to the same follow-up steer resource', async () => {
+    const { calls } = installFetchMock({
+      id: 'todo-1',
+      text: 'run tests',
+      created_at: 1,
+      status: 'pending',
+    });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('chat_unsteer_follow_up', {
+      sessionId: 'session-1',
+      followUpId: 'todo-1',
+    });
+
+    expect(calls[0].url).toBe('http://localhost:3000/api/v1/chat/follow-up/steer');
+    expect(calls[0].init.method).toBe('DELETE');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      session_id: 'session-1',
+      follow_up_id: 'todo-1',
+    });
+  });
+
   it('routes skill_import to the y-web import endpoint instead of no-oping', async () => {
     const { calls } = installFetchMock({ decision: 'accepted' });
     const transport = new HttpTransport('http://localhost:3000');

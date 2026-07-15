@@ -42,6 +42,7 @@ struct ProviderEntry {
     freeze_manager: Arc<FreezeManager>,
     semaphore: Arc<tokio::sync::Semaphore>,
     max_concurrency: usize,
+    default_max_tokens: Option<u32>,
     default_temperature: Option<f64>,
     default_top_p: Option<f64>,
     metrics: SharedMetrics,
@@ -80,20 +81,29 @@ impl ProviderPoolImpl {
         providers: Vec<Arc<dyn LlmProvider>>,
         config: &ProviderPoolConfig,
     ) -> Self {
-        let sampling_defaults = config
+        let request_defaults = config
             .providers
             .iter()
-            .map(|provider| (provider.id.as_str(), (provider.temperature, provider.top_p)))
+            .map(|provider| {
+                (
+                    provider.id.as_str(),
+                    (
+                        provider.max_output_tokens,
+                        provider.temperature,
+                        provider.top_p,
+                    ),
+                )
+            })
             .collect::<std::collections::HashMap<_, _>>();
 
         let entries: Vec<ProviderEntry> = providers
             .into_iter()
             .map(|p| {
                 let max_conc = p.metadata().max_concurrency;
-                let (default_temperature, default_top_p) = sampling_defaults
+                let (default_max_tokens, default_temperature, default_top_p) = request_defaults
                     .get(p.metadata().id.as_str())
                     .copied()
-                    .unwrap_or((None, None));
+                    .unwrap_or((None, None, None));
                 ProviderEntry {
                     provider: p,
                     freeze_manager: Arc::new(FreezeManager::new(
@@ -102,6 +112,7 @@ impl ProviderPoolImpl {
                     )),
                     semaphore: Arc::new(tokio::sync::Semaphore::new(max_conc)),
                     max_concurrency: max_conc,
+                    default_max_tokens,
                     default_temperature,
                     default_top_p,
                     metrics: Arc::new(ProviderMetrics::new()),
@@ -344,6 +355,7 @@ impl ProviderPoolImpl {
     /// Apply provider-level sampling defaults without overriding explicit request values.
     fn apply_request_defaults(request: &ChatRequest, entry: &ProviderEntry) -> ChatRequest {
         let mut effective_request = request.clone();
+        effective_request.max_tokens = effective_request.max_tokens.or(entry.default_max_tokens);
         effective_request.temperature = effective_request.temperature.or(entry.default_temperature);
         effective_request.top_p = effective_request.top_p.or(entry.default_top_p);
         effective_request
@@ -991,6 +1003,7 @@ mod tests {
                 capabilities: vec![],
                 max_concurrency: 5,
                 context_window: 128_000,
+                max_output_tokens: None,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
                 api_key: None,
@@ -1295,6 +1308,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_provider_max_output_tokens_applies_when_request_omits_limit() {
+        let mut config = provider_config_with_temperature("p1", None);
+        config.providers[0].max_output_tokens = Some(32_000);
+        let (provider, recorded_request) = MockProvider::ok_with_recorder("p1", vec!["gen"]);
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &config);
+        let mut request = test_request();
+        request.max_tokens = None;
+
+        pool.chat_completion(&request, &gen_route())
+            .await
+            .expect("request should succeed");
+
+        let max_tokens = recorded_request
+            .lock()
+            .expect("recorded request lock")
+            .as_ref()
+            .and_then(|captured| captured.max_tokens);
+        assert_eq!(max_tokens, Some(32_000));
+    }
+
+    #[tokio::test]
+    async fn test_explicit_request_max_tokens_overrides_provider_default() {
+        let mut config = provider_config_with_temperature("p1", None);
+        config.providers[0].max_output_tokens = Some(32_000);
+        let (provider, recorded_request) = MockProvider::ok_with_recorder("p1", vec!["gen"]);
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &config);
+        let mut request = test_request();
+        request.max_tokens = Some(2_048);
+
+        pool.chat_completion(&request, &gen_route())
+            .await
+            .expect("request should succeed");
+
+        let max_tokens = recorded_request
+            .lock()
+            .expect("recorded request lock")
+            .as_ref()
+            .and_then(|captured| captured.max_tokens);
+        assert_eq!(max_tokens, Some(2_048));
+    }
+
+    #[tokio::test]
     async fn test_pool_provider_statuses() {
         let pool = ProviderPoolImpl::from_providers(
             vec![MockProvider::ok("p1", vec!["gen"])],
@@ -1326,6 +1381,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 3,
                     context_window: 128_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.005,
                     cost_per_1k_output: 0.015,
                     api_key: Some("sk-test".into()),
@@ -1354,6 +1410,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 3,
                     context_window: 200_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.015,
                     cost_per_1k_output: 0.075,
                     api_key: Some("sk-ant-test".into()),
@@ -1382,6 +1439,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 5,
                     context_window: 1_000_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     api_key: Some("AIza-test".into()),
@@ -1410,6 +1468,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 3,
                     context_window: 32_768,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     api_key: Some("ollama-key".into()),
@@ -1438,6 +1497,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 5,
                     context_window: 128_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.005,
                     cost_per_1k_output: 0.015,
                     api_key: Some("azure-key".into()),
@@ -1517,6 +1577,7 @@ mod tests {
                 capabilities: vec![],
                 max_concurrency: 5,
                 context_window: 128_000,
+                max_output_tokens: None,
                 cost_per_1k_input: 0.0,
                 cost_per_1k_output: 0.0,
                 api_key: None,

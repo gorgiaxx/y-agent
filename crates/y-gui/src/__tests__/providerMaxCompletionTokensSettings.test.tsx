@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 vi.mock('../components/common/ProviderIconPicker', () => ({
   ProviderIconPicker: () => <div />,
@@ -13,6 +14,23 @@ import {
 } from '../components/settings/settingsTypes';
 
 describe('provider use_max_completion_tokens settings', () => {
+  it('supports a provider-level maximum output token default', () => {
+    const provider: ProviderFormData = {
+      ...emptyProvider(),
+      id: 'long-context',
+      model: 'large-model',
+      max_output_tokens: 32_000,
+    };
+
+    expect(providersToToml([provider])).toContain('max_output_tokens = 32000');
+    expect(jsonToProviders({ providers: [provider] })[0].max_output_tokens).toBe(32_000);
+    const source = readFileSync(
+      new URL('../components/settings/ProvidersTab.tsx', import.meta.url),
+      'utf8',
+    );
+    expect(source).toContain('title="Max Output Tokens"');
+  });
+
   it('defaults to null on new providers and omits the field in TOML', () => {
     const provider = emptyProvider();
     expect(provider.use_max_completion_tokens).toBeNull();

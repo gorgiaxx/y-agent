@@ -340,6 +340,18 @@ function ProviderTabPanel({
             onChange={(e) => update({ context_window: Number(e.target.value) || 128000 })}
           />
         </SettingsItem>
+        <SettingsItem
+          title="Max Output Tokens"
+          description="Default output-token limit when a request does not set one"
+        >
+          <Input numeric type="number" min={1} className="w-[100px]"
+            value={provider.max_output_tokens ?? ''}
+            onChange={(e) => update({
+              max_output_tokens: e.target.value ? Number(e.target.value) : null,
+            })}
+            placeholder="Model default"
+          />
+        </SettingsItem>
         <SettingsItem title="Temperature">
           <Input numeric type="number" step={0.1} min={0} max={2} className="w-[100px]"
             value={provider.temperature ?? ''}

@@ -23,6 +23,7 @@ export interface ProviderFormData {
   capabilities: string[];
   max_concurrency: number;
   context_window: number;
+  max_output_tokens: number | null;
   cost_per_1k_input: number;
   cost_per_1k_output: number;
   api_key: string | null;
@@ -243,6 +244,7 @@ export function emptyProvider(): ProviderFormData {
     capabilities: [],
     max_concurrency: 5,
     context_window: 128000,
+    max_output_tokens: null,
     cost_per_1k_input: 0,
     cost_per_1k_output: 0,
     api_key: null,
@@ -441,6 +443,9 @@ export function providersToToml(providers: ProviderFormData[]): string {
     }
     lines.push(`max_concurrency = ${p.max_concurrency}`);
     lines.push(`context_window = ${p.context_window}`);
+    if (p.max_output_tokens !== null) {
+      lines.push(`max_output_tokens = ${p.max_output_tokens}`);
+    }
     if (p.cost_per_1k_input > 0) lines.push(`cost_per_1k_input = ${p.cost_per_1k_input}`);
     if (p.cost_per_1k_output > 0) lines.push(`cost_per_1k_output = ${p.cost_per_1k_output}`);
     if (p.api_key) lines.push(`api_key = "${escapeTomlString(p.api_key)}"`);
@@ -577,6 +582,7 @@ export function jsonToProviders(json: unknown): ProviderFormData[] {
     capabilities: Array.isArray(p.capabilities) ? (p.capabilities as string[]) : [],
     max_concurrency: (p.max_concurrency as number) ?? 5,
     context_window: (p.context_window as number) ?? 128000,
+    max_output_tokens: (p.max_output_tokens as number) ?? null,
     cost_per_1k_input: (p.cost_per_1k_input as number) ?? 0,
     cost_per_1k_output: (p.cost_per_1k_output as number) ?? 0,
     api_key: (p.api_key as string) ?? null,

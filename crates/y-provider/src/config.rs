@@ -174,6 +174,11 @@ pub struct ProviderConfig {
     #[serde(default = "default_context_window")]
     pub context_window: usize,
 
+    /// Default maximum output tokens for requests routed to this provider.
+    /// Explicit per-request limits take precedence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u32>,
+
     /// Cost per 1000 input tokens.
     #[serde(default)]
     pub cost_per_1k_input: f64,
@@ -534,6 +539,14 @@ impl ProviderPoolConfig {
                     message: format!("provider '{}' has invalid custom header: {message}", p.id),
                 }
             })?;
+            if p.max_output_tokens == Some(0) {
+                return Err(ProviderPoolError::Config {
+                    message: format!(
+                        "provider '{}' max_output_tokens must be greater than 0",
+                        p.id
+                    ),
+                });
+            }
         }
 
         Ok(())
@@ -948,6 +961,24 @@ mod tests {
     }
 
     #[test]
+    fn test_provider_max_output_tokens_deserializes() {
+        let config: ProviderPoolConfig = toml::from_str(
+            r#"
+            [[providers]]
+            id = "long-context"
+            provider_type = "openai"
+            model = "large-model"
+            context_window = 1000000
+            max_output_tokens = 32000
+            api_key = "test"
+            "#,
+        )
+        .expect("provider config should parse");
+
+        assert_eq!(config.providers[0].max_output_tokens, Some(32_000));
+    }
+
+    #[test]
     fn test_config_validate_no_providers_fails() {
         let config = ProviderPoolConfig::default();
         assert!(config.validate().is_err());
@@ -965,6 +996,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 5,
                     context_window: 128_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     api_key: None,
@@ -993,6 +1025,7 @@ mod tests {
                     capabilities: vec![],
                     max_concurrency: 5,
                     context_window: 200_000,
+                    max_output_tokens: None,
                     cost_per_1k_input: 0.0,
                     cost_per_1k_output: 0.0,
                     api_key: None,
@@ -1043,6 +1076,7 @@ mod tests {
             capabilities: vec![],
             max_concurrency: 5,
             context_window: 128_000,
+            max_output_tokens: None,
             cost_per_1k_input: 0.0,
             cost_per_1k_output: 0.0,
             api_key: None,
@@ -1083,6 +1117,7 @@ mod tests {
             capabilities: vec![],
             max_concurrency: 5,
             context_window: 128_000,
+            max_output_tokens: None,
             cost_per_1k_input: 0.0,
             cost_per_1k_output: 0.0,
             api_key: Some("sk-direct-key".into()),
@@ -1442,6 +1477,7 @@ mod tests {
             capabilities: vec![],
             max_concurrency: 5,
             context_window: 128_000,
+            max_output_tokens: None,
             cost_per_1k_input: 0.0,
             cost_per_1k_output: 0.0,
             api_key: None,
