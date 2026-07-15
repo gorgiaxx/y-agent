@@ -9,6 +9,13 @@ pub struct SkillSearch {
     manifests: Vec<SkillManifest>,
 }
 
+/// Skill search result with its deterministic relevance score.
+#[derive(Debug, Clone)]
+pub struct ScoredSkillSummary {
+    pub summary: SkillSummary,
+    pub score: usize,
+}
+
 impl SkillSearch {
     /// Create a new empty skill search index.
     pub fn new() -> Self {
@@ -32,14 +39,26 @@ impl SkillSearch {
     /// Matches against tags and trigger patterns (case-insensitive).
     /// Returns compact `SkillSummary` entries, not full manifests.
     pub fn search(&self, query: &str, limit: usize) -> Vec<SkillSummary> {
-        let query_lower = query.to_lowercase();
+        self.search_scored(query, limit, 1)
+            .into_iter()
+            .map(|result| result.summary)
+            .collect()
+    }
 
+    /// Search with deterministic scores and a minimum relevance threshold.
+    pub fn search_scored(
+        &self,
+        query: &str,
+        limit: usize,
+        min_score: usize,
+    ) -> Vec<ScoredSkillSummary> {
+        let query_tokens = query_tokens(query);
         let mut results: Vec<(usize, &SkillManifest)> = self
             .manifests
             .iter()
             .filter_map(|m| {
-                let score = Self::score_match(m, &query_lower);
-                if score > 0 {
+                let score = Self::score_match(m, &query_tokens);
+                if score >= min_score {
                     Some((score, m))
                 } else {
                     None
@@ -48,49 +67,79 @@ impl SkillSearch {
             .collect();
 
         // Sort by relevance score (descending)
-        results.sort_by(|a, b| b.0.cmp(&a.0));
+        results.sort_by(|left, right| {
+            right
+                .0
+                .cmp(&left.0)
+                .then_with(|| left.1.name.cmp(&right.1.name))
+        });
 
         results
             .into_iter()
             .take(limit)
-            .map(|(_, m)| SkillSummary {
-                id: m.id.clone(),
-                name: m.name.clone(),
-                description: m.description.clone(),
-                tags: m.tags.clone(),
-                token_estimate: m.token_estimate,
+            .map(|(score, m)| ScoredSkillSummary {
+                summary: SkillSummary {
+                    id: m.id.clone(),
+                    name: m.name.clone(),
+                    description: m.description.clone(),
+                    tags: m.tags.clone(),
+                    token_estimate: m.token_estimate,
+                },
+                score,
             })
             .collect()
     }
 
     /// Score how well a manifest matches a query.
-    fn score_match(manifest: &SkillManifest, query_lower: &str) -> usize {
+    fn score_match(manifest: &SkillManifest, query_tokens: &[String]) -> usize {
         let mut score = 0;
+        let name = manifest.name.to_lowercase();
+        let description = manifest.description.to_lowercase();
+        let tags: Vec<_> = manifest.tags.iter().map(|tag| tag.to_lowercase()).collect();
+        let triggers: Vec<_> = manifest
+            .trigger_patterns
+            .iter()
+            .map(|trigger| trigger.to_lowercase())
+            .collect();
 
-        // Tag match (highest weight)
-        for tag in &manifest.tags {
-            if tag.to_lowercase().contains(query_lower) {
-                score += 10;
+        for token in query_tokens {
+            for tag in &tags {
+                if tag == token {
+                    score += 12;
+                } else if tag.contains(token) {
+                    score += 8;
+                }
             }
-        }
-
-        // Trigger pattern match
-        for pattern in &manifest.trigger_patterns {
-            if pattern.to_lowercase().contains(query_lower) {
-                score += 5;
+            for trigger in &triggers {
+                if trigger.contains(token) {
+                    score += 5;
+                }
             }
-        }
-
-        // Name/description match (lower weight)
-        if manifest.name.to_lowercase().contains(query_lower) {
-            score += 3;
-        }
-        if manifest.description.to_lowercase().contains(query_lower) {
-            score += 1;
+            if name.contains(token) {
+                score += 4;
+            }
+            if description.contains(token) {
+                score += 2;
+            }
         }
 
         score
     }
+}
+
+fn query_tokens(query: &str) -> Vec<String> {
+    const STOP_WORDS: &[&str] = &[
+        "and", "are", "for", "from", "into", "please", "that", "the", "this", "with",
+    ];
+
+    let mut tokens: Vec<_> = query
+        .split(|character: char| !character.is_alphanumeric())
+        .map(str::to_lowercase)
+        .filter(|token| token.len() >= 3 && !STOP_WORDS.contains(&token.as_str()))
+        .collect();
+    tokens.sort();
+    tokens.dedup();
+    tokens
 }
 
 #[cfg(test)]
@@ -190,5 +239,34 @@ mod tests {
         // SkillSummary has name, description, tags, token_estimate — no root_content
         assert_eq!(results[0].name, "rust-skill");
         assert!(!results[0].tags.is_empty());
+    }
+
+    #[test]
+    fn test_search_matches_relevant_tokens_in_a_natural_language_request() {
+        let mut search = SkillSearch::new();
+        search.index(test_manifest(
+            "rust-errors",
+            &["rust", "error-handling"],
+            &["diagnose rust compiler errors"],
+        ));
+        search.index(test_manifest("python-basics", &["python"], &[]));
+
+        let results = search.search("Please review the Rust error handling in this change", 10);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "rust-errors");
+    }
+
+    #[test]
+    fn test_scored_search_exposes_a_threshold_for_automatic_selection() {
+        let mut search = SkillSearch::new();
+        search.index(test_manifest("rust-errors", &["rust"], &[]));
+        search.index(test_manifest("generic-review", &[], &["review"]));
+
+        let results = search.search_scored("Review this Rust implementation", 10, 12);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].summary.name, "rust-errors");
+        assert!(results[0].score >= 12);
     }
 }

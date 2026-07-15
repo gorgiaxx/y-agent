@@ -136,6 +136,10 @@ pub enum ProposalStatus {
     Approved,
     Rejected,
     Deferred,
+    /// Candidate content was validated and activated as a new version.
+    Promoted,
+    /// A promoted version was rolled back to its recorded parent.
+    RolledBack,
 }
 
 /// Type of change proposed by the refiner.
@@ -174,6 +178,9 @@ pub struct EvolutionProposal {
     /// Proposed new version identifier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposed_version: Option<String>,
+    /// Content-addressed parent snapshot used for rollback after promotion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline_version: Option<String>,
     /// Type of change being proposed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change_type: Option<ChangeType>,
@@ -183,6 +190,18 @@ pub struct EvolutionProposal {
     /// Preview of the diff this proposal would produce.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub diff_preview: String,
+    /// Validated candidate root instructions drafted by the refinement agent.
+    ///
+    /// Persisted separately from the active skill so refinement never mutates
+    /// live behavior before a supervised approval decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_root_content: Option<String>,
+    /// Refiner explanation connecting the candidate to observed evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candidate_rationale: Option<String>,
+    /// Reviewer-provided reason for the latest supervised decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_reason: Option<String>,
     /// Deferred until this date (if deferred).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_until: Option<String>,

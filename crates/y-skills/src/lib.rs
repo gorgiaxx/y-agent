@@ -15,6 +15,8 @@
 // ----- Core (always-on via `skill_core`) -----
 pub mod config;
 pub mod error;
+#[cfg(any(feature = "evolution_capture", feature = "evolution_refinement"))]
+mod jsonl_journal;
 pub mod manifest;
 pub mod registry;
 pub mod search;
@@ -55,6 +57,8 @@ pub mod linker;
 // ----- Evolution capture (feature: evolution_capture) -----
 #[cfg(feature = "evolution_capture")]
 pub mod experience;
+#[cfg(feature = "evolution_capture")]
+pub mod experience_journal;
 
 // ----- Evolution extraction (feature: evolution_extraction) -----
 #[cfg(feature = "evolution_extraction")]
@@ -63,6 +67,8 @@ pub mod extractor;
 // ----- Evolution refinement (feature: evolution_refinement) -----
 #[cfg(feature = "evolution_refinement")]
 pub mod evolution;
+#[cfg(feature = "evolution_refinement")]
+pub mod proposal_journal;
 #[cfg(feature = "evolution_refinement")]
 pub mod regression;
 
@@ -83,7 +89,7 @@ pub use config::SkillConfig;
 pub use error::SkillModuleError;
 pub use manifest::ManifestParser;
 pub use registry::SkillRegistryImpl;
-pub use search::SkillSearch;
+pub use search::{ScoredSkillSummary, SkillSearch};
 pub use store::FilesystemSkillStore;
 pub use version::PersistentVersionStore;
 pub use version::VersionStore;
@@ -126,10 +132,14 @@ pub use evolution::{ChangeType, SkillMetrics};
 pub use experience::{
     ExperienceOutcome, ExperienceRecord, ExperienceStore, TokenUsage, ToolCallRecord,
 };
+#[cfg(feature = "evolution_capture")]
+pub use experience_journal::ExperienceJournal;
 #[cfg(feature = "evolution_extraction")]
 pub use extractor::{ExtractedPattern, PatternExtractor, PatternRegistry};
 #[cfg(feature = "evolution_fast_path")]
 pub use fast_path::FastPathExtractor;
+#[cfg(feature = "evolution_refinement")]
+pub use proposal_journal::ProposalJournal;
 #[cfg(feature = "evolution_refinement")]
 pub use regression::RegressionDetector;
 

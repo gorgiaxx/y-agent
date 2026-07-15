@@ -242,6 +242,12 @@ impl PersistentVersionStore {
         skill_id: &str,
         target_version: &SkillVersion,
     ) -> Result<(), SkillModuleError> {
+        let content =
+            self.get(&target_version.0)
+                .ok_or_else(|| SkillModuleError::VersionStoreError {
+                    message: format!("version {} not found in store", target_version.0),
+                })?;
+        self.inner.store(&content);
         self.inner.rollback(skill_id, target_version)?;
         self.write_head(skill_id, target_version)?;
         self.append_reflog(skill_id, target_version, ReflogAction::RolledBack)?;

@@ -123,9 +123,13 @@ impl RegressionDetector {
                 patterns: vec![PatternType::CommonError],
                 status: ProposalStatus::PendingApproval,
                 proposed_version: Some(previous_version.to_string()),
+                baseline_version: None,
                 change_type: Some(ChangeType::ErrorWarning),
                 patterns_referenced: vec![],
                 diff_preview: String::new(),
+                candidate_root_content: None,
+                candidate_rationale: None,
+                decision_reason: None,
                 deferred_until: None,
             })
         } else {
