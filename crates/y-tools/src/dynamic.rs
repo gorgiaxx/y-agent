@@ -91,8 +91,10 @@ fn default_version() -> u32 {
 }
 
 const DEFAULT_DYNAMIC_SCRIPT_TIMEOUT_SECS: u64 = 30;
-const SCRIPT_HEREDOC_MARKER: &str = "__Y_AGENT_DYNAMIC_SCRIPT__";
-const INPUT_HEREDOC_MARKER: &str = "__Y_AGENT_DYNAMIC_INPUT__";
+const MAX_DYNAMIC_TOOL_NAME_CHARS: usize = 64;
+const MAX_DYNAMIC_TOOL_DESCRIPTION_CHARS: usize = 500;
+const MAX_DYNAMIC_SCRIPT_CHARS: usize = 65_536;
+const ALLOWED_SCRIPT_INTERPRETERS: &[&str] = &["bash", "sh", "python", "python3", "node", "bun"];
 
 impl DynamicToolDef {
     /// Convert to a `ToolDefinition` for registry insertion.
@@ -121,7 +123,7 @@ impl DynamicToolDef {
             category: ToolCategory::Custom,
             tool_type: ToolType::Dynamic,
             capabilities,
-            is_dangerous: false,
+            is_dangerous: matches!(self.kind, DynamicToolKind::Script { .. }),
         }
     }
 }
@@ -133,9 +135,27 @@ fn validation_error(message: impl Into<String>) -> ToolError {
 }
 
 fn validate_dynamic_tool(def: &DynamicToolDef) -> Result<(), ToolError> {
+    let name = def.name.as_str();
+    if name.is_empty()
+        || name.chars().count() > MAX_DYNAMIC_TOOL_NAME_CHARS
+        || !name.chars().next().is_some_and(char::is_alphabetic)
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+    {
+        return Err(validation_error(
+            "dynamic tool names must start with a letter and contain at most 64 ASCII letters, digits, '_' or '-'",
+        ));
+    }
     if def.description.trim().is_empty() {
         return Err(validation_error(format!(
             "dynamic tool '{}' must have a non-empty description",
+            def.name.as_str()
+        )));
+    }
+    if def.description.chars().count() > MAX_DYNAMIC_TOOL_DESCRIPTION_CHARS {
+        return Err(validation_error(format!(
+            "dynamic tool '{}' description exceeds {MAX_DYNAMIC_TOOL_DESCRIPTION_CHARS} characters",
             def.name.as_str()
         )));
     }
@@ -165,10 +185,23 @@ fn validate_dynamic_tool(def: &DynamicToolDef) -> Result<(), ToolError> {
                     def.name.as_str()
                 )));
             }
+            if !ALLOWED_SCRIPT_INTERPRETERS.contains(&interpreter.trim()) {
+                return Err(validation_error(format!(
+                    "dynamic tool '{}' uses unsupported interpreter '{}'",
+                    def.name.as_str(),
+                    interpreter
+                )));
+            }
 
             if source.trim().is_empty() {
                 return Err(validation_error(format!(
                     "dynamic tool '{}' script source must be non-empty",
+                    def.name.as_str()
+                )));
+            }
+            if source.chars().count() > MAX_DYNAMIC_SCRIPT_CHARS {
+                return Err(validation_error(format!(
+                    "dynamic tool '{}' script exceeds {MAX_DYNAMIC_SCRIPT_CHARS} characters",
                     def.name.as_str()
                 )));
             }
@@ -198,17 +231,11 @@ fn build_script_command(interpreter: &str, source: &str, input_json: &str) -> St
 tmp_script=\"$(mktemp)\"\n\
 tmp_input=\"$(mktemp)\"\n\
 trap 'rm -f \"$tmp_script\" \"$tmp_input\"' EXIT\n\
-cat > \"$tmp_script\" <<'{script_marker}'\n\
-{source}\n\
-{script_marker}\n\
-cat > \"$tmp_input\" <<'{input_marker}'\n\
-{input_json}\n\
-{input_marker}\n\
+printf '%s' {source} > \"$tmp_script\"\n\
+printf '%s' {input_json} > \"$tmp_input\"\n\
 {interpreter} \"$tmp_script\" < \"$tmp_input\"",
-        script_marker = SCRIPT_HEREDOC_MARKER,
-        input_marker = INPUT_HEREDOC_MARKER,
-        source = source,
-        input_json = input_json,
+        source = shell_quote(source),
+        input_json = shell_quote(input_json),
         interpreter = shell_quote(interpreter),
     )
 }
@@ -299,7 +326,12 @@ impl DynamicToolManager {
             name: def.name.as_str().to_string(),
         })?;
 
-        def.version = existing.version + 1;
+        def.version = existing
+            .version
+            .checked_add(1)
+            .ok_or_else(|| ToolError::Other {
+                message: format!("dynamic tool '{}' version overflow", def.name.as_str()),
+            })?;
         let tool_def = def.to_tool_definition();
         let name = def.name.clone();
         let actor = def.created_by.clone();
@@ -346,6 +378,20 @@ impl DynamicToolManager {
     pub async fn list_tools(&self) -> Vec<DynamicToolDef> {
         let defs = self.definitions.read().await;
         defs.values().cloned().collect()
+    }
+
+    /// Restore an exact validated definition without changing its version or
+    /// appending an audit entry. Used only for journal replay and compensation.
+    pub async fn restore_tool(&self, def: DynamicToolDef) -> Result<ToolDefinition, ToolError> {
+        validate_dynamic_tool(&def)?;
+        let tool_def = def.to_tool_definition();
+        self.definitions.write().await.insert(def.name.clone(), def);
+        Ok(tool_def)
+    }
+
+    /// Remove a definition without appending an audit entry.
+    pub async fn forget_tool(&self, name: &ToolName) {
+        self.definitions.write().await.remove(name);
     }
 
     /// Record a tool execution event in the audit log.
@@ -819,7 +865,7 @@ mod tests {
         let tool_def = def.to_tool_definition();
         assert_eq!(tool_def.tool_type, ToolType::Dynamic);
         assert_eq!(tool_def.category, ToolCategory::Custom);
-        assert!(!tool_def.is_dangerous);
+        assert!(tool_def.is_dangerous);
         assert!(tool_def.capabilities.process.shell);
     }
 
@@ -893,5 +939,20 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, ToolError::RuntimeError { .. }));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn script_command_quotes_source_and_input_without_heredoc_termination() {
+        let command = build_script_command(
+            "bash",
+            "printf '%s' safe",
+            "{\"value\":\"line one\\n__Y_AGENT_DYNAMIC_INPUT__\\nrm -rf /\"}",
+        );
+
+        assert!(!command.contains("<<"));
+        assert!(command.contains("printf '%s'"));
+        assert!(command.contains("rm -rf /"));
+        assert!(!command.lines().any(|line| line == "rm -rf /"));
     }
 }

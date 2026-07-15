@@ -639,6 +639,83 @@ impl Tool for WorkflowValidateTool {
 }
 
 // ---------------------------------------------------------------------------
+// WorkflowRun
+// ---------------------------------------------------------------------------
+
+/// Tool that executes an existing reusable workflow by ID or name.
+pub struct WorkflowRunTool {
+    def: ToolDefinition,
+}
+
+impl WorkflowRunTool {
+    pub fn new() -> Self {
+        Self {
+            def: Self::tool_definition(),
+        }
+    }
+
+    pub fn tool_definition() -> ToolDefinition {
+        ToolDefinition {
+            name: ToolName::from_string("WorkflowRun"),
+            description: "Execute an existing reusable workflow by ID or name. Prefer this over recreating a matching multi-step workflow.".into(),
+            help: Some(
+                "Parameters:\n- id (required): workflow ID or unique name\n- parameters (optional): workflow input values"
+                    .into(),
+            ),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Workflow ID or unique workflow name"
+                    },
+                    "parameters": {
+                        "type": "object",
+                        "description": "Input parameter values passed to the workflow",
+                        "default": {}
+                    }
+                },
+                "required": ["id"],
+                "additionalProperties": false
+            }),
+            result_schema: None,
+            category: ToolCategory::Agent,
+            tool_type: ToolType::BuiltIn,
+            capabilities: RuntimeCapability::default(),
+            is_dangerous: true,
+        }
+    }
+}
+
+impl Default for WorkflowRunTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for WorkflowRunTool {
+    async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
+        let id = require_str(&input, "id")?;
+        Ok(ToolOutput {
+            success: true,
+            content: serde_json::json!({
+                "action": "WorkflowRun",
+                "id": id,
+                "parameters": input.arguments.get("parameters").cloned().unwrap_or_default(),
+                "status": "pending"
+            }),
+            warnings: vec![],
+            metadata: serde_json::json!({}),
+        })
+    }
+
+    fn definition(&self) -> &ToolDefinition {
+        &self.def
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ScheduleCreate
 // ---------------------------------------------------------------------------
 
@@ -1307,6 +1384,24 @@ mod tests {
         assert!(def.is_dangerous);
     }
 
+    #[tokio::test]
+    async fn test_workflow_run_requires_an_identifier() {
+        let tool = WorkflowRunTool::new();
+        assert!(tool
+            .execute(make_input("WorkflowRun", serde_json::json!({})))
+            .await
+            .is_err());
+
+        let output = tool
+            .execute(make_input(
+                "WorkflowRun",
+                serde_json::json!({"id": "research-pipeline"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(output.content["action"], "WorkflowRun");
+    }
+
     // -- definition checks --
 
     #[test]
@@ -1318,6 +1413,7 @@ mod tests {
             ("WorkflowUpdate", WorkflowUpdateTool::tool_definition()),
             ("WorkflowDelete", WorkflowDeleteTool::tool_definition()),
             ("WorkflowValidate", WorkflowValidateTool::tool_definition()),
+            ("WorkflowRun", WorkflowRunTool::tool_definition()),
             ("ScheduleCreate", ScheduleCreateTool::tool_definition()),
             ("ScheduleList", ScheduleListTool::tool_definition()),
             ("SchedulePause", SchedulePauseTool::tool_definition()),
