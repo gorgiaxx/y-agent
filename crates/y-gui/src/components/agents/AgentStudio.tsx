@@ -54,6 +54,7 @@ interface AgentStudioProps {
   onExpandChange: (expanded: boolean) => void;
   onClearSession: () => void;
   onAddContextReset: () => void;
+  onUndoContextReset: (pointIndex: number) => void;
   // Grouped InputArea prop objects
   provider: InputProviderProps;
   mcp: InputMcpProps;
@@ -102,6 +103,7 @@ export function AgentStudio({
   onExpandChange,
   onClearSession,
   onAddContextReset,
+  onUndoContextReset,
   provider,
   mcp,
   dialogs,
@@ -136,6 +138,7 @@ export function AgentStudio({
             toolResults={toolResults}
             getStreamSegments={getStreamSegments}
             contextResetPoints={contextResetPoints}
+            onUndoContextReset={onUndoContextReset}
             compactPoints={compactPoints}
           />
         </div>

@@ -105,6 +105,8 @@ export interface UseChatReturn {
   contextResetPoints: number[];
   /** Add a new context reset point at the current message position. */
   addContextReset: () => void;
+  /** Remove a context reset point and restore the latest remaining boundary. */
+  removeContextReset: (pointIndex: number) => void;
   /** Compaction display items (divider + summary) injected after compaction completes. */
   compactPoints: CompactInfo[];
   /** Add a compaction point at the current message position (called by handleCommand). */
@@ -290,6 +292,7 @@ export function useChat(
       restoreBranch: operations.restoreBranch,
       contextResetPoints: sessionState.contextResetPoints,
       addContextReset: sessionState.addContextReset,
+      removeContextReset: sessionState.removeContextReset,
       compactPoints: sessionState.compactPoints,
       addCompactPoint: sessionState.addCompactPoint,
       setOp: sessionState.setOp,
@@ -318,6 +321,7 @@ export function useChat(
       operations.restoreBranch,
       sessionState.contextResetPoints,
       sessionState.addContextReset,
+      sessionState.removeContextReset,
       sessionState.compactPoints,
       sessionState.addCompactPoint,
       sessionState.setOp,

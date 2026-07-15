@@ -49,6 +49,7 @@ interface ChatPanelProps {
   /** Getter for event-ordered stream segments (from useChat ref). */
   getStreamSegments?: () => InterleavedSegment[] | null;
   contextResetPoints?: number[];
+  onUndoContextReset?: (pointIndex: number) => void;
   compactPoints?: CompactInfo[];
 }
 
@@ -237,6 +238,7 @@ function ChatPanelInner({
   toolResults,
   getStreamSegments,
   contextResetPoints,
+  onUndoContextReset,
   compactPoints,
 }: ChatPanelProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -397,7 +399,13 @@ function ChatPanelInner({
         ) : null;
 
       case 'context-reset':
-        return <ContextResetDivider />;
+        return (
+          <ContextResetDivider
+            onUndo={onUndoContextReset
+              ? () => onUndoContextReset(item.pointIndex)
+              : undefined}
+          />
+        );
 
       case 'compact-divider':
         return (
@@ -493,7 +501,7 @@ function ChatPanelInner({
       default:
         return null;
     }
-  }, [isStreaming, messages, onEditMessage, onUndoMessage, onResendMessage, onRetryTurn, onForkMessage, onRestoreBranch, getStreamSegments]);
+  }, [isStreaming, messages, onEditMessage, onUndoMessage, onResendMessage, onRetryTurn, onForkMessage, onRestoreBranch, onUndoContextReset, getStreamSegments]);
 
   if (isLoading) {
     return (

@@ -24,3 +24,25 @@
   white-space: nowrap;
   user-select: none;
 }
+
+.context-reset-divider-undo {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--warning);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+
+.context-reset-divider-undo:hover,
+.context-reset-divider-undo:focus-visible {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  outline: none;
+}

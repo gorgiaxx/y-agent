@@ -14,6 +14,7 @@ import {
   hasAwaitingInteractionForSession,
 } from './chatRunState';
 import { getCachedMessages } from './chatHelpers';
+import { removeContextResetPoint } from './contextResetState';
 import type { ChatSharedRefs } from './chatSharedState';
 import type { ChatOpStatus, CompactInfo, PendingEdit } from './useChat';
 import type { ToolResultRecord } from './chatStreamTypes';
@@ -30,6 +31,7 @@ export interface UseChatSessionStateReturn {
   compactPoints: CompactInfo[];
   setCompactPoints: Dispatch<SetStateAction<CompactInfo[]>>;
   addContextReset: () => void;
+  removeContextReset: (pointIndex: number) => void;
   addCompactPoint: (info: Omit<CompactInfo, 'atIndex'>) => void;
   invalidateStaleContextResets: (sessionId: string, newMsgCount: number) => void;
   markSessionActivity: (sessionId: string, at?: number) => void;
@@ -219,6 +221,24 @@ export function useChatSessionState(
       .catch((e) => console.error('[chat] failed to persist context reset:', e));
   }, [refs.activeSessionIdRef, refs.sessionMessagesRef, refs.contextResetMapRef]);
 
+  const removeContextReset = useCallback((pointIndex: number) => {
+    const sid = refs.activeSessionIdRef.current;
+    if (!sid) return;
+
+    const existing = refs.contextResetMapRef.current.get(sid) ?? [];
+    const removal = removeContextResetPoint(existing, pointIndex);
+    if (removal.points === existing) return;
+
+    refs.contextResetMapRef.current.set(sid, removal.points);
+    setContextResetPoints(removal.points);
+    transport
+      .invoke('session_set_context_reset', {
+        sessionId: sid,
+        index: removal.persistedIndex,
+      })
+      .catch((e) => console.error('[chat] failed to undo context reset:', e));
+  }, [refs.activeSessionIdRef, refs.contextResetMapRef]);
+
   // ------------------------------------------------------------------
   // addCompactPoint
   // ------------------------------------------------------------------
@@ -250,6 +270,7 @@ export function useChatSessionState(
     compactPoints,
     setCompactPoints,
     addContextReset,
+    removeContextReset,
     addCompactPoint,
     invalidateStaleContextResets,
     markSessionActivity,

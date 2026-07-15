@@ -413,6 +413,7 @@ export function AgentsView() {
                   onExpandChange={viewRouting.setInputExpanded}
                   onClearSession={() => void chatHandlers.handleClearSession()}
                   onAddContextReset={agentChatHooks.addContextReset}
+                  onUndoContextReset={agentChatHooks.removeContextReset}
                   onEditMessage={chatHandlers.handleEditMessage}
                   onUndoMessage={chatHandlers.handleUndoMessage}
                   onResendMessage={chatHandlers.handleResendMessage}
