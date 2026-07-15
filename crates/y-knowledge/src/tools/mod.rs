@@ -7,6 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::chunking::ChunkLevel;
+use crate::middleware::KnowledgeRetrievalRequest;
+
 // ---------------------------------------------------------------------------
 // KnowledgeSearch
 // ---------------------------------------------------------------------------
@@ -28,6 +31,27 @@ pub struct KnowledgeSearchParams {
     /// Optional collection to search within.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
+}
+
+impl KnowledgeSearchParams {
+    /// Convert presentation parameters into the canonical retrieval contract.
+    pub fn retrieval_request(&self) -> KnowledgeRetrievalRequest {
+        KnowledgeRetrievalRequest {
+            query: self.query.trim().to_string(),
+            domain: normalized_optional(self.domain.as_deref()),
+            collection: normalized_optional(self.collection.as_deref()),
+            level: ChunkLevel::from_resolution(&self.resolution),
+            limit: self.limit.clamp(1, 20),
+            relax_domain: true,
+        }
+    }
+}
+
+fn normalized_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
 }
 
 fn default_resolution() -> String {
@@ -53,6 +77,12 @@ pub struct SearchResultItem {
     pub domains: Vec<String>,
     /// Source title.
     pub title: String,
+    /// Source URI or file path for citation.
+    pub source: String,
+    /// Knowledge collection that supplied the result.
+    pub collection: String,
+    /// Resolution level (`l0`, `l1`, or `l2`).
+    pub resolution: String,
 }
 
 /// Output from `KnowledgeSearch`.
@@ -282,6 +312,9 @@ mod tests {
                 relevance: 0.95,
                 domains: vec!["rust".to_string()],
                 title: "Error Guide".to_string(),
+                source: "file:///error-guide.md".to_string(),
+                collection: "rust-docs".to_string(),
+                resolution: "l1".to_string(),
             }],
             total_matches: 1,
             strategy: "hybrid".to_string(),

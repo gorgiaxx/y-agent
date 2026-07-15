@@ -9,6 +9,7 @@
 
 use async_trait::async_trait;
 use std::fmt::Write;
+use std::sync::Arc;
 
 use crate::middleware_adapter::stage_priorities;
 use crate::pipeline::{
@@ -22,12 +23,41 @@ use crate::pipeline::{
 /// and the `KnowledgeSearch` tool. The LLM decides autonomously whether
 /// and how to search -- no embedding or retrieval is performed at this
 /// stage.
-pub struct KnowledgeContextProvider;
+#[derive(Debug, Clone)]
+pub struct KnowledgeContextSnippet {
+    pub content: String,
+    pub token_estimate: u32,
+    pub title: String,
+    pub source: String,
+    pub collection: String,
+    pub chunk_id: String,
+    pub relevance: f64,
+}
+
+#[async_trait]
+pub trait KnowledgeContextRetriever: Send + Sync {
+    async fn retrieve(
+        &self,
+        query: &str,
+        collections: &[String],
+    ) -> Result<Vec<KnowledgeContextSnippet>, String>;
+}
+
+pub struct KnowledgeContextProvider {
+    retriever: Option<Arc<dyn KnowledgeContextRetriever>>,
+}
 
 impl KnowledgeContextProvider {
     /// Create a new knowledge context provider.
     pub fn new() -> Self {
-        Self
+        Self { retriever: None }
+    }
+
+    /// Create a provider backed by real selected-collection retrieval.
+    pub fn with_retriever(retriever: Arc<dyn KnowledgeContextRetriever>) -> Self {
+        Self {
+            retriever: Some(retriever),
+        }
     }
 
     /// Build the prompt hint for the LLM.
@@ -78,6 +108,28 @@ impl ContextProvider for KnowledgeContextProvider {
             }
         };
 
+        if let (Some(retriever), Some(request)) = (&self.retriever, &ctx.request) {
+            if !request.user_query.trim().is_empty() {
+                match retriever.retrieve(&request.user_query, &collections).await {
+                    Ok(snippets) if !snippets.is_empty() => {
+                        for snippet in snippets {
+                            ctx.add(ContextItem {
+                                category: ContextCategory::Knowledge,
+                                content: format_snippet(&snippet),
+                                token_estimate: snippet.token_estimate.saturating_add(32),
+                                priority: self.priority(),
+                            });
+                        }
+                        return Ok(());
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "knowledge context retrieval failed; using tool hint");
+                    }
+                }
+            }
+        }
+
         // Inject a prompt hint so the LLM knows it can use KnowledgeSearch.
         let content = Self::build_knowledge_hint(&collections);
         // Conservative token estimate: ~10 tokens per collection name + fixed overhead.
@@ -100,9 +152,45 @@ impl ContextProvider for KnowledgeContextProvider {
     }
 }
 
+fn format_snippet(snippet: &KnowledgeContextSnippet) -> String {
+    format!(
+        "<knowledge_source title=\"{}\" collection=\"{}\" source=\"{}\" chunk_id=\"{}\" relevance=\"{:.2}\">\n{}\n</knowledge_source>",
+        snippet.title,
+        snippet.collection,
+        snippet.source,
+        snippet.chunk_id,
+        snippet.relevance,
+        snippet.content,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct MockKnowledgeRetriever;
+
+    #[async_trait]
+    impl KnowledgeContextRetriever for MockKnowledgeRetriever {
+        async fn retrieve(
+            &self,
+            query: &str,
+            collections: &[String],
+        ) -> Result<Vec<KnowledgeContextSnippet>, String> {
+            assert_eq!(query, "How does Rust handle errors?");
+            assert_eq!(collections, ["rust-docs"]);
+            Ok(vec![KnowledgeContextSnippet {
+                content: "Use Result for recoverable failures.".to_string(),
+                token_estimate: 8,
+                title: "Rust errors".to_string(),
+                source: "file:///rust-errors.md".to_string(),
+                collection: "rust-docs".to_string(),
+                chunk_id: "rust-errors-L1-0".to_string(),
+                relevance: 0.91,
+            }])
+        }
+    }
 
     fn make_provider() -> KnowledgeContextProvider {
         KnowledgeContextProvider::new()
@@ -135,6 +223,28 @@ mod tests {
             ctx.items[0].content.contains("KnowledgeSearch"),
             "should mention the KnowledgeSearch tool"
         );
+    }
+
+    #[tokio::test]
+    async fn test_retrieves_selected_collection_context_with_provenance() {
+        let provider =
+            KnowledgeContextProvider::with_retriever(std::sync::Arc::new(MockKnowledgeRetriever));
+        let mut ctx = AssembledContext {
+            items: Vec::new(),
+            request: Some(crate::pipeline::ContextRequest {
+                user_query: "How does Rust handle errors?".to_string(),
+                knowledge_collections: vec!["rust-docs".to_string()],
+                ..Default::default()
+            }),
+        };
+
+        provider.provide(&mut ctx).await.unwrap();
+
+        assert_eq!(ctx.items.len(), 1);
+        assert!(ctx.items[0].content.contains("Result"));
+        assert!(ctx.items[0].content.contains("file:///rust-errors.md"));
+        assert!(ctx.items[0].content.contains("rust-docs"));
+        assert!(!ctx.items[0].content.contains("KnowledgeSearch tool"));
     }
 
     #[tokio::test]

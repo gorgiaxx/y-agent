@@ -17,7 +17,7 @@ use y_knowledge::middleware::{
 };
 use y_knowledge::models::{KnowledgeCollection, KnowledgeEntry};
 use y_knowledge::quality::QualityFilter;
-use y_knowledge::retrieval::HybridRetriever;
+use y_knowledge::retrieval::{HybridRetriever, RetrievalConfig};
 use y_knowledge::tokenizer::AutoTokenizer;
 use y_knowledge::tools::{
     KnowledgeIngestParams, KnowledgeIngestResult, KnowledgeSearchParams, KnowledgeSearchResult,
@@ -103,6 +103,14 @@ struct ReindexEntryData {
     indexed_at: Option<String>,
     tags: Vec<String>,
     metadata: DocumentMetadata,
+}
+
+fn chunk_level_label(level: y_knowledge::chunking::ChunkLevel) -> &'static str {
+    match level {
+        y_knowledge::chunking::ChunkLevel::L0 => "l0",
+        y_knowledge::chunking::ChunkLevel::L1 => "l1",
+        y_knowledge::chunking::ChunkLevel::L2 => "l2",
+    }
 }
 
 /// Knowledge service error.
@@ -244,7 +252,13 @@ impl KnowledgeServiceBuilder {
 
     /// Build the [`KnowledgeService`].
     pub fn build(self) -> KnowledgeService {
-        let retriever = HybridRetriever::new(AutoTokenizer::new());
+        let retriever = HybridRetriever::with_config(
+            AutoTokenizer::new(),
+            RetrievalConfig {
+                min_similarity_threshold: self.config.min_similarity_threshold,
+                ..Default::default()
+            },
+        );
         let inject_knowledge = if let Some(inject_cfg) = self.inject_config {
             Arc::new(StdMutex::new(InjectKnowledge::with_config(
                 retriever, inject_cfg,
@@ -834,25 +848,16 @@ impl KnowledgeService {
             None
         };
 
-        let domain = params.domain.as_deref();
-        let collection = params.collection.as_deref();
-        let level_filter = y_knowledge::chunking::ChunkLevel::from_resolution(&params.resolution);
+        let request = params.retrieval_request();
         let knowledge = self
             .inject_knowledge
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let items = knowledge.retrieve_for_context_filtered_with_limit(
-            &params.query,
-            query_embedding.as_deref(),
-            domain,
-            collection,
-            level_filter,
-            params.limit,
-        );
+        let items = knowledge.retrieve(&request, query_embedding.as_deref());
 
         let results: Vec<SearchResultItem> = items
             .iter()
-            .take(params.limit)
+            .take(request.limit)
             .map(|item| SearchResultItem {
                 chunk_id: item.chunk_id.clone(),
                 document_id: item.document_id.clone(),
@@ -864,6 +869,9 @@ impl KnowledgeService {
                     vec![item.domain.clone()]
                 },
                 title: item.title.clone(),
+                source: item.source.clone(),
+                collection: item.collection.clone(),
+                resolution: chunk_level_label(item.level).to_string(),
             })
             .collect();
 
@@ -1973,6 +1981,57 @@ mod tests {
     fn test_service_creation() {
         let service = KnowledgeService::new(KnowledgeConfig::default());
         assert!(service.has_collection("default"));
+    }
+
+    #[tokio::test]
+    async fn configured_similarity_threshold_is_owned_by_the_retriever() {
+        let mut strict_config = KnowledgeConfig::default();
+        strict_config.min_similarity_threshold = 0.99;
+        let strict = KnowledgeService::new(strict_config);
+        let handle = strict.knowledge_handle();
+        index_threshold_test_chunks(&mut handle.lock().unwrap());
+        let params = KnowledgeSearchParams {
+            query: "shared ownership guidance".to_string(),
+            domain: None,
+            resolution: "l0".to_string(),
+            limit: 5,
+            collection: Some("default".to_string()),
+        };
+
+        let strict_results = strict.search(&params).await.results;
+        assert_eq!(strict_results.len(), 1);
+        assert_eq!(strict_results[0].chunk_id, "threshold-exact");
+
+        let mut permissive_config = KnowledgeConfig::default();
+        permissive_config.min_similarity_threshold = 0.0;
+        let permissive = KnowledgeService::new(permissive_config);
+        let permissive_handle = permissive.knowledge_handle();
+        index_threshold_test_chunks(&mut permissive_handle.lock().unwrap());
+        assert_eq!(permissive.search(&params).await.results.len(), 2);
+    }
+
+    fn index_threshold_test_chunks(
+        knowledge: &mut y_knowledge::middleware::InjectKnowledge<AutoTokenizer>,
+    ) {
+        for (id, content) in [
+            ("threshold-exact", "shared ownership guidance"),
+            ("threshold-partial", "ownership guidance"),
+        ] {
+            knowledge
+                .retriever_mut()
+                .index(y_knowledge::chunking::Chunk {
+                    id: id.to_string(),
+                    document_id: id.to_string(),
+                    level: y_knowledge::chunking::ChunkLevel::L0,
+                    content: content.to_string(),
+                    token_estimate: 5,
+                    metadata: y_knowledge::chunking::ChunkMetadata {
+                        title: id.to_string(),
+                        collection: "default".to_string(),
+                        ..Default::default()
+                    },
+                });
+        }
     }
 
     #[test]

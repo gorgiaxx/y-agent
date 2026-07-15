@@ -1,9 +1,9 @@
-//! Hybrid retriever: vector + BM25 keyword search with blend fusion.
+//! Hybrid retriever: vector + BM25 keyword search with reciprocal rank fusion.
 //!
 //! Supports three search strategies:
 //! - **`SemanticSearch`**: Vector similarity only
 //! - **`KeywordSearch`**: BM25 keyword search only
-//! - **`Hybrid`**: Blend Search fusion `(1 - cosine_distance) + bm25_score`
+//! - **`Hybrid`**: Reciprocal Rank Fusion (RRF) over semantic and BM25 ranks
 //!
 //! Features: paragraph-level dedup, `min_similarity_threshold`, quality/freshness boosts.
 
@@ -25,7 +25,7 @@ pub enum SearchStrategy {
     SemanticSearch,
     /// BM25 keyword search only.
     KeywordSearch,
-    /// Blend Search: additive fusion of vector + BM25. (`MaxKB`-inspired)
+    /// Reciprocal Rank Fusion over vector + BM25 candidate rankings.
     #[default]
     Hybrid,
 }
@@ -45,10 +45,12 @@ pub struct RetrievalConfig {
     pub freshness_decay_rate: f64,
     /// Whether to enable paragraph-level dedup.
     pub enable_dedup: bool,
-    /// Weight for BM25 score in blend fusion (default: 1.0).
+    /// Weight for the BM25 ranking in reciprocal rank fusion (default: 1.0).
     pub bm25_weight: f64,
-    /// Weight for vector score in blend fusion (default: 1.0).
+    /// Weight for the vector ranking in reciprocal rank fusion (default: 1.0).
     pub vector_weight: f64,
+    /// Rank constant used by Reciprocal Rank Fusion (default: 60).
+    pub rrf_k: f64,
 }
 
 impl Default for RetrievalConfig {
@@ -60,6 +62,7 @@ impl Default for RetrievalConfig {
             enable_dedup: true,
             bm25_weight: 1.0,
             vector_weight: 1.0,
+            rrf_k: 60.0,
         }
     }
 }
@@ -73,7 +76,7 @@ impl Default for RetrievalConfig {
 pub struct RetrievalResult {
     /// The matched chunk.
     pub chunk: Chunk,
-    /// Final blended relevance score.
+    /// Final fused relevance score.
     pub relevance: f64,
     /// Vector similarity component (if applicable).
     pub vector_score: Option<f64>,
@@ -287,9 +290,12 @@ impl<T: Tokenizer> HybridRetriever<T> {
             SearchStrategy::SemanticSearch => {
                 self.semantic_search_with_embedding(query, query_embedding, filter)
             }
-            SearchStrategy::Hybrid => {
-                self.blend_search_with_embedding(query, query_embedding, filter)
-            }
+            SearchStrategy::Hybrid => self.hybrid_search_with_embedding(
+                query,
+                query_embedding,
+                filter,
+                limit.saturating_mul(3),
+            ),
         };
 
         // Apply min similarity threshold on raw relevance (before quality boost).
@@ -323,13 +329,14 @@ impl<T: Tokenizer> HybridRetriever<T> {
 
     /// BM25 keyword search only.
     fn keyword_search(&self, query: &str, filter: &RetrievalFilter) -> Vec<RetrievalResult> {
-        let bm25_results = self.bm25.search(query, 100);
+        let bm25_results = self.bm25.search(query, self.chunks.len());
         let bm25_map: HashMap<&str, f64> = bm25_results
             .iter()
             .map(|r| (r.chunk_id.as_str(), r.score))
             .collect();
 
-        self.chunks
+        let mut results: Vec<_> = self
+            .chunks
             .iter()
             .filter(|c| Self::matches_filter(c, filter))
             .filter_map(|c| {
@@ -340,7 +347,9 @@ impl<T: Tokenizer> HybridRetriever<T> {
                     bm25_score: Some(score),
                 })
             })
-            .collect()
+            .collect();
+        Self::sort_by_relevance(&mut results);
+        results
     }
 
     /// Semantic (vector) search with an optional query embedding vector.
@@ -355,7 +364,8 @@ impl<T: Tokenizer> HybridRetriever<T> {
     ) -> Vec<RetrievalResult> {
         let query_lower = query.to_lowercase();
 
-        self.chunks
+        let mut results: Vec<_> = self
+            .chunks
             .iter()
             .filter(|c| Self::matches_filter(c, filter))
             .filter_map(|c| {
@@ -378,65 +388,93 @@ impl<T: Tokenizer> HybridRetriever<T> {
                     None
                 }
             })
-            .collect()
+            .collect();
+        Self::sort_by_relevance(&mut results);
+        results
     }
 
-    /// Blend search: additive fusion of semantic + BM25 scores.
-    ///
-    /// `final_score = vector_weight * semantic_score + bm25_weight * normalized_bm25_score`
+    /// Hybrid search using Reciprocal Rank Fusion over semantic and BM25 candidates.
     ///
     /// When `query_embedding` is provided and chunk embeddings exist, uses
     /// real cosine similarity for the semantic component.
-    fn blend_search_with_embedding(
+    fn hybrid_search_with_embedding(
         &self,
         query: &str,
         query_embedding: Option<&[f32]>,
         filter: &RetrievalFilter,
+        candidate_limit: usize,
     ) -> Vec<RetrievalResult> {
-        let query_lower = query.to_lowercase();
+        let mut lexical = self.keyword_search(query, filter);
+        lexical.truncate(candidate_limit);
 
-        // Get BM25 scores.
-        let bm25_results = self.bm25.search(query, 100);
-        let bm25_map: HashMap<&str, f64> = bm25_results
-            .iter()
-            .map(|r| (r.chunk_id.as_str(), r.score))
-            .collect();
+        let mut semantic = self.semantic_search_with_embedding(query, query_embedding, filter);
+        semantic.truncate(candidate_limit);
 
-        // Normalize BM25 scores to 0-1 range.
-        let max_bm25 = bm25_results.iter().map(|r| r.score).fold(0.0_f64, f64::max);
+        Self::reciprocal_rank_fusion(
+            lexical,
+            semantic,
+            self.config.rrf_k,
+            self.config.bm25_weight,
+            self.config.vector_weight,
+        )
+    }
 
-        self.chunks
-            .iter()
-            .filter(|c| Self::matches_filter(c, filter))
-            .filter_map(|c| {
-                // Semantic score: use cosine similarity when embeddings available.
-                let semantic =
-                    if let (Some(qe), Some(ce)) = (query_embedding, self.embeddings.get(&c.id)) {
-                        cosine_similarity(qe, ce)
-                    } else {
-                        let content_lower = c.content.to_lowercase();
-                        Self::compute_text_similarity(&query_lower, &content_lower)
-                    };
+    /// Fuse ranked lexical and semantic candidates using weighted RRF.
+    ///
+    /// The final score is normalized to `0.0..=1.0` against the theoretical
+    /// score of a candidate ranked first in both paths. This keeps the public
+    /// relevance threshold meaningful while avoiding incompatible raw score
+    /// calibration between BM25 and cosine similarity.
+    fn reciprocal_rank_fusion(
+        lexical: Vec<RetrievalResult>,
+        semantic: Vec<RetrievalResult>,
+        rrf_k: f64,
+        bm25_weight: f64,
+        vector_weight: f64,
+    ) -> Vec<RetrievalResult> {
+        let k = rrf_k.max(0.0);
+        let max_score = (bm25_weight + vector_weight) / (k + 1.0);
+        if max_score <= 0.0 {
+            return Vec::new();
+        }
 
-                // BM25 score (normalized).
-                let bm25 = bm25_map.get(c.id.as_str()).copied().unwrap_or(0.0);
-                let bm25_normalized = if max_bm25 > 0.0 { bm25 / max_bm25 } else { 0.0 };
+        let mut fused: HashMap<String, RetrievalResult> = HashMap::new();
 
-                let blended = self.config.vector_weight * f64::from(semantic)
-                    + self.config.bm25_weight * bm25_normalized;
+        for (rank, mut result) in lexical.into_iter().enumerate() {
+            result.relevance = bm25_weight / (k + rank as f64 + 1.0);
+            fused.insert(result.chunk.id.clone(), result);
+        }
 
-                if blended > 0.0 {
-                    Some(RetrievalResult {
-                        chunk: c.clone(),
-                        relevance: blended,
-                        vector_score: Some(f64::from(semantic)),
-                        bm25_score: Some(bm25),
-                    })
-                } else {
-                    None
-                }
+        for (rank, result) in semantic.into_iter().enumerate() {
+            let contribution = vector_weight / (k + rank as f64 + 1.0);
+            if let Some(existing) = fused.get_mut(&result.chunk.id) {
+                existing.relevance += contribution;
+                existing.vector_score = result.vector_score;
+            } else {
+                let mut semantic_only = result;
+                semantic_only.relevance = contribution;
+                fused.insert(semantic_only.chunk.id.clone(), semantic_only);
+            }
+        }
+
+        let mut results: Vec<_> = fused
+            .into_values()
+            .map(|mut result| {
+                result.relevance = (result.relevance / max_score).clamp(0.0, 1.0);
+                result
             })
-            .collect()
+            .collect();
+        Self::sort_by_relevance(&mut results);
+        results
+    }
+
+    fn sort_by_relevance(results: &mut [RetrievalResult]) {
+        results.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.chunk.id.cmp(&b.chunk.id))
+        });
     }
 
     /// Compute text similarity (development substitute for vector cosine similarity).
@@ -789,6 +827,56 @@ mod tests {
         // Blend results should have both scores.
         assert!(results[0].vector_score.is_some());
         assert!(results[0].bm25_score.is_some());
+    }
+
+    #[test]
+    fn test_rrf_consensus_candidate_ranks_first() {
+        let lexical = vec![
+            RetrievalResult {
+                chunk: make_chunk("a", "lexical first", "test"),
+                relevance: 9.0,
+                vector_score: None,
+                bm25_score: Some(9.0),
+            },
+            RetrievalResult {
+                chunk: make_chunk("b", "lexical second", "test"),
+                relevance: 5.0,
+                vector_score: None,
+                bm25_score: Some(5.0),
+            },
+            RetrievalResult {
+                chunk: make_chunk("lexical-only", "lexical third", "test"),
+                relevance: 1.0,
+                vector_score: None,
+                bm25_score: Some(1.0),
+            },
+        ];
+        let semantic = vec![
+            RetrievalResult {
+                chunk: make_chunk("c", "semantic first", "test"),
+                relevance: 0.99,
+                vector_score: Some(0.99),
+                bm25_score: None,
+            },
+            RetrievalResult {
+                chunk: make_chunk("b", "semantic second", "test"),
+                relevance: 0.75,
+                vector_score: Some(0.75),
+                bm25_score: None,
+            },
+            RetrievalResult {
+                chunk: make_chunk("semantic-only", "semantic third", "test"),
+                relevance: 0.60,
+                vector_score: Some(0.60),
+                bm25_score: None,
+            },
+        ];
+
+        let fused = HybridRetriever::<SimpleTokenizer>::reciprocal_rank_fusion(
+            lexical, semantic, 60.0, 1.0, 1.0,
+        );
+
+        assert_eq!(fused[0].chunk.id, "b");
     }
 
     // --- Domain Filter ---

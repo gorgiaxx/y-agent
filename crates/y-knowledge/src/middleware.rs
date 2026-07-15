@@ -31,8 +31,6 @@ pub struct InjectKnowledgeConfig {
     pub token_budget: u32,
     /// Maximum number of knowledge chunks to inject.
     pub max_chunks: usize,
-    /// Minimum relevance score to include a result.
-    pub min_relevance: f64,
     /// Default resolution level (`l0`, `l1`, `l2`).
     pub default_resolution: String,
     /// Number of neighboring chunks to include on each side of a matched
@@ -50,7 +48,6 @@ impl Default for InjectKnowledgeConfig {
         Self {
             token_budget: DEFAULT_KNOWLEDGE_BUDGET,
             max_chunks: 5,
-            min_relevance: 0.3,
             default_resolution: "l0".to_string(),
             context_window: 2,
         }
@@ -102,10 +99,28 @@ pub struct KnowledgeContextItem {
     pub document_id: String,
     /// Domain classification.
     pub domain: String,
+    /// Source URI or file path for citation and audit.
+    pub source: String,
+    /// Knowledge collection that supplied the chunk.
+    pub collection: String,
+    /// Resolution level of the matched chunk.
+    pub level: ChunkLevel,
     /// L0 summary of the parent document (if available).
     pub summary: Option<String>,
     /// L1 section titles of the parent document (if available).
     pub section_titles: Vec<String>,
+}
+
+/// Canonical retrieval request shared by context, service, and tool paths.
+#[derive(Debug, Clone)]
+pub struct KnowledgeRetrievalRequest {
+    pub query: String,
+    pub domain: Option<String>,
+    pub collection: Option<String>,
+    pub level: Option<ChunkLevel>,
+    pub limit: usize,
+    /// Relax an unmatched domain hint while preserving all other filters.
+    pub relax_domain: bool,
 }
 
 /// `InjectKnowledge` middleware — retrieves and injects relevant knowledge.
@@ -252,30 +267,49 @@ impl<T: Tokenizer> InjectKnowledge<T> {
         level_filter: Option<ChunkLevel>,
         limit: usize,
     ) -> Vec<KnowledgeContextItem> {
-        let limit = if limit == 0 {
+        self.retrieve(
+            &KnowledgeRetrievalRequest {
+                query: user_query.to_string(),
+                domain: domain_hint.map(String::from),
+                collection: collection_filter.map(String::from),
+                level: level_filter,
+                limit,
+                relax_domain: true,
+            },
+            query_embedding,
+        )
+    }
+
+    /// Execute one canonical retrieval request.
+    pub fn retrieve(
+        &self,
+        request: &KnowledgeRetrievalRequest,
+        query_embedding: Option<&[f32]>,
+    ) -> Vec<KnowledgeContextItem> {
+        let limit = if request.limit == 0 {
             self.config.max_chunks
         } else {
-            limit
+            request.limit
         };
         let mut filter = RetrievalFilter {
-            domain: domain_hint.map(String::from),
-            collection: collection_filter.map(String::from),
-            level: level_filter,
+            domain: request.domain.clone(),
+            collection: request.collection.clone(),
+            level: request.level,
             limit,
             ..Default::default()
         };
 
         let mut results =
             self.retriever
-                .search_with_embedding(user_query, query_embedding, &filter);
-        results.retain(|r| r.relevance >= self.config.min_relevance);
+                .search_with_embedding(request.query.trim(), query_embedding, &filter);
 
-        if results.is_empty() && domain_hint.is_some() {
+        if results.is_empty() && request.relax_domain && request.domain.is_some() {
             filter.domain = None;
-            results = self
-                .retriever
-                .search_with_embedding(user_query, query_embedding, &filter);
-            results.retain(|r| r.relevance >= self.config.min_relevance);
+            results = self.retriever.search_with_embedding(
+                request.query.trim(),
+                query_embedding,
+                &filter,
+            );
         }
 
         // Deduplicate by (document_id, chunk_level, l1_section) to avoid
@@ -408,6 +442,9 @@ impl<T: Tokenizer> InjectKnowledge<T> {
                 chunk_id: result.chunk.id.clone(),
                 document_id: result.chunk.document_id.clone(),
                 domain: result.chunk.metadata.domain.clone(),
+                source: result.chunk.metadata.source.clone(),
+                collection: result.chunk.metadata.collection.clone(),
+                level: result.chunk.level,
                 summary,
                 section_titles,
             });
@@ -677,6 +714,59 @@ mod tests {
     }
 
     #[test]
+    fn canonical_request_controls_collection_level_limit_and_domain_relaxation() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(SimpleTokenizer::new(), config);
+        for (id, collection, level, domain) in [
+            ("alpha-l0", "alpha", ChunkLevel::L0, "rust"),
+            ("beta-l0", "beta", ChunkLevel::L0, "rust"),
+            ("beta-l2", "beta", ChunkLevel::L2, "rust"),
+        ] {
+            retriever.index(Chunk {
+                id: id.to_string(),
+                document_id: id.to_string(),
+                level,
+                content: "shared ownership guidance".to_string(),
+                token_estimate: 5,
+                metadata: ChunkMetadata {
+                    collection: collection.to_string(),
+                    domain: domain.to_string(),
+                    title: id.to_string(),
+                    source: format!("file:///{id}.md"),
+                    ..Default::default()
+                },
+            });
+        }
+        let middleware = InjectKnowledge::new(retriever);
+        let request = KnowledgeRetrievalRequest {
+            query: "shared ownership guidance".to_string(),
+            domain: Some("missing-domain".to_string()),
+            collection: Some("beta".to_string()),
+            level: Some(ChunkLevel::L0),
+            limit: 1,
+            relax_domain: false,
+        };
+
+        assert!(middleware.retrieve(&request, None).is_empty());
+
+        let relaxed = middleware.retrieve(
+            &KnowledgeRetrievalRequest {
+                relax_domain: true,
+                ..request
+            },
+            None,
+        );
+        assert_eq!(relaxed.len(), 1);
+        assert_eq!(relaxed[0].collection, "beta");
+        assert_eq!(relaxed[0].level, ChunkLevel::L0);
+        assert_eq!(relaxed[0].source, "file:///beta-l0.md");
+    }
+
+    #[test]
     fn test_retrieve_for_context_empty_query() {
         let mw = make_middleware();
         let items = mw.retrieve_for_context("quantum physics", None, None);
@@ -703,7 +793,6 @@ mod tests {
         let config = InjectKnowledgeConfig::default();
         assert_eq!(config.token_budget, 4000);
         assert_eq!(config.max_chunks, 5);
-        assert_eq!(config.min_relevance, 0.3);
         assert_eq!(config.default_resolution, "l0");
         assert_eq!(config.context_window, 2);
     }

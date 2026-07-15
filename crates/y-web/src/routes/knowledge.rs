@@ -94,6 +94,9 @@ pub struct SearchResultItem {
     pub content: String,
     pub relevance: f64,
     pub domains: Vec<String>,
+    pub source: String,
+    pub collection: String,
+    pub resolution: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -146,6 +149,8 @@ pub struct SearchRequest {
     pub query: String,
     pub domain: Option<String>,
     pub limit: Option<usize>,
+    pub collection: Option<String>,
+    pub resolution: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,9 +434,9 @@ async fn kb_search(
     let params = y_knowledge::tools::KnowledgeSearchParams {
         query: body.query,
         domain: body.domain,
-        resolution: "l0".to_string(),
+        resolution: body.resolution.unwrap_or_else(|| "l0".to_string()),
         limit: body.limit.unwrap_or(10),
-        collection: None,
+        collection: body.collection,
     };
     let result = service.search(&params).await;
 
@@ -444,6 +449,9 @@ async fn kb_search(
             content: r.content.clone(),
             relevance: r.relevance,
             domains: r.domains.clone(),
+            source: r.source.clone(),
+            collection: r.collection.clone(),
+            resolution: r.resolution.clone(),
         })
         .collect();
 

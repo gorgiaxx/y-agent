@@ -49,7 +49,9 @@ pub use inject_bootstrap::{BootstrapEntry, InjectBootstrap};
 pub use inject_memory::InjectMemory;
 pub use inject_skills::{InjectSkills, InjectSkillsStatic, SkillSummary, SkillTemplateVars};
 pub use inject_tools::InjectTools;
-pub use knowledge_provider::KnowledgeContextProvider;
+pub use knowledge_provider::{
+    KnowledgeContextProvider, KnowledgeContextRetriever, KnowledgeContextSnippet,
+};
 pub use load_history::LoadHistory;
 pub use middleware_adapter::{stage_priorities, ContextMiddlewareAdapter};
 pub use pipeline::{

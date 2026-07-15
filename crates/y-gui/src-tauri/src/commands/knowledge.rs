@@ -176,6 +176,9 @@ pub struct SearchResultItem {
     pub content: String,
     pub relevance: f64,
     pub domains: Vec<String>,
+    pub source: String,
+    pub collection: String,
+    pub resolution: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -419,6 +422,9 @@ pub async fn kb_search(
             content: r.content.clone(),
             relevance: r.relevance,
             domains: r.domains.clone(),
+            source: r.source.clone(),
+            collection: r.collection.clone(),
+            resolution: r.resolution.clone(),
         })
         .collect())
 }

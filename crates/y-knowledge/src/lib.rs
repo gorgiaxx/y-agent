@@ -11,6 +11,7 @@
 //! - [`bm25`] — BM25 inverted index for keyword search
 //! - [`chunking::ChunkingStrategy`] — L0/L1/L2 multi-resolution chunking
 //! - [`classifier`] — Domain classification (rule-based + LLM placeholder)
+//! - [`evaluation`] — deterministic Recall, MRR, and nDCG regression metrics
 //! - [`ingestion`] — Source connectors and ingestion pipeline
 //! - [`maintenance`] — Staleness detection, TTL expiry, hit tracking
 //! - [`middleware`] — `InjectKnowledge` context injection (priority 350)
@@ -31,6 +32,7 @@ pub mod chunking;
 pub mod classifier;
 pub mod config;
 pub mod error;
+pub mod evaluation;
 pub mod indexer;
 pub mod ingestion;
 pub mod maintenance;
@@ -53,6 +55,7 @@ pub use chunking::{estimate_tokens, Chunk, ChunkLevel, ChunkerType, ChunkingStra
 pub use classifier::{Classifier, RuleBasedClassifier};
 pub use config::KnowledgeConfig;
 pub use error::KnowledgeError;
+pub use evaluation::{evaluate_rankings, EvaluationCase, RetrievalEvaluationMetrics};
 pub use ingestion::{IngestionPipeline, RawDocument, SourceConnector};
 pub use maintenance::{HitTracker, MaintenanceManager};
 pub use metadata::DocumentMetadata;

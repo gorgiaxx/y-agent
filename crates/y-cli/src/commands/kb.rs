@@ -229,6 +229,10 @@ pub async fn run(
                     // Show first 200 chars of content.
                     let preview: String = r.content.chars().take(200).collect();
                     println!("     {preview}");
+                    println!(
+                        "     source: {} | collection: {} | resolution: {}",
+                        r.source, r.collection, r.resolution
+                    );
                 }
             }
         }
