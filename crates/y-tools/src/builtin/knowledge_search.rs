@@ -17,6 +17,7 @@ use y_core::tool::{
 use y_core::types::ToolName;
 use y_knowledge::middleware::{InjectKnowledge, KnowledgeContextItem};
 use y_knowledge::tokenizer::AutoTokenizer;
+use y_knowledge::tools::KnowledgeSearchParams;
 
 /// Maximum result size in characters returned to the LLM.
 const MAX_RESULT_SIZE_CHARS: usize = 10_000;
@@ -89,6 +90,19 @@ impl KnowledgeSearchTool {
                             "relevant domain.",
                         )
                     },
+                    "collection": {
+                        "type": "string",
+                        "description": concat!(
+                            "Optional knowledge collection name. When provided, ",
+                            "results are isolated to that collection."
+                        )
+                    },
+                    "resolution": {
+                        "type": "string",
+                        "enum": ["l0", "l1", "l2"],
+                        "description": "Result resolution: summary, section overview, or full paragraph.",
+                        "default": "l0"
+                    },
                     "limit": {
                         "type": "integer",
                         "description": "Maximum number of results to return (default: 5, max: 20)",
@@ -115,6 +129,10 @@ impl KnowledgeSearchTool {
                     "content": content,
                     "relevance": format!("{:.2}", item.relevance),
                     "chunk_id": item.chunk_id,
+                    "document_id": item.document_id,
+                    "source": item.source,
+                    "collection": item.collection,
+                    "resolution": chunk_level_label(item.level),
                 });
                 if let Some(ref summary) = item.summary {
                     obj["summary"] = serde_json::json!(summary);
@@ -164,24 +182,20 @@ impl KnowledgeSearchTool {
 #[async_trait]
 impl Tool for KnowledgeSearchTool {
     async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
-        let query =
-            input.arguments["query"]
-                .as_str()
-                .ok_or_else(|| ToolError::ValidationError {
-                    message: "missing 'query' parameter".into(),
-                })?;
-
-        let domain = input.arguments.get("domain").and_then(|v| v.as_str());
-        let limit = input
-            .arguments
-            .get("limit")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(5)
-            .min(20) as usize;
+        let params: KnowledgeSearchParams = serde_json::from_value(input.arguments.clone())
+            .map_err(|error| ToolError::ValidationError {
+                message: format!("invalid KnowledgeSearch arguments: {error}"),
+            })?;
+        let request = params.retrieval_request();
+        if request.query.is_empty() {
+            return Err(ToolError::ValidationError {
+                message: "'query' must not be blank".to_string(),
+            });
+        }
 
         // Embed the query for cosine similarity when a provider is available.
         let query_embedding = if let Some(ref provider) = self.embedding_provider {
-            match provider.embed(query).await {
+            match provider.embed(&request.query).await {
                 Ok(result) => Some(result.vector),
                 Err(e) => {
                     tracing::warn!("Failed to embed query, falling back to keyword search: {e}");
@@ -196,12 +210,7 @@ impl Tool for KnowledgeSearchTool {
             .knowledge
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let items = knowledge.retrieve_for_context_with_limit(
-            query,
-            query_embedding.as_deref(),
-            domain,
-            limit,
-        );
+        let items = knowledge.retrieve(&request, query_embedding.as_deref());
 
         if items.is_empty() {
             return Ok(ToolOutput {
@@ -221,8 +230,10 @@ impl Tool for KnowledgeSearchTool {
             content: Self::format_results(&items),
             warnings: vec![],
             metadata: serde_json::json!({
-                "query": query,
-                "domain_filter": domain,
+                "query": request.query,
+                "domain_filter": request.domain,
+                "collection_filter": request.collection,
+                "resolution_filter": request.level.map(chunk_level_label),
             }),
         })
     }
@@ -233,6 +244,14 @@ impl Tool for KnowledgeSearchTool {
 
     fn is_read_only(&self) -> bool {
         true
+    }
+}
+
+fn chunk_level_label(level: y_knowledge::chunking::ChunkLevel) -> &'static str {
+    match level {
+        y_knowledge::chunking::ChunkLevel::L0 => "l0",
+        y_knowledge::chunking::ChunkLevel::L1 => "l1",
+        y_knowledge::chunking::ChunkLevel::L2 => "l2",
     }
 }
 
@@ -354,7 +373,10 @@ mod tests {
     #[tokio::test]
     async fn test_search_finds_results() {
         let tool = make_tool();
-        let input = make_input(serde_json::json!({ "query": "Rust error handling" }));
+        let input = make_input(serde_json::json!({
+            "query": "Rust error handling",
+            "resolution": "l2"
+        }));
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
         assert!(output.content["count"].as_u64().unwrap() > 0);
@@ -388,13 +410,56 @@ mod tests {
     #[tokio::test]
     async fn test_search_with_embedding_finds_results() {
         let tool = make_tool_with_embedding();
-        let input = make_input(serde_json::json!({ "query": "Rust error" }));
+        let input = make_input(serde_json::json!({
+            "query": "Rust error",
+            "resolution": "l2"
+        }));
         let output = tool.execute(input).await.unwrap();
         assert!(output.success);
         assert!(
             output.content["count"].as_u64().unwrap() > 0,
             "should find results using cosine similarity"
         );
+    }
+
+    #[tokio::test]
+    async fn test_search_collection_filter_prevents_cross_collection_leakage() {
+        let config = RetrievalConfig {
+            min_similarity_threshold: 0.0,
+            enable_dedup: false,
+            ..Default::default()
+        };
+        let mut retriever = HybridRetriever::with_config(AutoTokenizer::new(), config);
+        for (id, collection) in [("alpha", "alpha-docs"), ("beta", "beta-docs")] {
+            retriever.index(Chunk {
+                id: id.to_string(),
+                document_id: id.to_string(),
+                level: ChunkLevel::L2,
+                content: "shared retrieval phrase".to_string(),
+                token_estimate: 5,
+                metadata: ChunkMetadata {
+                    collection: collection.to_string(),
+                    title: id.to_string(),
+                    source: format!("file:///{id}.md"),
+                    ..Default::default()
+                },
+            });
+        }
+        let tool = KnowledgeSearchTool::new(Arc::new(Mutex::new(InjectKnowledge::new(retriever))));
+
+        let output = tool
+            .execute(make_input(serde_json::json!({
+                "query": "shared retrieval phrase",
+                "collection": "beta-docs",
+                "resolution": "l2"
+            })))
+            .await
+            .unwrap();
+
+        assert_eq!(output.content["count"], serde_json::json!(1));
+        assert_eq!(output.content["results"][0]["title"], "beta");
+        assert_eq!(output.content["results"][0]["collection"], "beta-docs");
+        assert_eq!(output.content["results"][0]["source"], "file:///beta.md");
     }
 
     #[tokio::test]
