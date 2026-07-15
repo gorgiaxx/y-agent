@@ -462,6 +462,111 @@ paths:
               schema:
                 $ref: "#/components/schemas/MessageResponse"
 
+  /api/v1/sessions/{session_id}/children:
+    get:
+      operationId: listChildSessions
+      tags: [Sessions]
+      summary: List direct child (sub-agent) sessions
+      description: |
+        Returns active sub-agent child sessions (plan phase / loop round /
+        delegated-task transcripts), oldest first, for drill-in rendering.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Child session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    title:
+                      type: string
+                      nullable: true
+                    session_type:
+                      type: string
+                      enum: [child, sub_agent, branch, ephemeral, canonical]
+                    agent_id:
+                      type: string
+                      nullable: true
+                    message_count:
+                      type: integer
+                    created_at:
+                      type: string
+                      format: date-time
+                    updated_at:
+                      type: string
+                      format: date-time
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/sessions/{session_id}/prompt-config:
+    get:
+      operationId: getSessionPromptConfig
+      tags: [Sessions]
+      summary: Get the full prompt composition config for a session
+      description: |
+        Returns the session-level prompt composition: `system_prompt`,
+        `prompt_section_ids`, and `template_id`. All fields are null when
+        no custom prompt is set (global prompt is used).
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session prompt config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  system_prompt:
+                    type: string
+                    nullable: true
+                  prompt_section_ids:
+                    type: array
+                    items:
+                      type: string
+                  template_id:
+                    type: string
+                    nullable: true
+    put:
+      operationId: setSessionPromptConfig
+      tags: [Sessions]
+      summary: Set or clear the full prompt composition config for a session
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config]
+              properties:
+                config:
+                  type: object
+                  properties:
+                    system_prompt:
+                      type: string
+                      nullable: true
+                    prompt_section_ids:
+                      type: array
+                      items:
+                        type: string
+                    template_id:
+                      type: string
+                      nullable: true
+      responses:
+        "200":
+          description: Prompt config updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
   # ================================================================
   #  Chat
   # ================================================================
@@ -735,19 +840,334 @@ paths:
           application/json:
             schema:
               type: object
-              required: [session_id, granted]
+              required: [request_id, decision]
               properties:
-                session_id:
+                request_id:
                   type: string
-                granted:
-                  type: boolean
+                decision:
+                  type: string
+                  enum: [approve, deny, allow_all_for_session, approve_always]
       responses:
         "200":
-          description: Permission decision delivered
+          description: Whether the decision was delivered to a waiting turn
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageResponse"
+                type: object
+                properties:
+                  delivered:
+                    type: boolean
+
+  /api/v1/chat/answer-plan-review:
+    post:
+      operationId: answerPlanReview
+      tags: [Chat]
+      summary: Deliver a plan-review decision to a waiting orchestrator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [review_id, decision]
+              properties:
+                review_id:
+                  type: string
+                decision:
+                  type: string
+                  enum: [approve, revise, reject]
+                feedback:
+                  type: string
+                  nullable: true
+                  description: Required when decision is "revise" or "reject".
+      responses:
+        "200":
+          description: Whether the decision was delivered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivered:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/chat/request-plan-revision:
+    post:
+      operationId: requestPlanRevision
+      tags: [Chat]
+      summary: Request a manual revision of a running plan execution
+      description: |
+        Interrupts an actively executing plan with user-supplied revision
+        feedback. The plan orchestrator pauses and re-enters the planning
+        phase to incorporate the feedback.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_run_id, feedback]
+              properties:
+                plan_run_id:
+                  type: string
+                feedback:
+                  type: string
+      responses:
+        "200":
+          description: Whether the revision request was delivered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivered:
+                    type: boolean
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/chat/resume-plan:
+    post:
+      operationId: resumePlan
+      tags: [Chat]
+      summary: Resume a paused or failed plan execution from a specific task
+      description: |
+        Spawns a background plan-resume worker and returns immediately with
+        a new `run_id`. Progress events are streamed via SSE as
+        `chat:progress` (kind `plan_resume`); completion is signaled by
+        `chat:complete`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, plan_run_id, from_task_id]
+              properties:
+                session_id:
+                  type: string
+                plan_run_id:
+                  type: string
+                from_task_id:
+                  type: string
+                  description: Task ID to resume from (empty string to restart).
+      responses:
+        "200":
+          description: Plan resume started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatStarted"
+
+  /api/v1/chat/restore-pending-reviews:
+    post:
+      operationId: restorePendingReviews
+      tags: [Chat]
+      summary: Restore un-delivered plan reviews for a session on reconnect
+      description: |
+        Re-emits any pending plan-review requests for a session that were
+        not yet answered (e.g. after a page reload). Each restored review
+        is also broadcast as a `chat:PlanReview` SSE event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id:
+                  type: string
+      responses:
+        "200":
+          description: Restored pending reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reviews:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        review_id:
+                          type: string
+                        plan_run_id:
+                          type: string
+                        session_id:
+                          type: string
+                        plan:
+                          type: object
+
+  /api/v1/chat/plan-runs/{session_id}:
+    get:
+      operationId: listPlanRuns
+      tags: [Chat]
+      summary: List all plan runs for a session
+      description: |
+        Returns the full persisted plan history for a session, reconstructed
+        into the same display shape used for live plan tool results.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Plan run list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/chat/steer:
+    post:
+      operationId: addSteer
+      tags: [Chat]
+      summary: Enqueue a steering message for a session
+      description: |
+        Steering messages are injected at the next LLM boundary, allowing
+        the user to redirect an in-progress turn without interrupting it.
+        Triggers a `chat:steer_queue` SSE event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, text]
+              properties:
+                session_id:
+                  type: string
+                text:
+                  type: string
+      responses:
+        "200":
+          description: The added steering message
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    delete:
+      operationId: deleteSteer
+      tags: [Chat]
+      summary: Remove a pending steering message by id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, steer_id]
+              properties:
+                session_id:
+                  type: string
+                steer_id:
+                  type: string
+      responses:
+        "200":
+          description: Whether the steer was deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+
+  /api/v1/chat/steer/{session_id}:
+    get:
+      operationId: listSteers
+      tags: [Chat]
+      summary: List pending steering messages for a session (FIFO order)
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Steering message list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /api/v1/chat/follow-up:
+    post:
+      operationId: addFollowUp
+      tags: [Chat]
+      summary: Enqueue a follow-up message for a session
+      description: |
+        Follow-up messages are processed after the current run stops,
+        starting a new turn automatically. Triggers a
+        `chat:follow_up_queue` SSE event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, text]
+              properties:
+                session_id:
+                  type: string
+                text:
+                  type: string
+      responses:
+        "200":
+          description: The added follow-up message
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    delete:
+      operationId: deleteFollowUp
+      tags: [Chat]
+      summary: Remove a pending follow-up message by id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, follow_up_id]
+              properties:
+                session_id:
+                  type: string
+                follow_up_id:
+                  type: string
+      responses:
+        "200":
+          description: Whether the follow-up was deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+
+  /api/v1/chat/follow-up/{session_id}:
+    get:
+      operationId: listFollowUps
+      tags: [Chat]
+      summary: List pending follow-up messages for a session (FIFO order)
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Follow-up message list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
 
   /api/v1/chat/last-turn-meta/{session_id}:
     get:
@@ -1193,6 +1613,100 @@ paths:
                     type: string
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/config/prompt-templates:
+    get:
+      operationId: promptTemplateList
+      tags: [Config]
+      summary: List user-defined prompt templates
+      responses:
+        "200":
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    content:
+                      type: string
+                    is_default:
+                      type: boolean
+
+  /api/v1/config/prompt-templates/{id}:
+    put:
+      operationId: promptTemplateSave
+      tags: [Config]
+      summary: Save (create or update) a user prompt template
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template]
+              properties:
+                template:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    content:
+                      type: string
+                    is_default:
+                      type: boolean
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+    delete:
+      operationId: promptTemplateDelete
+      tags: [Config]
+      summary: Delete a user prompt template by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/providers/thaw:
+    post:
+      operationId: providerThawAll
+      tags: [System]
+      summary: Thaw all frozen providers and return the count thawed
+      responses:
+        "200":
+          description: Number of providers thawed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  thawed:
+                    type: integer
 
   /api/v1/providers/test:
     post:
@@ -1473,6 +1987,53 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/skills/create:
+    post:
+      operationId: createSkill
+      tags: [Skills]
+      summary: Create a skill from a natural-language description
+      description: |
+        Uses the agent-assisted skill-creation pipeline to generate a skill
+        from a user request. Returns the creation decision (`created` or
+        `rejected`), the new skill id on success, and any rejection reason.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request]
+              properties:
+                request:
+                  type: string
+                  description: Natural-language description of the skill to create.
+                domain_hints:
+                  type: array
+                  items:
+                    type: string
+                  nullable: true
+                language:
+                  type: string
+                  nullable: true
+                  description: Target language for generated skill files.
+      responses:
+        "200":
+          description: Creation result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decision]
+                properties:
+                  decision:
+                    type: string
+                    enum: [created, rejected]
+                  skill_id:
+                    type: string
+                    nullable: true
+                  error:
+                    type: string
+                    nullable: true
 
   /api/v1/skills/{name}:
     get:
@@ -2121,6 +2682,22 @@ paths:
   # ================================================================
   #  Diagnostics
   # ================================================================
+  /api/v1/diagnostics:
+    delete:
+      operationId: clearAllDiagnostics
+      tags: [Diagnostics]
+      summary: Clear all stored diagnostics history
+      responses:
+        "200":
+          description: Number of entries deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
+
   /api/v1/diagnostics/traces:
     get:
       operationId: listTraces
@@ -2621,6 +3198,20 @@ components:
       properties:
         message:
           type: string
+    # -- Chat --
+    ChatStarted:
+      type: object
+      required: [session_id, run_id]
+      properties:
+        session_id:
+          type: string
+        run_id:
+          type: string
+        kind:
+          type: string
+          enum: [chat, plan_resume]
+          default: chat
+          description: Run source; `plan_resume` for a background plan-execution retry.
 
     # -- Health --
     HealthResponse:
