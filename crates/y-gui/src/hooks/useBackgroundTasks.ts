@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 
 import { logger, transport } from '../lib';
 import { chatBusSubscribers, type ChatBusEvent } from './chatBus';
+import { useTransportListener } from './useTransportListener';
 
 export type BackgroundTaskStatus = 'running' | 'completed' | 'failed' | 'unknown';
 
@@ -26,6 +27,20 @@ export interface BackgroundTaskSnapshot {
   stderr: string;
   duration_ms: number;
 }
+
+export type ToolRuntimeEvent = {
+  session_id: string;
+  task_id: string;
+  tool_name: string;
+  backend?: string;
+  occurred_at: string;
+} & (
+  | { type: 'process_started'; command: string; working_dir: string | null }
+  | { type: 'output_chunk'; stream: BackgroundTaskLogStream; content: string }
+  | { type: 'process_completed'; exit_code: number; duration_ms: number }
+  | { type: 'process_failed'; error: string; duration_ms: number }
+  | { type: 'process_killed'; duration_ms: number }
+);
 
 export type BackgroundTaskLogStream = 'stdout' | 'stderr';
 
@@ -97,8 +112,39 @@ function taskFromSnapshot(
     status: snapshot.status,
     exit_code: snapshot.exit_code,
     error: snapshot.error,
-    duration_ms: snapshot.duration_ms,
+    duration_ms: Math.max(existing?.duration_ms ?? 0, snapshot.duration_ms),
   };
+}
+
+export function snapshotFromToolRuntimeEvent(
+  event: ToolRuntimeEvent,
+): BackgroundTaskSnapshot {
+  const base = {
+    process_id: event.task_id,
+    backend: event.backend ?? 'native',
+    exit_code: null,
+    error: null,
+    stdout: '',
+    stderr: '',
+    duration_ms: 'duration_ms' in event ? event.duration_ms : 0,
+  };
+  switch (event.type) {
+    case 'process_started':
+      return { ...base, status: 'running' };
+    case 'output_chunk':
+      return {
+        ...base,
+        status: 'running',
+        stdout: event.stream === 'stdout' ? event.content : '',
+        stderr: event.stream === 'stderr' ? event.content : '',
+      };
+    case 'process_completed':
+      return { ...base, status: 'completed', exit_code: event.exit_code };
+    case 'process_failed':
+      return { ...base, status: 'failed', error: event.error };
+    case 'process_killed':
+      return { ...base, status: 'completed', exit_code: -1 };
+  }
 }
 
 function mapStatusString(status: unknown): BackgroundTaskStatus {
@@ -169,6 +215,27 @@ export function useBackgroundTasks(sessionId: string | null) {
       ));
     });
   }, []);
+
+  useTransportListener<ToolRuntimeEvent>(
+    'tool:runtime',
+    ({ payload }) => {
+      if (!sessionId || payload.session_id !== sessionId) return;
+      if (payload.tool_name !== 'ShellExec') return;
+      applySnapshot(snapshotFromToolRuntimeEvent(payload));
+      if (payload.type === 'process_started') {
+        setTasks((prev) => prev.map((task) => (
+          task.process_id === payload.task_id
+            ? {
+                ...task,
+                command: payload.command,
+                working_dir: payload.working_dir,
+              }
+            : task
+        )));
+      }
+    },
+    [sessionId, applySnapshot],
+  );
 
   const runSnapshotAction = useCallback(async (
     processId: string,

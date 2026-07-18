@@ -4,14 +4,14 @@
 
 use std::collections::HashMap;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use y_service::{WorkspaceRecord, WorkspaceService};
+use y_service::{WorkspaceRecord, WorkspaceService, WorkspaceTrustDecision};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -41,6 +41,11 @@ pub struct AssignSessionRequest {
 #[derive(Debug, Deserialize)]
 pub struct UnassignSessionRequest {
     pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WorkspaceTrustRequest {
+    pub path: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +126,41 @@ async fn unassign_session(
     Ok(Json(serde_json::json!({"message": "unassigned"})))
 }
 
+/// `GET /api/v1/workspaces/trust-status?path=...`
+async fn workspace_trust_status(
+    State(state): State<AppState>,
+    Query(query): Query<WorkspaceTrustRequest>,
+) -> Result<Json<WorkspaceTrustDecision>, ApiError> {
+    svc(&state)
+        .workspace_trust(std::path::Path::new(&query.path))
+        .map(Json)
+        .map_err(|error| {
+            ApiError::BadRequest(format!("Failed to resolve workspace trust: {error}"))
+        })
+}
+
+/// `POST /api/v1/workspaces/trust`
+async fn trust_workspace(
+    State(state): State<AppState>,
+    Json(body): Json<WorkspaceTrustRequest>,
+) -> Result<Json<WorkspaceTrustDecision>, ApiError> {
+    svc(&state)
+        .trust_workspace(std::path::Path::new(&body.path))
+        .map(Json)
+        .map_err(|error| ApiError::BadRequest(format!("Failed to trust workspace: {error}")))
+}
+
+/// `POST /api/v1/workspaces/untrust`
+async fn untrust_workspace(
+    State(state): State<AppState>,
+    Json(body): Json<WorkspaceTrustRequest>,
+) -> Result<Json<WorkspaceTrustDecision>, ApiError> {
+    svc(&state)
+        .untrust_workspace(std::path::Path::new(&body.path))
+        .map(Json)
+        .map_err(|error| ApiError::BadRequest(format!("Failed to block workspace: {error}")))
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -135,6 +175,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/workspaces/session-map", get(session_map))
         .route("/api/v1/workspaces/assign", post(assign_session))
         .route("/api/v1/workspaces/unassign", post(unassign_session))
+        .route(
+            "/api/v1/workspaces/trust-status",
+            get(workspace_trust_status),
+        )
+        .route("/api/v1/workspaces/trust", post(trust_workspace))
+        .route("/api/v1/workspaces/untrust", post(untrust_workspace))
         .route(
             "/api/v1/workspaces/{id}",
             put(update_workspace).delete(delete_workspace),

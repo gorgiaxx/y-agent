@@ -41,6 +41,14 @@ export interface WorkspaceInfo {
   path: string;
 }
 
+export type WorkspaceTrustStatus = 'unknown' | 'trusted' | 'untrusted';
+
+export interface WorkspaceTrustDecision {
+  canonical_path: string;
+  status: WorkspaceTrustStatus;
+  updated_at: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Messages
 // ---------------------------------------------------------------------------
@@ -81,7 +89,7 @@ export interface ToolCallBrief {
 export interface ChatStarted {
   session_id: string;
   run_id: string;
-  /** Run source: `chat` (normal LLM turn) or `plan_resume` (background plan retry). */
+  /** Run source: `chat`, `plan_resume`, or `background_auto_wake`. */
   kind?: string;
 }
 

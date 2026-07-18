@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { transport } from '../lib';
-import type { WorkspaceInfo } from '../types';
+import type { WorkspaceInfo, WorkspaceTrustDecision } from '../types';
 
 export interface UseWorkspacesReturn {
   workspaces: WorkspaceInfo[];
@@ -12,6 +12,8 @@ export interface UseWorkspacesReturn {
   deleteWorkspace: (id: string) => Promise<void>;
   assignSession: (workspaceId: string, sessionId: string) => Promise<void>;
   unassignSession: (sessionId: string) => Promise<void>;
+  getWorkspaceTrust: (path: string) => Promise<WorkspaceTrustDecision>;
+  setWorkspaceTrust: (path: string, trusted: boolean) => Promise<WorkspaceTrustDecision>;
   refreshWorkspaces: () => Promise<void>;
 }
 
@@ -25,6 +27,20 @@ export async function createWorkspaceRecord(
     console.error('Failed to create workspace:', e);
     return null;
   }
+}
+
+export async function getWorkspaceTrust(path: string): Promise<WorkspaceTrustDecision> {
+  return transport.invoke<WorkspaceTrustDecision>('workspace_trust_status', { path });
+}
+
+export async function setWorkspaceTrust(
+  path: string,
+  trusted: boolean,
+): Promise<WorkspaceTrustDecision> {
+  return transport.invoke<WorkspaceTrustDecision>(
+    trusted ? 'workspace_trust' : 'workspace_untrust',
+    { path },
+  );
 }
 
 export function useWorkspaces(): UseWorkspacesReturn {
@@ -112,6 +128,8 @@ export function useWorkspaces(): UseWorkspacesReturn {
       deleteWorkspace,
       assignSession,
       unassignSession,
+      getWorkspaceTrust,
+      setWorkspaceTrust,
       refreshWorkspaces,
     }),
     [

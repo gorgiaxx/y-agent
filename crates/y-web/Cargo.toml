@@ -33,6 +33,8 @@ async-stream = { workspace = true }
 
 [features]
 default = []
+background_auto_wake = ["y-service/background_auto_wake"]
+lsp = ["y-service/lsp"]
 
 [dev-dependencies]
 y-test-utils = { workspace = true }

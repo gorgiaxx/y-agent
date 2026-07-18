@@ -508,11 +508,14 @@ async fn kb_ingest_batch(
     let service_handle = Arc::clone(knowledge_service(&state));
 
     for (i, source) in body.sources.iter().enumerate() {
-        let _ = state.event_tx.send(SseEvent::KbBatchProgress {
-            current: i + 1,
-            total,
-            source: source.clone(),
-        });
+        let _ = state.event_tx.send(
+            SseEvent::KbBatchProgress {
+                current: i + 1,
+                total,
+                source: source.clone(),
+            }
+            .into(),
+        );
 
         let params = y_knowledge::tools::KnowledgeIngestParams {
             source: source.clone(),
@@ -538,16 +541,17 @@ async fn kb_ingest_batch(
         match result {
             Ok(r) if r.success => {
                 succeeded += 1;
-                let _ = state
-                    .event_tx
-                    .send(SseEvent::KbEntryIngested(serde_json::json!({
+                let _ = state.event_tx.send(
+                    SseEvent::KbEntryIngested(serde_json::json!({
                         "entry_id": r.entry_id.unwrap_or_default(),
                         "source": source,
                         "collection": body.collection,
                         "current": i + 1,
                         "total": total,
                         "entry": entry_info,
-                    })));
+                    }))
+                    .into(),
+                );
             }
             Ok(r) => {
                 errors.push(format!("{source}: {}", r.message));

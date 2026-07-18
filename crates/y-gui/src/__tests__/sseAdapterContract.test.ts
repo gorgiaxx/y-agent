@@ -29,8 +29,11 @@ class MockEventSource {
 
   close() {}
 
-  emitNamed(event: string, data: unknown) {
-    const message = new MessageEvent(event, { data: JSON.stringify(data) });
+  emitNamed(event: string, data: unknown, lastEventId = '') {
+    const message = new MessageEvent(event, {
+      data: JSON.stringify(data),
+      lastEventId,
+    });
     for (const callback of this.listeners.get(event) ?? []) {
       callback(message);
     }
@@ -96,5 +99,30 @@ describe('SseAdapter contract mapping', () => {
 
     expect(payloads).toEqual([{ run_id: 'r1', session_id: 's1' }]);
     adapter.dispose();
+  });
+
+  it('reconnects with the last delivered durable event cursor', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('EventSource', MockEventSource);
+    const adapter = new SseAdapter('http://localhost:3000', 'secret');
+
+    adapter.listen('chat:started', () => {});
+    MockEventSource.instances[0].emitNamed(
+      'chat:started',
+      {
+        type: 'ChatStarted',
+        data: { run_id: 'r1', session_id: 's1' },
+      },
+      '41',
+    );
+    MockEventSource.instances[0].onerror?.(new Event('error'));
+    vi.advanceTimersByTime(1000);
+
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].url.toString()).toBe(
+      'http://localhost:3000/api/v1/events?token=secret&cursor=41',
+    );
+    adapter.dispose();
+    vi.useRealTimers();
   });
 });

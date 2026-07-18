@@ -33,6 +33,7 @@ export class SseAdapter {
   private maxReconnectMs = 30000;
   private disposed = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastEventId: string | null = null;
   private _status: ConnectionStatus = 'connecting';
   private statusListeners = new Set<StatusCallback>();
 
@@ -61,7 +62,11 @@ export class SseAdapter {
     if (this.disposed) return;
     this.setStatus('connecting');
 
-    const url = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url;
+    const params = new URLSearchParams();
+    if (this.token) params.set('token', this.token);
+    if (this.lastEventId) params.set('cursor', this.lastEventId);
+    const query = params.toString();
+    const url = query ? `${this.url}?${query}` : this.url;
     this.source = new EventSource(url);
     this.eventHandlers.clear();
     for (const event of this.listeners.keys()) {
@@ -94,6 +99,7 @@ export class SseAdapter {
     const handler = ((ev: MessageEvent) => {
       try {
         const payload = normalizeSsePayload(JSON.parse(ev.data));
+        this.rememberCursor(ev);
         const cbs = this.listeners.get(event);
         if (cbs) {
           for (const cb of cbs) {
@@ -114,6 +120,7 @@ export class SseAdapter {
       const data = JSON.parse(ev.data) as { event?: string; [key: string]: unknown };
       const eventName = data.event as string | undefined;
       if (!eventName) return;
+      this.rememberCursor(ev);
 
       const callbacks = this.listeners.get(eventName);
       if (!callbacks) return;
@@ -124,6 +131,12 @@ export class SseAdapter {
       }
     } catch {
       // ignore malformed SSE data
+    }
+  }
+
+  private rememberCursor(ev: MessageEvent) {
+    if (/^[0-9]+$/.test(ev.lastEventId)) {
+      this.lastEventId = ev.lastEventId;
     }
   }
 

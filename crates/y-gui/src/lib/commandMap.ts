@@ -438,6 +438,10 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                          body: (a) => ({ workspace_id: arg(a, 'workspaceId', 'workspace_id'), session_id: arg(a, 'sessionId', 'session_id') }) },
   workspace_unassign_session: { method: 'POST', path: '/api/v1/workspaces/unassign',
                          body: (a) => ({ session_id: arg(a, 'sessionId', 'session_id') }) },
+  workspace_trust_status: { method: 'GET', path: '/api/v1/workspaces/trust-status',
+                         query: (a) => ({ path: String(a.path) }) },
+  workspace_trust:     { method: 'POST', path: '/api/v1/workspaces/trust', body: id },
+  workspace_untrust:   { method: 'POST', path: '/api/v1/workspaces/untrust', body: id },
 
   // -- Diagnostics --
   diagnostics_get_by_session: { method: 'GET', path: pathWith('/api/v1/diagnostics/sessions/{sessionId}', 'sessionId'),

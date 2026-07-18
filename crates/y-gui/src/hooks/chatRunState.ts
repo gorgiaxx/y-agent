@@ -8,9 +8,9 @@ export interface ChatRunState {
    *  `streamingSessions` when the parent run terminates (the parent is the
    *  only entry `applyRunTerminal` knows about from `runToSession`). */
   streamingChildSessions: Set<string>;
-  /** Run kind per run_id: `chat` (normal LLM turn) or `plan_resume`
-   *  (background plan-execution retry that must not create a new assistant
-   *  bubble). Absent == `chat`. */
+  /** Non-default run kind per run_id. `plan_resume` updates an existing Plan
+   *  card; `background_auto_wake` is a normal assistant-producing turn.
+   *  Absent == `chat`. */
   runKinds: Record<string, string>;
 }
 

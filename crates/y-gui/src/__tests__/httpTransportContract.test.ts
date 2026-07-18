@@ -365,6 +365,30 @@ describe('HttpTransport contract mapping', () => {
     ]);
   });
 
+  it('maps workspace trust commands to equivalent y-web contracts', async () => {
+    const { calls } = installFetchMock({
+      canonical_path: '/srv/project',
+      status: 'trusted',
+      updated_at: null,
+    });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('workspace_trust_status', { path: '/srv/project' });
+    await transport.invoke('workspace_trust', { path: '/srv/project' });
+    await transport.invoke('workspace_untrust', { path: '/srv/project' });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://localhost:3000/api/v1/workspaces/trust-status?path=%2Fsrv%2Fproject',
+      'http://localhost:3000/api/v1/workspaces/trust',
+      'http://localhost:3000/api/v1/workspaces/untrust',
+    ]);
+    expect(calls[0].init.body).toBeUndefined();
+    expect(calls.slice(1).map((call) => JSON.parse(String(call.init.body)))).toEqual([
+      { path: '/srv/project' },
+      { path: '/srv/project' },
+    ]);
+  });
+
   it('unwraps session context reset and custom prompt responses', async () => {
     installFetchMock({ index: 7 });
     const transport = new HttpTransport('http://localhost:3000');

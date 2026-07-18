@@ -11,7 +11,7 @@ use y_bot::discord::DiscordBot;
 use y_bot::feishu::FeishuBot;
 use y_service::ServiceContainer;
 
-use crate::routes::events::SseEvent;
+use crate::routes::events::SseEnvelope;
 
 pub use y_service::chat_types::TurnMeta;
 
@@ -65,7 +65,7 @@ pub struct AppState {
     /// Last completed turn metadata keyed by `session_id`.
     pub turn_meta_cache: Arc<Mutex<HashMap<String, TurnMeta>>>,
     /// Broadcast channel for SSE events.
-    pub event_tx: broadcast::Sender<SseEvent>,
+    pub event_tx: broadcast::Sender<SseEnvelope>,
     /// Optional bearer token for authentication.
     pub auth_token: Option<String>,
     /// Optional path to static SPA assets for serving the web frontend.

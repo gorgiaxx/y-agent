@@ -144,6 +144,22 @@ describe('chatRunState', () => {
     expect(isPlanResumeRun(state, 'run-plain')).toBe(false);
   });
 
+  it('preserves background auto-wake kind without treating it as plan resume', () => {
+    let state = createChatRunState();
+    state = applyRunStarted(
+      state,
+      'run-wake',
+      'session-1',
+      'background_auto_wake',
+    );
+
+    expect(isPlanResumeRun(state, 'run-wake')).toBe(false);
+    expect(getTerminalRunContext(state, 'run-wake')).toEqual({
+      sessionId: 'session-1',
+      kind: 'background_auto_wake',
+    });
+  });
+
   it('clears runKinds entry when the run terminates', () => {
     let state = createChatRunState();
     state = applyRunStarted(state, 'run-resume', 'session-1', 'plan_resume');

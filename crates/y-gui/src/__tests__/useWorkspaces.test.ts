@@ -10,7 +10,11 @@ vi.mock('../lib', () => ({
   },
 }));
 
-import { createWorkspaceRecord } from '../hooks/useWorkspaces';
+import {
+  createWorkspaceRecord,
+  getWorkspaceTrust,
+  setWorkspaceTrust,
+} from '../hooks/useWorkspaces';
 
 describe('createWorkspaceRecord', () => {
   beforeEach(() => {
@@ -33,6 +37,45 @@ describe('createWorkspaceRecord', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('workspace_create', {
       name: 'demo',
+      path: '/tmp/demo',
+    });
+  });
+});
+
+describe('workspace trust helpers', () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it('loads trust status through the shared transport', async () => {
+    invokeMock.mockResolvedValue({
+      canonical_path: '/tmp/demo',
+      status: 'unknown',
+      updated_at: null,
+    });
+
+    const result = await getWorkspaceTrust('/tmp/demo');
+
+    expect(result.status).toBe('unknown');
+    expect(invokeMock).toHaveBeenCalledWith('workspace_trust_status', {
+      path: '/tmp/demo',
+    });
+  });
+
+  it('persists trusted and untrusted decisions through matching commands', async () => {
+    invokeMock.mockResolvedValue({
+      canonical_path: '/tmp/demo',
+      status: 'trusted',
+      updated_at: '2026-07-17T00:00:00Z',
+    });
+
+    await setWorkspaceTrust('/tmp/demo', true);
+    await setWorkspaceTrust('/tmp/demo', false);
+
+    expect(invokeMock).toHaveBeenNthCalledWith(1, 'workspace_trust', {
+      path: '/tmp/demo',
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, 'workspace_untrust', {
       path: '/tmp/demo',
     });
   });
