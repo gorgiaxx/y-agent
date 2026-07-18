@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use tokio::io::AsyncReadExt;
 
+use y_core::file_mutation::{content_hash, ContentHasher};
 use y_core::runtime::RuntimeCapability;
 use y_core::tool::{
     Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
@@ -97,6 +98,7 @@ impl FileReadTool {
                 "properties": {
                     "path": { "type": "string" },
                     "content": { "type": "string" },
+                    "content_hash": { "type": "string" },
                     "lines": { "type": "integer" },
                     "total_lines": { "type": "integer" },
                     "line_offset": { "type": "integer" },
@@ -165,48 +167,52 @@ impl Tool for FileReadTool {
         if !range.explicit_range {
             // Read the full file content for summary (up to a reasonable cap).
             let file_content = if metadata.len() <= MAX_FILE_READ_SIZE_BYTES * 4 {
-                tokio::fs::read_to_string(&canonical).await.ok()
+                tokio::fs::read(&canonical).await.ok()
             } else {
                 None
             };
 
-            if let Some(source) = file_content {
-                if let Some(summary) = super::code_summary::summarize_code(&source, &canonical) {
-                    if summary.elided {
-                        let footer = super::code_summary::format_elision_footer(
-                            &canonical.display().to_string(),
-                            &summary.elided_ranges,
-                            summary.elided_lines,
-                        );
-                        let content = if footer.is_empty() {
-                            summary.text
-                        } else {
-                            format!("{}\n\n{footer}", summary.text)
-                        };
-                        let token_count = estimate_output_tokens(&content);
-                        if token_count <= MAX_OUTPUT_TOKENS {
-                            return Ok(ToolOutput {
-                                success: true,
-                                content: serde_json::json!({
-                                    "path": canonical.display().to_string(),
-                                    "content": content,
-                                    "lines": summary.total_lines - summary.elided_lines,
-                                    "total_lines": summary.total_lines,
-                                    "line_offset": 0,
-                                    "limit": summary.total_lines,
-                                    "encoding": "utf-8",
-                                    "total_bytes": metadata.len(),
-                                    "read_bytes": metadata.len(),
-                                    "has_more_lines": false,
-                                    "default_limit_applied": false,
-                                    "line_numbers": false,
-                                    "structural_summary": true,
-                                    "elided_lines": summary.elided_lines,
-                                    "elided_ranges": summary.elided_ranges,
-                                }),
-                                warnings: Vec::new(),
-                                metadata: serde_json::json!({}),
-                            });
+            if let Some(bytes) = file_content {
+                let hash = content_hash(&bytes);
+                if let Ok(source) = std::str::from_utf8(&bytes) {
+                    if let Some(summary) = super::code_summary::summarize_code(source, &canonical) {
+                        if summary.elided {
+                            let footer = super::code_summary::format_elision_footer(
+                                &canonical.display().to_string(),
+                                &summary.elided_ranges,
+                                summary.elided_lines,
+                            );
+                            let content = if footer.is_empty() {
+                                summary.text
+                            } else {
+                                format!("{}\n\n{footer}", summary.text)
+                            };
+                            let token_count = estimate_output_tokens(&content);
+                            if token_count <= MAX_OUTPUT_TOKENS {
+                                return Ok(ToolOutput {
+                                    success: true,
+                                    content: serde_json::json!({
+                                        "path": canonical.display().to_string(),
+                                        "content": content,
+                                        "content_hash": hash,
+                                        "lines": summary.total_lines - summary.elided_lines,
+                                        "total_lines": summary.total_lines,
+                                        "line_offset": 0,
+                                        "limit": summary.total_lines,
+                                        "encoding": "utf-8",
+                                        "total_bytes": metadata.len(),
+                                        "read_bytes": metadata.len(),
+                                        "has_more_lines": false,
+                                        "default_limit_applied": false,
+                                        "line_numbers": false,
+                                        "structural_summary": true,
+                                        "elided_lines": summary.elided_lines,
+                                        "elided_ranges": summary.elided_ranges,
+                                    }),
+                                    warnings: Vec::new(),
+                                    metadata: serde_json::json!({}),
+                                });
+                            }
                         }
                     }
                 }
@@ -250,6 +256,7 @@ impl Tool for FileReadTool {
         let mut result = serde_json::json!({
             "path": canonical.display().to_string(),
             "content": content,
+            "content_hash": read.content_hash,
             "lines": line_count,
             "total_lines": read.total_lines,
             "line_offset": range.offset,
@@ -339,6 +346,7 @@ struct FileRangeRead {
     total_bytes: u64,
     read_bytes: usize,
     encoding: &'static str,
+    content_hash: String,
 }
 
 /// Internal helper to read only the requested line range while bounding returned content.
@@ -381,6 +389,7 @@ async fn read_file_range_fast(
         total_bytes: metadata.len(),
         read_bytes,
         encoding,
+        content_hash: content_hash(&bytes),
     })
 }
 
@@ -434,6 +443,7 @@ async fn read_file_range_streaming(
     let mut first_chunk = true;
     let mut last_byte_was_newline = false;
     let mut lossy = false;
+    let mut hasher = ContentHasher::new();
 
     loop {
         let bytes_read = file
@@ -446,6 +456,7 @@ async fn read_file_range_streaming(
 
         let mut start = 0;
         let chunk = &buffer[..bytes_read];
+        hasher.update(chunk);
         total_bytes = total_bytes.saturating_add(bytes_read as u64);
         last_byte_was_newline = chunk.last().is_some_and(|b| *b == b'\n');
 
@@ -505,6 +516,7 @@ async fn read_file_range_streaming(
         total_bytes: metadata.len(),
         read_bytes: selected_bytes,
         encoding: if lossy { "UTF-8 (lossy)" } else { "UTF-8" },
+        content_hash: hasher.finish(),
     })
 }
 
@@ -726,6 +738,10 @@ mod tests {
         assert_eq!(output.content["total_lines"], 2);
         assert_eq!(output.content["line_numbers"], false);
         assert_eq!(output.content["encoding"], "UTF-8");
+        assert_eq!(
+            output.content["content_hash"],
+            "sha256:9060554863a62b9db5f726216876654e561896071d2e6480f2048b70e0fdadb9"
+        );
     }
 
     #[tokio::test]

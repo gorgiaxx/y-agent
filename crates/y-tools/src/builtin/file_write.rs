@@ -1,6 +1,7 @@
 //! `FileWrite` built-in tool: write content to a file.
 
 use async_trait::async_trait;
+use y_core::file_mutation::{FileMutationCapability, FileMutationOperation};
 use y_core::runtime::RuntimeCapability;
 use y_core::tool::{
     Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
@@ -22,6 +23,11 @@ impl FileWriteTool {
     }
 
     pub fn tool_definition() -> ToolDefinition {
+        let mut capabilities = RuntimeCapability::default();
+        capabilities.filesystem.mutation = Some(FileMutationCapability::new(
+            FileMutationOperation::CreateOrModify,
+            "path",
+        ));
         ToolDefinition {
             name: ToolName::from_string("FileWrite"),
             description: "Write content to a file, creating parent directories as needed.".into(),
@@ -43,7 +49,7 @@ impl FileWriteTool {
             result_schema: None,
             category: ToolCategory::FileSystem,
             tool_type: ToolType::BuiltIn,
-            capabilities: RuntimeCapability::default(),
+            capabilities,
             is_dangerous: true,
         }
     }
@@ -269,5 +275,7 @@ mod tests {
         let def = FileWriteTool::tool_definition();
         assert_eq!(def.name.as_str(), "FileWrite");
         assert!(def.is_dangerous);
+        let mutation = def.capabilities.filesystem.mutation.unwrap();
+        assert_eq!(mutation.path_argument, "path");
     }
 }

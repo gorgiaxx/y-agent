@@ -14,6 +14,8 @@ pub mod glob;
 pub mod grep;
 pub mod knowledge_search;
 pub mod loop_tool;
+#[cfg(feature = "lsp")]
+pub mod lsp;
 pub mod plan;
 pub mod shell_exec;
 pub mod skill_evolution;
@@ -312,7 +314,7 @@ mod tests {
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None, None).await;
         // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch
         // + 12 workflow/schedule + 1 plan + 1 loop + 8 dynamic-agent lifecycle
-        // + 3 governed skill-evolution + 5 dynamic-tool lifecycle tools = 41
+        // + 3 governed skill-evolution + 5 dynamic-tool lifecycle tools = 41.
         assert_eq!(registry.len().await, 41);
     }
 
@@ -331,7 +333,6 @@ mod tests {
             None,
         )
         .await;
-        // 41 + KnowledgeSearch = 42
         assert_eq!(registry.len().await, 42);
     }
 

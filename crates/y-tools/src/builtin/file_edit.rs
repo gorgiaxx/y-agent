@@ -5,12 +5,15 @@
 //! the file with `new_string` as content (parent directories are created
 //! automatically).
 //!
-//! Behavior hooks (read-before-write enforcement, stale-data checks,
-//! permission gates) are **not yet implemented** and will be added later.
-
 use async_trait::async_trait;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock, Weak};
 
+use tokio::sync::Mutex;
+use y_core::file_mutation::{
+    content_hash, FileMutationCapability, FileMutationOperation, ABSENT_CONTENT_HASH,
+};
 use y_core::runtime::RuntimeCapability;
 use y_core::tool::{
     Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
@@ -32,6 +35,11 @@ impl FileEditTool {
     }
 
     pub fn tool_definition() -> ToolDefinition {
+        let mut capabilities = RuntimeCapability::default();
+        capabilities.filesystem.mutation = Some(FileMutationCapability::new(
+            FileMutationOperation::CreateOrModify,
+            "file_path",
+        ));
         ToolDefinition {
             name: ToolName::from_string("FileEdit"),
             description: concat!(
@@ -68,6 +76,13 @@ impl FileEditTool {
                             "If false (default), the edit will fail when multiple matches exist."
                         ),
                         "default": false
+                    },
+                    "expected_content_hash": {
+                        "type": "string",
+                        "description": concat!(
+                            "Optional SHA-256 content hash returned by FileRead. ",
+                            "The edit fails without writing if the file changed after it was read."
+                        )
                     }
                 },
                 "required": ["file_path", "old_string", "new_string"]
@@ -75,7 +90,7 @@ impl FileEditTool {
             result_schema: None,
             category: ToolCategory::FileSystem,
             tool_type: ToolType::BuiltIn,
-            capabilities: RuntimeCapability::default(),
+            capabilities,
             is_dangerous: true,
         }
     }
@@ -116,6 +131,10 @@ impl Tool for FileEditTool {
             .get("replace_all")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        let expected_content_hash = input
+            .arguments
+            .get("expected_content_hash")
+            .and_then(serde_json::Value::as_str);
 
         // Reject no-ops where old and new are identical.
         if old_string == new_string {
@@ -126,15 +145,26 @@ impl Tool for FileEditTool {
 
         let path =
             resolve_workspace_path("FileEdit", Some(file_path), input.working_dir.as_deref())?;
+        let path_lock = lock_for_path(&lock_identity(&path));
+        let _path_guard = path_lock.lock().await;
 
         // --- File creation path (old_string is empty) ---
         if old_string.is_empty() {
-            return self.create_file(&path, file_path, new_string).await;
+            return self
+                .create_file(&path, file_path, new_string, expected_content_hash)
+                .await;
         }
 
         // --- Edit path ---
-        self.edit_file(&path, file_path, old_string, new_string, replace_all)
-            .await
+        self.edit_file(
+            &path,
+            file_path,
+            old_string,
+            new_string,
+            replace_all,
+            expected_content_hash,
+        )
+        .await
     }
 
     fn definition(&self) -> &ToolDefinition {
@@ -153,17 +183,36 @@ impl FileEditTool {
         path: &Path,
         file_path: &str,
         new_string: &str,
+        expected_content_hash: Option<&str>,
     ) -> Result<ToolOutput, ToolError> {
-        // Check whether the file already exists with content.
-        match tokio::fs::read_to_string(path).await {
-            Ok(existing) if !existing.trim().is_empty() => {
-                return Err(ToolError::ValidationError {
-                    message: format!(
-                        "cannot create new file -- '{file_path}' already exists with content",
-                    ),
+        let existing = match tokio::fs::read(path).await {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(ToolError::Other {
+                    message: format!("failed to read '{file_path}': {error}"),
                 });
             }
-            Ok(_) | Err(_) => { /* file is empty or does not exist -- proceed */ }
+        };
+        let actual_hash = existing
+            .as_deref()
+            .map_or(ABSENT_CONTENT_HASH.to_string(), content_hash);
+        verify_expected_hash(
+            file_path,
+            expected_content_hash,
+            &actual_hash,
+            existing.as_deref().unwrap_or_default(),
+        )?;
+
+        if existing
+            .as_deref()
+            .is_some_and(|content| !String::from_utf8_lossy(content).trim().is_empty())
+        {
+            return Err(ToolError::ValidationError {
+                message: format!(
+                    "cannot create new file -- '{file_path}' already exists with content",
+                ),
+            });
         }
 
         // Ensure parent directories exist.
@@ -180,6 +229,7 @@ impl FileEditTool {
             .map_err(|e| ToolError::Other {
                 message: format!("failed to write '{file_path}': {e}"),
             })?;
+        let after_hash = content_hash(new_string.as_bytes());
 
         Ok(ToolOutput {
             success: true,
@@ -187,6 +237,8 @@ impl FileEditTool {
                 "file_path": file_path,
                 "action": "created",
                 "bytes_written": new_string.len(),
+                "before_hash": existing.as_deref().map(content_hash),
+                "after_hash": after_hash,
             }),
             warnings: vec![],
             metadata: serde_json::json!({}),
@@ -201,33 +253,39 @@ impl FileEditTool {
         old_string: &str,
         new_string: &str,
         replace_all: bool,
+        expected_content_hash: Option<&str>,
     ) -> Result<ToolOutput, ToolError> {
         // Read current content (normalise line endings to LF).
-        let content = tokio::fs::read_to_string(path)
+        let raw_content = tokio::fs::read(path)
             .await
-            .map_err(|e| ToolError::Other {
-                message: format!("failed to read '{file_path}': {e}"),
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::NotFound => ToolError::FileNotFound {
+                    path: file_path.to_string(),
+                },
+                _ => ToolError::Other {
+                    message: format!("failed to read '{file_path}': {error}"),
+                },
             })?;
+        let before_hash = content_hash(&raw_content);
+        verify_expected_hash(file_path, expected_content_hash, &before_hash, &raw_content)?;
+        let content = String::from_utf8(raw_content).map_err(|error| ToolError::Other {
+            message: format!("failed to decode '{file_path}' as UTF-8: {error}"),
+        })?;
         let content = content.replace("\r\n", "\n");
 
         // Count occurrences of old_string.
         let match_count = content.matches(old_string).count();
 
         if match_count == 0 {
-            return Err(ToolError::ValidationError {
-                message: format!(
-                    "string to replace not found in file '{file_path}'.\nString: {old_string}",
-                ),
+            return Err(ToolError::EditTargetNotFound {
+                path: file_path.to_string(),
             });
         }
 
         if match_count > 1 && !replace_all {
-            return Err(ToolError::ValidationError {
-                message: format!(
-                    "found {match_count} matches of the string to replace in '{file_path}', \
-                     but replace_all is false. Provide more surrounding context to make it \
-                     unique, or set replace_all to true.\nString: {old_string}",
-                ),
+            return Err(ToolError::AmbiguousEdit {
+                path: file_path.to_string(),
+                matches: match_count,
             });
         }
 
@@ -244,6 +302,7 @@ impl FileEditTool {
             .map_err(|e| ToolError::Other {
                 message: format!("failed to write '{file_path}': {e}"),
             })?;
+        let after_hash = content_hash(updated.as_bytes());
 
         Ok(ToolOutput {
             success: true,
@@ -252,6 +311,8 @@ impl FileEditTool {
                 "action": "edited",
                 "replacements": if replace_all { match_count } else { 1 },
                 "replace_all": replace_all,
+                "before_hash": before_hash,
+                "after_hash": after_hash,
             }),
             warnings: vec![],
             metadata: serde_json::json!({}),
@@ -270,6 +331,8 @@ Usage notes:
 - You must read the target file (e.g. with `FileRead`) before editing. \
   Ensure you preserve the exact indentation (tabs/spaces) as it appears in the \
   file content. Never include line-number prefixes in old_string or new_string.
+- Pass FileRead's `content_hash` as `expected_content_hash` when available. \
+  A stale hash fails without modifying the file and returns fresh context.
 - Prefer editing existing files. Only create new files when explicitly required.
 - The edit will FAIL if `old_string` is not unique in the file. Either provide \
   a larger string with more surrounding context to make it unique, or set \
@@ -278,6 +341,58 @@ Usage notes:
   entire file).
 - When `old_string` is empty, the tool creates the file with `new_string` as \
   content (fails if the file already has non-empty content).";
+
+const MAX_STALE_CONTEXT_CHARS: usize = 1_200;
+
+fn verify_expected_hash(
+    file_path: &str,
+    expected_hash: Option<&str>,
+    actual_hash: &str,
+    current_content: &[u8],
+) -> Result<(), ToolError> {
+    if let Some(expected_hash) = expected_hash {
+        if expected_hash != actual_hash {
+            return Err(ToolError::StaleFile {
+                path: file_path.to_string(),
+                expected_hash: expected_hash.to_string(),
+                actual_hash: actual_hash.to_string(),
+                fresh_context: String::from_utf8_lossy(current_content)
+                    .chars()
+                    .take(MAX_STALE_CONTEXT_CHARS)
+                    .collect(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn lock_for_path(path: &Path) -> Arc<Mutex<()>> {
+    static PATH_LOCKS: OnceLock<std::sync::Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> =
+        OnceLock::new();
+    let registry = PATH_LOCKS.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let mut locks = registry
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(path.to_path_buf(), Arc::downgrade(&lock));
+    lock
+}
+
+fn lock_identity(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+        if let Ok(canonical_parent) = parent.canonicalize() {
+            return canonical_parent.join(name);
+        }
+    }
+    path.to_path_buf()
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -335,6 +450,85 @@ mod tests {
 
         let result = std::fs::read_to_string(&file).unwrap();
         assert_eq!(result, "goodbye world");
+    }
+
+    #[tokio::test]
+    async fn test_expected_content_hash_rejects_stale_edit_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("stale.txt");
+        std::fs::write(&file, "version two").unwrap();
+
+        let tool = FileEditTool::new();
+        let input = make_input(serde_json::json!({
+            "file_path": file.to_str().unwrap(),
+            "old_string": "two",
+            "new_string": "three",
+            "expected_content_hash": y_core::file_mutation::content_hash(b"version one")
+        }));
+        let result = tool.execute(input).await;
+
+        assert!(matches!(
+            result,
+            Err(ToolError::StaleFile {
+                expected_hash,
+                actual_hash,
+                ..
+            }) if expected_hash == y_core::file_mutation::content_hash(b"version one")
+                && actual_hash == y_core::file_mutation::content_hash(b"version two")
+        ));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "version two");
+    }
+
+    #[tokio::test]
+    async fn test_successful_expected_hash_edit_returns_before_and_after_hashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("guarded.txt");
+        std::fs::write(&file, "before").unwrap();
+        let before_hash = y_core::file_mutation::content_hash(b"before");
+
+        let tool = FileEditTool::new();
+        let input = make_input(serde_json::json!({
+            "file_path": file.to_str().unwrap(),
+            "old_string": "before",
+            "new_string": "after",
+            "expected_content_hash": before_hash
+        }));
+        let output = tool.execute(input).await.unwrap();
+
+        assert_eq!(output.content["before_hash"], before_hash);
+        assert_eq!(
+            output.content["after_hash"],
+            y_core::file_mutation::content_hash(b"after")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_parallel_edits_with_same_expected_hash_allow_only_one_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("parallel.txt");
+        std::fs::write(&file, "alpha beta").unwrap();
+        let expected_hash = y_core::file_mutation::content_hash(b"alpha beta");
+        let tool = FileEditTool::new();
+        let first = make_input(serde_json::json!({
+            "file_path": file.to_str().unwrap(),
+            "old_string": "alpha",
+            "new_string": "ALPHA",
+            "expected_content_hash": expected_hash.clone()
+        }));
+        let second = make_input(serde_json::json!({
+            "file_path": file.to_str().unwrap(),
+            "old_string": "beta",
+            "new_string": "BETA",
+            "expected_content_hash": expected_hash
+        }));
+
+        let (first_result, second_result) = tokio::join!(tool.execute(first), tool.execute(second));
+        let success_count = usize::from(first_result.is_ok()) + usize::from(second_result.is_ok());
+        let stale_count = usize::from(matches!(first_result, Err(ToolError::StaleFile { .. })))
+            + usize::from(matches!(second_result, Err(ToolError::StaleFile { .. })));
+
+        assert_eq!(success_count, 1);
+        assert_eq!(stale_count, 1);
     }
 
     #[tokio::test]
@@ -543,7 +737,7 @@ mod tests {
             "new_string": "replacement"
         }));
         let result = tool.execute(input).await;
-        assert!(result.is_err());
+        assert!(matches!(result, Err(ToolError::EditTargetNotFound { .. })));
     }
 
     #[tokio::test]
@@ -559,7 +753,10 @@ mod tests {
             "new_string": "xxx"
         }));
         let result = tool.execute(input).await;
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(ToolError::AmbiguousEdit { matches: 2, .. })
+        ));
     }
 
     #[tokio::test]
@@ -571,7 +768,7 @@ mod tests {
             "new_string": "else"
         }));
         let result = tool.execute(input).await;
-        assert!(result.is_err());
+        assert!(matches!(result, Err(ToolError::FileNotFound { .. })));
     }
 
     #[tokio::test]
@@ -594,6 +791,8 @@ mod tests {
         assert_eq!(def.category, ToolCategory::FileSystem);
         assert!(def.is_dangerous);
         assert!(def.help.is_some());
+        let mutation = def.capabilities.filesystem.mutation.unwrap();
+        assert_eq!(mutation.path_argument, "file_path");
     }
 
     // -- CRLF normalisation --

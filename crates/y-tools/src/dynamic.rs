@@ -99,7 +99,7 @@ const ALLOWED_SCRIPT_INTERPRETERS: &[&str] = &["bash", "sh", "python", "python3"
 impl DynamicToolDef {
     /// Convert to a `ToolDefinition` for registry insertion.
     pub fn to_tool_definition(&self) -> ToolDefinition {
-        let capabilities = match &self.kind {
+        let mut capabilities = match &self.kind {
             DynamicToolKind::Script { .. } => RuntimeCapability {
                 process: ProcessCapability {
                     shell: true,
@@ -113,6 +113,17 @@ impl DynamicToolDef {
             },
             DynamicToolKind::Composite { .. } => RuntimeCapability::default(),
         };
+        if let Some(value) = self.parameters.get("x-y-agent-file-mutation") {
+            match serde_json::from_value(value.clone()) {
+                Ok(mutation) => capabilities.filesystem.mutation = Some(mutation),
+                Err(error) => tracing::warn!(
+                    tool = %self.name,
+                    %error,
+                    "ignored invalid x-y-agent-file-mutation dynamic-tool schema extension"
+                ),
+            }
+        }
+        let is_file_mutating = capabilities.filesystem.mutation.is_some();
 
         ToolDefinition {
             name: self.name.clone(),
@@ -123,7 +134,7 @@ impl DynamicToolDef {
             category: ToolCategory::Custom,
             tool_type: ToolType::Dynamic,
             capabilities,
-            is_dangerous: matches!(self.kind, DynamicToolKind::Script { .. }),
+            is_dangerous: matches!(self.kind, DynamicToolKind::Script { .. }) || is_file_mutating,
         }
     }
 }
@@ -867,6 +878,23 @@ mod tests {
         assert_eq!(tool_def.category, ToolCategory::Custom);
         assert!(tool_def.is_dangerous);
         assert!(tool_def.capabilities.process.shell);
+    }
+
+    #[test]
+    fn test_dynamic_tool_imports_explicit_file_mutation_schema_extension() {
+        let mut def = sample_script_def("file_writer");
+        def.parameters = serde_json::json!({
+            "type": "object",
+            "x-y-agent-file-mutation": {
+                "operation": "create_or_modify",
+                "path_argument": "output_path"
+            }
+        });
+
+        let tool_def = def.to_tool_definition();
+        let mutation = tool_def.capabilities.filesystem.mutation.unwrap();
+        assert_eq!(mutation.path_argument, "output_path");
+        assert!(tool_def.is_dangerous);
     }
 
     #[test]

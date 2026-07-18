@@ -304,6 +304,18 @@ impl ToolTaxonomy {
         }
     }
 
+    /// Remove direct category entries that are no longer present in a live
+    /// dynamic registry. Static subcategories are intentionally untouched.
+    pub fn retain_category_tools(
+        &mut self,
+        key: &str,
+        live_tools: &std::collections::HashSet<ToolName>,
+    ) {
+        if let Some(category) = self.categories.get_mut(key) {
+            category.tools.retain(|tool| live_tools.contains(tool));
+        }
+    }
+
     /// Get the number of top-level categories.
     pub fn category_count(&self) -> usize {
         self.categories.len()
@@ -501,6 +513,26 @@ tools = ["ToolSearch"]
         let taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
         let tools = taxonomy.tools_in_category("nonexistent");
         assert!(tools.is_empty());
+    }
+
+    #[test]
+    fn retaining_category_tools_removes_stale_dynamic_entries() {
+        let mut taxonomy = ToolTaxonomy::from_toml(TEST_TOML).unwrap();
+        taxonomy.add_dynamic_category(
+            "mcp",
+            "MCP tools",
+            vec!["mcp_alpha_search".into(), "mcp_beta_read".into()],
+        );
+
+        taxonomy.retain_category_tools(
+            "mcp",
+            &std::collections::HashSet::from(["mcp_beta_read".to_string()]),
+        );
+
+        assert_eq!(
+            taxonomy.tools_in_category("mcp"),
+            vec!["mcp_beta_read".to_string()]
+        );
     }
 
     #[test]

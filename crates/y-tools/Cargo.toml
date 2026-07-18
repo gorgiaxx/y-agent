@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Tool Registry: 4 types, lazy loading, JSON Schema validation"
 
+[features]
+default = []
+lsp = []
+
 [dependencies]
 y-core = { workspace = true }
 y-hooks = { workspace = true }

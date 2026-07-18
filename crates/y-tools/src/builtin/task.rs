@@ -56,7 +56,11 @@ impl TaskTool {
                  - result_schema: JSON Schema for structured output. When provided, the \
                    agent's response is parsed as JSON and validated against this schema. \
                    The parent agent receives the validated JSON directly, eliminating the \
-                   need to parse prose."
+                   need to parse prose.\n\
+                 - workspace_isolation: Request shared or worktree execution. The service \
+                   may strengthen isolation for write-capable agents.\n\
+                 - workspace_snapshot_id: Resume a prior isolated snapshot in a new \
+                   worktree. Resume never modifies the parent workspace automatically."
                     .into(),
             ),
             parameters: serde_json::json!({
@@ -84,6 +88,15 @@ impl TaskTool {
                         "type": "object",
                         "description": "Optional JSON Schema for structured output. When provided, the agent's response is validated against this schema and returned as JSON.",
                         "additionalProperties": true
+                    },
+                    "workspace_isolation": {
+                        "type": "string",
+                        "enum": ["auto", "shared", "prefer_worktree", "require_worktree"],
+                        "description": "Optional workspace isolation request. y-service may strengthen this for write-capable agents."
+                    },
+                    "workspace_snapshot_id": {
+                        "type": "string",
+                        "description": "Optional durable workspace snapshot to resume in a new isolated worktree. Resume is fail-closed and never applies changes to the parent workspace automatically."
                     }
                 },
                 "required": ["agent_name", "prompt"]
@@ -114,6 +127,14 @@ impl Tool for TaskTool {
             .get("context_strategy")
             .and_then(|v| v.as_str());
         let result_schema = input.arguments.get("result_schema").cloned();
+        let workspace_isolation = input
+            .arguments
+            .get("workspace_isolation")
+            .and_then(|value| value.as_str());
+        let workspace_snapshot_id = input
+            .arguments
+            .get("workspace_snapshot_id")
+            .and_then(|value| value.as_str());
 
         let Some(agent_name) = agent_name else {
             return Err(ToolError::ValidationError {
@@ -138,6 +159,8 @@ impl Tool for TaskTool {
                 "mode": mode,
                 "context_strategy": context_strategy,
                 "result_schema": result_schema,
+                "workspace_isolation": workspace_isolation,
+                "workspace_snapshot_id": workspace_snapshot_id,
                 "status": "pending"
             }),
             warnings: vec![],
@@ -181,6 +204,48 @@ mod tests {
         assert_eq!(output.content["agent_name"], "agent-architect");
         assert_eq!(output.content["prompt"], "Design a disk info agent");
         assert_eq!(output.content["status"], "pending");
+    }
+
+    #[tokio::test]
+    async fn task_accepts_workspace_isolation_override() {
+        let tool = TaskTool::new();
+        let definition = TaskTool::tool_definition();
+        assert_eq!(
+            definition.parameters["properties"]["workspace_isolation"]["enum"],
+            serde_json::json!(["auto", "shared", "prefer_worktree", "require_worktree"])
+        );
+
+        let output = tool
+            .execute(make_input(serde_json::json!({
+                "agent_name": "tool-engineer",
+                "prompt": "Implement the change",
+                "workspace_isolation": "require_worktree",
+            })))
+            .await
+            .unwrap();
+
+        assert_eq!(output.content["workspace_isolation"], "require_worktree");
+    }
+
+    #[tokio::test]
+    async fn task_accepts_workspace_snapshot_resume_request() {
+        let tool = TaskTool::new();
+        let definition = TaskTool::tool_definition();
+        assert_eq!(
+            definition.parameters["properties"]["workspace_snapshot_id"]["type"],
+            "string"
+        );
+
+        let output = tool
+            .execute(make_input(serde_json::json!({
+                "agent_name": "tool-engineer",
+                "prompt": "Continue the isolated change",
+                "workspace_snapshot_id": "snapshot-1",
+            })))
+            .await
+            .unwrap();
+
+        assert_eq!(output.content["workspace_snapshot_id"], "snapshot-1");
     }
 
     #[tokio::test]
