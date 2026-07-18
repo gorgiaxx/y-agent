@@ -11,8 +11,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::file_mutation::FileMutationCapability;
 use crate::types::SessionId;
 
 // ---------------------------------------------------------------------------
@@ -52,6 +54,9 @@ pub struct FilesystemCapability {
     /// Whether host filesystem access is permitted at all.
     #[serde(default)]
     pub host_access: bool,
+    /// Declared filesystem mutation semantics for recovery and auditing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mutation: Option<FileMutationCapability>,
 }
 
 /// A single filesystem mount specification.
@@ -145,6 +150,8 @@ pub struct ExecutionRequest {
     pub stdin: Option<Vec<u8>>,
     /// Session that owns a spawned background process.
     pub owner_session_id: Option<SessionId>,
+    /// Tool or subsystem name attached to runtime events for this process.
+    pub event_tool_name: Option<String>,
     /// Capability requirements (determines isolation level).
     pub capabilities: RuntimeCapability,
     /// Preferred container image (for Docker runtime).
@@ -262,6 +269,96 @@ pub enum RuntimeBackend {
     Docker,
     Native,
     Ssh,
+}
+
+// ---------------------------------------------------------------------------
+// Tool runtime notification data plane
+// ---------------------------------------------------------------------------
+
+/// Stream identity for incremental process output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolRuntimeStream {
+    Stdout,
+    Stderr,
+}
+
+/// Runtime facts emitted while a tool-managed task is executing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolRuntimeEventKind {
+    ProcessStarted {
+        command: String,
+        working_dir: Option<String>,
+    },
+    OutputChunk {
+        stream: ToolRuntimeStream,
+        content: String,
+    },
+    ProcessCompleted {
+        exit_code: i32,
+        duration_ms: u64,
+    },
+    ProcessFailed {
+        error: String,
+        duration_ms: u64,
+    },
+    ProcessKilled {
+        duration_ms: u64,
+    },
+}
+
+impl ToolRuntimeEventKind {
+    /// Whether this event permanently ends the runtime task.
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::ProcessCompleted { .. } | Self::ProcessFailed { .. } | Self::ProcessKilled { .. }
+        )
+    }
+}
+
+/// Transport-neutral notification emitted by a runtime-managed tool task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolRuntimeEvent {
+    pub session_id: SessionId,
+    pub task_id: String,
+    pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<RuntimeBackend>,
+    pub occurred_at: DateTime<Utc>,
+    #[serde(flatten)]
+    pub kind: ToolRuntimeEventKind,
+}
+
+impl ToolRuntimeEvent {
+    pub fn new(
+        session_id: SessionId,
+        task_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        backend: Option<RuntimeBackend>,
+        kind: ToolRuntimeEventKind,
+    ) -> Self {
+        Self {
+            session_id,
+            task_id: task_id.into(),
+            tool_name: tool_name.into(),
+            backend,
+            occurred_at: Utc::now(),
+            kind,
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        self.kind.is_terminal()
+    }
+}
+
+/// Non-blocking sink used by runtimes to report execution data.
+///
+/// Implementations must isolate process execution from notification failures.
+pub trait ToolRuntimeEventSink: Send + Sync {
+    fn publish(&self, event: ToolRuntimeEvent);
 }
 
 // ---------------------------------------------------------------------------
