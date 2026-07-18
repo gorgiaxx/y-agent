@@ -1,0 +1,23 @@
+# Language Server Protocol integration is disabled by default. Commands are
+# trusted local executables; y-agent never installs or downloads them.
+enabled = false
+request_timeout_ms = 15000
+max_message_bytes = 8388608
+max_restarts = 3
+restart_base_delay_ms = 250
+
+[[servers]]
+id = "rust"
+command = "rust-analyzer"
+args = []
+language_id = "rust"
+extensions = ["rs"]
+root_markers = ["Cargo.toml", "rust-project.json"]
+
+[[servers]]
+id = "typescript"
+command = "typescript-language-server"
+args = ["--stdio"]
+language_id = "typescript"
+extensions = ["ts", "tsx", "js", "jsx", "d.ts"]
+root_markers = ["tsconfig.json", "jsconfig.json", "package.json"]
