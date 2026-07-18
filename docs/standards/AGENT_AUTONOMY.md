@@ -223,6 +223,51 @@ All agent definitions created at runtime go through three stages:
 - **Dynamic agent workspace limit**: Max 50 dynamic agents (configurable)
 - **Delegation depth default**: 2 (root agent → sub-agent → sub-sub-agent)
 
+### 4.6 Workspace Isolation
+
+Workspace isolation is a filesystem boundary, not a permission grant. A child
+agent inherits the parent's effective tool, activation, operation-mode, and
+HITL constraints regardless of which workspace it receives.
+
+Agent definitions may declare a `workspace_isolation` preference:
+
+| Value | Meaning |
+| --- | --- |
+| `auto` | y-service selects from effective write capability and execution context |
+| `shared` | shared workspace is preferred, but y-service may strengthen isolation |
+| `prefer_worktree` | use a Git worktree when available; read-only fallback may be allowed |
+| `require_worktree` | delegation fails unless a Git worktree is provisioned |
+
+Policy ownership and invariants:
+
+1. `y-core` owns transport-neutral policy and outcome types.
+2. `y-runtime` owns repository discovery, detached worktree creation, diff
+   capture, and cleanup mechanics.
+3. `y-service` is the final policy authority. Agent definitions and Task-call
+   overrides are requests, not authority.
+4. Interactive delegated agents with effective write-capable tools use a
+   worktree under `auto`. Read-only delegated agents may share the parent
+   workspace.
+5. Worktree creation failure for `require_worktree`, or for a write-capable
+   delegation that service policy selected for isolation, is terminal. It must
+   never silently fall back to the parent working directory.
+6. Worktrees are created detached from a captured base revision. Child changes
+   are returned as explicit metadata and bounded patch evidence. A full patch
+   is persisted as a service-owned durable snapshot before the active worktree
+   is removed. No automatic merge or patch application is permitted.
+7. Fresh worktree isolation requires a clean parent repository. A dirty parent
+   fails closed rather than silently starting the child from `HEAD` without the
+   parent's uncommitted state. Callers must first commit or stash that state,
+   or resume an existing workspace snapshot.
+8. Cleanup failure is observable and must not erase already captured diff or
+   changed-file evidence.
+9. `workspace_snapshot_id` requests rehydrate the named snapshot into a new
+   detached worktree at the original base revision. Missing, invalid,
+   cross-repository, or conflicting snapshots fail closed.
+10. Snapshot rehydration and explicit merge workflows are separate lifecycle
+   operations and remain subject to normal permission and file-mutation policy.
+   Rehydration does not apply changes to the parent workspace.
+
 ---
 
 ## 5. Prompt Management

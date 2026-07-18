@@ -4,7 +4,7 @@
 
 **Version**: v0.3
 **Created**: 2026-03-12
-**Updated**: 2026-03-27
+**Updated**: 2026-07-17
 **Status**: Draft
 
 ---
@@ -116,6 +116,107 @@ After executing a tool call, the result is fed back to the LLM as a `<tool_resul
 
 The body is always a JSON object. On success, the structure depends on the tool. On error, it contains an `error` field with a human-readable message.
 
+### Structured file-edit errors
+
+Tool errors also include a stable `code`, structured `details`, and a
+`retryable` flag. File-edit callers must branch on the code instead of parsing
+the message:
+
+- `stale_file` -- re-read the file and use the returned current hash/context;
+- `ambiguous_edit` -- provide a larger unique anchor or explicitly replace all;
+- `edit_target_not_found` -- the requested anchor is absent;
+- `file_not_found` -- the target file does not exist;
+- `permission_denied` -- stop or request an allowed alternative.
+
+`FileRead` returns `content_hash`. Callers should pass that value to
+`FileEdit.expected_content_hash` so stale writes fail before mutation.
+
+### Declaring file-mutating tools
+
+File mutation tracking is capability-based. Built-in definitions set
+`RuntimeCapability.filesystem.mutation`. MCP and dynamic tools declare the same
+metadata through the `x-y-agent-file-mutation` extension on their parameter
+schema:
+
+```json
+{
+  "type": "object",
+  "x-y-agent-file-mutation": {
+    "operation": "create_or_modify",
+    "path_argument": "path"
+  }
+}
+```
+
+Supported operations are `create_or_modify`, `create`, `modify`, `delete`, and
+`move`. Move tools also declare `destination_path_argument`. Invalid extensions
+are ignored with a warning; undeclared tools do not enter file rewind or
+mutation auditing. A declared writer is considered dangerous and passes through
+the normal guardrail/HITL pipeline.
+
+### Tool runtime notifications
+
+Tool results and runtime notifications are separate contracts. A ToolResult is
+the bounded response returned to the model after a call. `ToolRuntimeEvent` is
+the service-owned data plane for execution facts that occur while a managed
+task continues running, including process start, stdout/stderr chunks, and
+terminal state.
+
+Runtime events carry the owner `session_id`, a stable `task_id`, `tool_name`,
+optional backend, occurrence time, and a tagged event body. Background
+`ShellExec` uses its runtime process ID as `task_id`, so start, output, explicit
+control operations, and completion share one correlation. The runtime reports
+facts through the core sink contract; it cannot make permission decisions,
+publish presentation events directly, or invoke a model.
+
+`y-service` persists process start and terminal events as durable session
+events. Output chunks use bounded short-lived retention. y-web and Tauri expose
+the same `tool:runtime` event name, while explicit poll/write/kill calls remain
+the authoritative control protocol.
+
+When the optional background auto-wake subsystem is enabled, terminal runtime
+facts are evaluated by a service-owned policy. Runtime code must never invoke a
+model. A completion is eligible only while the owning session is idle and no
+disallowed Plan execution is active. The policy de-duplicates task IDs, honors
+manual result observation and kill intent, and applies per-session cooldown and
+hourly budget before the service starts a standard chat worker. Automatic turns
+use `ChatStarted.kind = "background_auto_wake"` and remain subject to the same
+guardrail, sandbox, permission, and HITL protocol as user-started turns.
+
+### LSP code-intelligence calls
+
+LSP tools are optional Tier 2 read-only tools. They are registered only when
+the binary is built with the `lsp` feature and service configuration enables
+the subsystem. Every call still passes through tool activation, guardrails,
+permission evaluation, and HITL before `y-service` intercepts the registered
+tool contract.
+
+| Tool | Required input | Optional input |
+| --- | --- | --- |
+| `LspDefinition` | `path`, `line`, `character` | none |
+| `LspReferences` | `path`, `line`, `character` | `include_declaration` |
+| `LspHover` | `path`, `line`, `character` | none |
+| `LspDocumentSymbols` | `path` | none |
+| `LspWorkspaceSymbols` | `query` | `working_directory`, `language` |
+| `LspDiagnostics` | `path` | none |
+
+Line and character positions are zero-based LSP positions; character offsets
+use UTF-16 code units. Source paths must resolve inside the current trusted
+working directory or an explicit additional read root. Project-root marker
+search is bounded by that trusted root and cannot activate a parent workspace.
+`language` selects a configured server ID or language ID in polyglot projects.
+
+Language-server processes use the runtime-managed native process boundary and
+publish runtime events with `tool_name = "LspServer"`. The service initializes
+one sequential client per session, server, and project root; tracks open
+documents; replays them only after successful reinitialization; applies bounded
+exponential restart backoff to transport failures; and does not restart for an
+ordinary protocol-level server error. Session cleanup sends `shutdown`, then
+`exit`, and force-closes the managed process. Tool cancellation sends the LSP
+`$/cancelRequest` notification before returning a cancelled tool result. No LSP
+result can authorize a write, execute a returned command, or install a missing
+server.
+
 ---
 
 ## 4. Tool Search Protocol
@@ -146,6 +247,22 @@ Returns subcategories and tool summaries within that category.
 ```
 
 Returns matching tools across all categories.
+
+Keyword search is ranked by the service-owned capability index across tools,
+skills, agents, and durable workflows. Exact IDs, qualified names, tool names,
+and supported bare-name aliases are resolved first. Other queries use
+identifier-aware BM25 tokenization, so names such as `FileRead`,
+`file_read`, and `file-read` share the terms `file` and `read`. Indexed fields
+include descriptions plus compact source-specific metadata such as tool
+parameter names/categories, skill tags/triggers, agent capabilities, and
+workflow parameter names/tags.
+
+The response preserves the type-specific `tools`, `skills`, `agents`, and
+`workflows` sections and also includes a unified `results` array ordered by
+score. Every ranked item includes `score` and `match_reason` (`exact_id`,
+`exact_name`, or `bm25`). Equal scores are ordered deterministically. Search
+may activate returned tools but never executes a capability or bypasses the
+normal guardrail, permission, and HITL path.
 
 ### Get Full Tool Schema
 
