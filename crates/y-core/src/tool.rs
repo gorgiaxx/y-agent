@@ -166,6 +166,25 @@ pub enum ToolError {
     #[error("permission denied for tool {name}: {reason}")]
     PermissionDenied { name: String, reason: String },
 
+    #[error(
+        "file changed since it was read: {path} (expected {expected_hash}, current {actual_hash})"
+    )]
+    StaleFile {
+        path: String,
+        expected_hash: String,
+        actual_hash: String,
+        fresh_context: String,
+    },
+
+    #[error("edit target is ambiguous in {path}: found {matches} matches")]
+    AmbiguousEdit { path: String, matches: usize },
+
+    #[error("edit target was not found in {path}")]
+    EditTargetNotFound { path: String },
+
+    #[error("file not found: {path}")]
+    FileNotFound { path: String },
+
     #[error("tool execution timed out after {timeout_secs}s")]
     Timeout { timeout_secs: u64 },
 
@@ -186,6 +205,50 @@ pub enum ToolError {
 }
 
 impl ToolError {
+    /// Stable machine-readable error code for service and presentation layers.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotFound { .. } => "tool_not_found",
+            Self::ValidationError { .. } => "validation_error",
+            Self::PermissionDenied { .. } => "permission_denied",
+            Self::StaleFile { .. } => "stale_file",
+            Self::AmbiguousEdit { .. } => "ambiguous_edit",
+            Self::EditTargetNotFound { .. } => "edit_target_not_found",
+            Self::FileNotFound { .. } => "file_not_found",
+            Self::Timeout { .. } => "timeout",
+            Self::RateLimited { .. } => "rate_limited",
+            Self::RuntimeError { .. } => "runtime_error",
+            Self::ExternalServiceError { .. } => "external_service_error",
+            Self::Cancelled => "cancelled",
+            Self::Other { .. } => "other",
+        }
+    }
+
+    /// Structured details for errors that need recovery data.
+    pub fn details(&self) -> serde_json::Value {
+        match self {
+            Self::StaleFile {
+                path,
+                expected_hash,
+                actual_hash,
+                fresh_context,
+            } => serde_json::json!({
+                "path": path,
+                "expected_content_hash": expected_hash,
+                "current_content_hash": actual_hash,
+                "fresh_context": fresh_context,
+            }),
+            Self::AmbiguousEdit { path, matches } => serde_json::json!({
+                "path": path,
+                "matches": matches,
+            }),
+            Self::EditTargetNotFound { path } | Self::FileNotFound { path } => {
+                serde_json::json!({ "path": path })
+            }
+            _ => serde_json::Value::Null,
+        }
+    }
+
     /// Whether this error is safe to retry.
     pub fn is_retryable(&self) -> bool {
         matches!(
