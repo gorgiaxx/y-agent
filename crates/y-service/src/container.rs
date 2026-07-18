@@ -15,8 +15,8 @@ use tracing::{info, warn};
 use y_agent::{AgentPool, AgentRegistry, DelegationTracker, MultiAgentConfig};
 use y_context::{
     BuildSystemPromptProvider, BunVenvPromptInfo, CompactionConfig, CompactionEngine,
-    CompactionLlm, ContextPipeline, InjectContextStatus, InjectSkills, InjectTools,
-    KnowledgeContextProvider, PruningEngine, PythonVenvPromptInfo, SystemPromptConfig,
+    CompactionLlm, CompactionLlmError, ContextPipeline, InjectContextStatus, InjectSkills,
+    InjectTools, KnowledgeContextProvider, PruningEngine, PythonVenvPromptInfo, SystemPromptConfig,
     VenvPromptInfo,
 };
 use y_core::agent::AgentDelegator;
@@ -85,6 +85,10 @@ pub struct SessionState {
     /// turn is streaming but intended for processing after the run stops.
     pub follow_up_queues: crate::chat::FollowUpQueues,
 
+    /// Number of active chat workers per session. A counter is required
+    /// because presentation clients may start overlapping requests.
+    active_turns: Arc<RwLock<HashMap<SessionId, usize>>>,
+
     /// Session-scoped permission overrides.
     pub session_permission_modes: Arc<RwLock<HashMap<SessionId, PermissionMode>>>,
 
@@ -101,9 +105,45 @@ impl Default for SessionState {
             active_plan_executions: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             steering_slots: std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             follow_up_queues: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+            active_turns: Arc::new(RwLock::new(HashMap::new())),
             session_permission_modes: Arc::new(RwLock::new(HashMap::new())),
             session_operation_modes: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+}
+
+impl SessionState {
+    pub async fn begin_turn(&self, session_id: &SessionId) {
+        let mut active_turns = self.active_turns.write().await;
+        *active_turns.entry(session_id.clone()).or_default() += 1;
+    }
+
+    pub async fn finish_turn(&self, session_id: &SessionId) {
+        let mut active_turns = self.active_turns.write().await;
+        let Some(count) = active_turns.get_mut(session_id) else {
+            return;
+        };
+        if *count <= 1 {
+            active_turns.remove(session_id);
+        } else {
+            *count -= 1;
+        }
+    }
+
+    pub async fn is_turn_active(&self, session_id: &SessionId) -> bool {
+        self.active_turns
+            .read()
+            .await
+            .get(session_id)
+            .is_some_and(|count| *count > 0)
+    }
+
+    pub async fn is_orchestration_active(&self, session_id: &SessionId) -> bool {
+        self.active_plan_executions
+            .lock()
+            .await
+            .values()
+            .any(|execution| execution.session_id() == session_id)
     }
 }
 
@@ -192,6 +232,13 @@ pub struct ServiceContainer {
     /// Compaction trigger threshold as a percentage of `context_window`.
     pub compaction_threshold_pct: u32,
 
+    /// Prefire threshold as a percentage of `context_window`.
+    pub compaction_prefire_threshold_pct: u32,
+
+    /// Per-session immutable compaction prefire tasks and failure state.
+    #[cfg(feature = "compaction_prefire")]
+    pub compaction_prefire_registry: crate::compaction_prefire::CompactionPrefireRegistry,
+
     /// Per-session token watermarks for delta-based pruning.
     pub pruning_watermarks: RwLock<HashMap<SessionId, u32>>,
 
@@ -214,6 +261,10 @@ pub struct ServiceContainer {
 
     /// Runtime manager for tool execution environments.
     pub runtime_manager: Arc<RuntimeManager>,
+
+    /// Feature-gated service-owned language-server pool.
+    #[cfg(feature = "lsp")]
+    pub lsp_manager: Option<Arc<crate::lsp::LspManager>>,
 
     /// Guardrail manager for security middleware.
     pub guardrail_manager: GuardrailManager,
@@ -255,6 +306,22 @@ pub struct ServiceContainer {
     /// Per-session file history managers for rewind support.
     pub file_history_managers: crate::rewind::FileHistoryManagers,
 
+    /// Append-only audit log for unified file mutation events.
+    pub file_mutation_journal: Arc<y_journal::MutationEventJournal>,
+
+    /// Durable session-event publication and replay service.
+    pub session_event_service: crate::session_events::SessionEventService,
+
+    /// Service-owned persistence and live broadcast for runtime notifications.
+    pub tool_runtime_event_service: crate::tool_runtime_events::ToolRuntimeEventService,
+
+    /// Git worktree provisioning for isolated delegated writers.
+    #[cfg(feature = "worktree_isolation")]
+    pub worktree_manager: y_runtime::worktree::WorktreeManager,
+
+    /// Bounded service-owned automatic turns for eligible runtime completions.
+    pub background_wake_service: crate::background_wake::BackgroundWakeService,
+
     /// Data directory root (parent of the `SQLite` database file).
     /// Used for constructing file-history backup paths.
     pub data_dir: PathBuf,
@@ -263,6 +330,29 @@ pub struct ServiceContainer {
     /// this path so newly created skills surface in the same store the
     /// presentation layers read.
     pub skills_dir: Option<PathBuf>,
+
+    /// Serializes capability-pack lifecycle and recovery transitions.
+    #[cfg(feature = "capability_packs")]
+    pub(crate) capability_pack_lifecycle_lock: tokio::sync::Mutex<()>,
+
+    /// User-owned configuration root used to revalidate persisted workspace
+    /// trust before replaying capability-pack activation grants.
+    #[cfg(feature = "capability_packs")]
+    pub(crate) config_dir: Option<PathBuf>,
+
+    /// Process-local MCP declarations currently owned by Capability Packs.
+    /// Durable desired state remains the activation-grant store.
+    #[cfg(feature = "capability_packs")]
+    pub(crate) active_capability_pack_mcp: RwLock<HashMap<String, y_tools::McpServerConfig>>,
+
+    /// User hook configuration before Capability Pack overlays are applied.
+    #[cfg(feature = "capability_packs")]
+    pub(crate) capability_pack_hook_base: std::sync::RwLock<y_hooks::HookConfig>,
+
+    /// Process-local hook overlays currently owned by Capability Packs.
+    #[cfg(feature = "capability_packs")]
+    pub(crate) active_capability_pack_hooks:
+        std::sync::RwLock<HashMap<String, y_hooks::HookConfig>>,
 
     #[cfg(feature = "langfuse")]
     langfuse_state: tokio::sync::Mutex<LangfuseState>,
@@ -331,6 +421,13 @@ impl ServiceContainer {
         // 1. Storage -- SQLite pool + schema compatibility handling.
         let pool = Self::init_storage(config).await?;
         let data_dir = Self::resolve_data_dir(config);
+        let session_event_service = crate::session_events::SessionEventService::new(
+            y_storage::SqliteSessionEventStore::new(pool.clone()),
+        );
+        let (tool_runtime_event_service, tool_runtime_event_sink) =
+            crate::tool_runtime_events::ToolRuntimeEventService::new(session_event_service.clone());
+        let background_wake_service =
+            crate::background_wake::BackgroundWakeService::new(config.background_auto_wake.clone());
 
         // 2. Session infrastructure.
         let sessions = Self::init_sessions(&pool, config);
@@ -366,7 +463,15 @@ impl ServiceContainer {
         );
 
         // 8. Runtime manager + venvs.
-        let (runtime_manager, venv_info) = Self::init_runtime(config).await;
+        let (runtime_manager, venv_info) =
+            Self::init_runtime(config, tool_runtime_event_sink).await;
+        #[cfg(feature = "lsp")]
+        let lsp_manager = config.lsp.enabled.then(|| {
+            let connector = Arc::new(crate::lsp::RuntimeLspConnector::new(Arc::clone(
+                &runtime_manager,
+            )));
+            Arc::new(crate::lsp::LspManager::new(config.lsp.clone(), connector))
+        });
 
         // 9. Context pipeline.
         let knowledge_context_handle = knowledge_service.lock().await.knowledge_handle();
@@ -388,10 +493,15 @@ impl ServiceContainer {
         let diag = Self::init_diagnostics(&pool);
 
         // 12. Agent infrastructure.
-        let config_dir = config.prompts_dir.as_ref().and_then(|p| p.parent());
+        let config_dir = config
+            .prompts_dir
+            .as_ref()
+            .and_then(|path| path.parent())
+            .or_else(|| config.skills_dir.as_ref().and_then(|path| path.parent()))
+            .map(std::path::Path::to_path_buf);
         let (agent_registry, agent_pool, agent_delegator, delegation_tracker) =
             Self::init_agent_and_diagnostics(
-                config_dir,
+                config_dir.as_deref(),
                 &provider_pool,
                 &diag.diagnostics,
                 diag.broadcast_tx.clone(),
@@ -433,8 +543,13 @@ impl ServiceContainer {
         // 17. MCP connection manager (connections started later via
         //     start_background_services).
         let mcp_manager = Arc::new(McpConnectionManager::new(None));
+        let file_mutation_journal = Arc::new(
+            y_journal::MutationEventJournal::open(data_dir.join("file-mutations.jsonl"))
+                .await
+                .context("failed to initialize file mutation journal")?,
+        );
 
-        Ok(Self {
+        let container = Self {
             provider_pool: RwLock::new(provider_pool),
             session_manager: sessions.session_manager,
             hook_system: std::sync::RwLock::new(hook_system),
@@ -442,6 +557,8 @@ impl ServiceContainer {
             dynamic_tool_service,
             exec_policy_manager,
             runtime_manager,
+            #[cfg(feature = "lsp")]
+            lsp_manager,
             context_pipeline: ctx.pipeline,
             guardrail_manager,
             agent_registry,
@@ -466,6 +583,10 @@ impl ServiceContainer {
             compaction_engine,
             handoff_generator: Some(handoff_generator),
             compaction_threshold_pct: config.session.compaction_threshold_pct,
+            compaction_prefire_threshold_pct: config.session.compaction_prefire_threshold_pct,
+            #[cfg(feature = "compaction_prefire")]
+            compaction_prefire_registry: crate::compaction_prefire::CompactionPrefireRegistry::new(
+            ),
             pruning_watermarks: RwLock::new(HashMap::new()),
             provider_metrics_store,
             skill_search: RwLock::new(ctx.skill_search),
@@ -475,6 +596,12 @@ impl ServiceContainer {
             persona_dir: config.persona_dir.clone(),
             mcp_manager,
             file_history_managers: crate::rewind::create_file_history_managers(),
+            file_mutation_journal,
+            session_event_service,
+            tool_runtime_event_service,
+            #[cfg(feature = "worktree_isolation")]
+            worktree_manager: y_runtime::worktree::WorktreeManager::new(data_dir.join("worktrees")),
+            background_wake_service,
             data_dir,
             #[cfg(feature = "langfuse")]
             langfuse_state: tokio::sync::Mutex::new(LangfuseState {
@@ -484,7 +611,22 @@ impl ServiceContainer {
                 shutdown: tokio_util::sync::CancellationToken::new(),
             }),
             skills_dir: config.skills_dir.clone(),
-        })
+            #[cfg(feature = "capability_packs")]
+            capability_pack_lifecycle_lock: tokio::sync::Mutex::new(()),
+            #[cfg(feature = "capability_packs")]
+            config_dir,
+            #[cfg(feature = "capability_packs")]
+            active_capability_pack_mcp: RwLock::new(HashMap::new()),
+            #[cfg(feature = "capability_packs")]
+            capability_pack_hook_base: std::sync::RwLock::new(config.hooks.clone()),
+            #[cfg(feature = "capability_packs")]
+            active_capability_pack_hooks: std::sync::RwLock::new(HashMap::new()),
+        };
+        #[cfg(feature = "capability_packs")]
+        crate::capability_pack::CapabilityPackService::recover(&container)
+            .await
+            .context("failed to recover capability-pack transactions")?;
+        Ok(container)
     }
 
     // -- Init helpers (private) --------------------------------------------
@@ -558,16 +700,14 @@ impl ServiceContainer {
     }
 
     /// Create hook system with optional LLM runner injection.
-    fn init_hooks(config: &ServiceConfig, _provider_pool: &Arc<ProviderPoolImpl>) -> HookSystem {
+    fn init_hooks(config: &ServiceConfig, provider_pool: &Arc<ProviderPoolImpl>) -> HookSystem {
         #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
         let mut hook_system = HookSystem::new(&config.hooks);
         #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
         {
-            use y_core::provider::ProviderPool as _;
-            let llm_runner = Arc::new(y_provider::ProviderPoolHookLlmRunner::new(Arc::new(
-                _provider_pool.clone(),
-            )
-                as Arc<dyn y_core::provider::ProviderPool>));
+            let provider_pool =
+                Arc::clone(provider_pool) as Arc<dyn y_core::provider::ProviderPool>;
+            let llm_runner = Arc::new(y_provider::ProviderPoolHookLlmRunner::new(provider_pool));
             hook_system.set_llm_runner(llm_runner);
             info!("Prompt hook LLM runner injected");
         }
@@ -577,6 +717,7 @@ impl ServiceContainer {
         }
         #[cfg(not(all(feature = "hook_handlers", feature = "llm_hooks")))]
         {
+            let _ = provider_pool;
             HookSystem::new(&config.hooks)
         }
     }
@@ -599,6 +740,20 @@ impl ServiceContainer {
             embedding_provider,
         )
         .await;
+
+        #[cfg(feature = "lsp")]
+        if config.lsp.enabled {
+            for tool in y_tools::builtin::lsp::lsp_tools() {
+                let definition = tool.definition().clone();
+                if let Err(error) = tool_registry.register_tool(tool, definition).await {
+                    warn!(%error, "failed to register LSP tool");
+                }
+            }
+        }
+        #[cfg(not(feature = "lsp"))]
+        if config.lsp.enabled {
+            warn!("LSP is enabled in configuration but absent from this build");
+        }
 
         for name in [
             "ToolCreate",
@@ -639,8 +794,15 @@ tools = ["ToolSearch"]
     }
 
     /// Initialise runtime manager and build venv prompt info.
-    async fn init_runtime(config: &ServiceConfig) -> (Arc<RuntimeManager>, VenvPromptInfo) {
-        let runtime_manager = Arc::new(RuntimeManager::new(config.runtime.clone(), None));
+    async fn init_runtime(
+        config: &ServiceConfig,
+        event_sink: Arc<dyn y_core::runtime::ToolRuntimeEventSink>,
+    ) -> (Arc<RuntimeManager>, VenvPromptInfo) {
+        let runtime_manager = Arc::new(RuntimeManager::with_event_sink(
+            config.runtime.clone(),
+            None,
+            event_sink,
+        ));
         let venv_report = VenvManager::init_all(&config.runtime).await;
         let venv_info = VenvPromptInfo {
             python: venv_report.python.as_ref().and_then(|s| {
@@ -963,7 +1125,7 @@ struct DelegatingCompactionLlm(Arc<dyn AgentDelegator>);
 
 #[async_trait::async_trait]
 impl CompactionLlm for DelegatingCompactionLlm {
-    async fn summarize(&self, prompt: &str) -> Result<String, String> {
+    async fn summarize(&self, prompt: &str) -> Result<String, CompactionLlmError> {
         let input = serde_json::json!({ "prompt": prompt });
         match self
             .0
@@ -976,8 +1138,20 @@ impl CompactionLlm for DelegatingCompactionLlm {
             .await
         {
             Ok(output) if !output.text.trim().is_empty() => Ok(output.text),
-            Ok(_) => Err("compaction-summarizer returned empty response".to_string()),
-            Err(e) => Err(format!("compaction-summarizer delegation failed: {e}")),
+            Ok(_) => Err(CompactionLlmError::transient(
+                "compaction-summarizer returned empty response",
+            )),
+            Err(y_core::agent::DelegationError::AgentNotFound { name }) => Err(
+                CompactionLlmError::deterministic(format!("compaction agent not found: {name}")),
+            ),
+            Err(y_core::agent::DelegationError::DepthExhausted { depth }) => {
+                Err(CompactionLlmError::deterministic(format!(
+                    "compaction delegation depth exhausted at {depth}"
+                )))
+            }
+            Err(error) => Err(CompactionLlmError::transient(format!(
+                "compaction-summarizer delegation failed: {error}"
+            ))),
         }
     }
 }
@@ -1167,11 +1341,27 @@ impl ServiceContainer {
     /// Panics if the internal `hook_system` `RwLock` is poisoned (a prior
     /// holder panicked while holding the write lock).
     pub fn reload_hooks(&self, new_config: &y_hooks::HookConfig) {
+        #[cfg(feature = "capability_packs")]
+        let effective = {
+            *self
+                .capability_pack_hook_base
+                .write()
+                .expect("capability_pack_hook_base RwLock poisoned") = new_config.clone();
+            crate::capability_pack::compose_hook_config(
+                new_config,
+                &self
+                    .active_capability_pack_hooks
+                    .read()
+                    .expect("active_capability_pack_hooks RwLock poisoned"),
+            )
+        };
+        #[cfg(not(feature = "capability_packs"))]
+        let effective = new_config.clone();
         let mut hs = self
             .hook_system
             .write()
             .expect("hook_system RwLock poisoned");
-        hs.reload_config(new_config);
+        hs.reload_config(&effective);
     }
 
     /// Release all in-memory state associated with a session.
@@ -1180,6 +1370,10 @@ impl ServiceContainer {
     /// grow unboundedly over the application lifetime.
     pub async fn cleanup_session_state(&self, session_id: &SessionId) {
         self.pruning_watermarks.write().await.remove(session_id);
+        #[cfg(feature = "lsp")]
+        if let Some(manager) = &self.lsp_manager {
+            manager.cleanup_session(session_id).await;
+        }
         self.session_state
             .session_permission_modes
             .write()
@@ -1203,6 +1397,11 @@ impl ServiceContainer {
             let mut executions = self.session_state.active_plan_executions.lock().await;
             executions.retain(|_, active| active.session_id() != session_id);
         }
+        self.session_state
+            .active_turns
+            .write()
+            .await
+            .remove(session_id);
         if let Err(e) = self
             .plan_run_store
             .cancel_awaiting_runs_for_session(session_id.as_str())
@@ -1428,7 +1627,20 @@ impl ServiceContainer {
         // Since the delegator shares this same pool (via RwLockPoolDelegator),
         // the runner swap automatically takes effect for all delegation calls.
         self.agent_pool.write().await.set_runner(runner);
+        #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+        self.install_hook_agent_runner();
         tracing::info!("ServiceAgentRunner initialised for sub-agent delegation");
+    }
+
+    #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+    pub(crate) fn install_hook_agent_runner(self: &Arc<Self>) {
+        let runner = Arc::new(crate::hook_agent_runner::ServiceHookAgentRunner::new(
+            Arc::clone(self),
+        ));
+        self.hook_system
+            .write()
+            .expect("hook_system RwLock poisoned")
+            .set_agent_runner(runner);
     }
 
     /// Two-phase initialisation: inject a `WorkflowDispatcher` into the
@@ -1467,12 +1679,30 @@ impl ServiceContainer {
     pub async fn start_background_services(self: &Arc<Self>) {
         self.init_agent_runner().await;
         self.init_workflow_dispatcher().await;
+        #[cfg(feature = "background_auto_wake")]
+        self.background_wake_service.start(Arc::clone(self));
+        #[cfg(not(feature = "background_auto_wake"))]
+        if self.background_wake_service.is_enabled() {
+            warn!("background_auto_wake is enabled in configuration but absent from this build");
+        }
         self.init_scheduler().await;
         self.init_callable_agents_text().await;
         self.init_knowledge_llm_services().await;
         crate::mcp_service::McpService::init_mcp_connections(self).await;
         crate::mcp_service::McpService::register_mcp_tools(self).await;
         crate::mcp_service::McpService::start_mcp_event_consumer(self).await;
+        #[cfg(feature = "capability_packs")]
+        match crate::capability_pack::CapabilityPackService::reconcile_live_activations(self).await
+        {
+            Ok(errors) => {
+                for error in errors {
+                    warn!(%error, "capability-pack activation reconciliation failed");
+                }
+            }
+            Err(error) => {
+                warn!(%error, "failed to reconcile capability-pack activation grants");
+            }
+        }
         #[cfg(feature = "langfuse")]
         self.init_langfuse_bridge().await;
     }
@@ -2085,6 +2315,41 @@ mod tests {
         assert_eq!(sc.context_pipeline.provider_count(), 4);
     }
 
+    #[cfg(feature = "lsp")]
+    #[tokio::test]
+    async fn lsp_tools_are_registered_only_when_enabled() {
+        let disabled = ServiceContainer::from_config(&ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..ServiceConfig::default()
+        })
+        .await
+        .expect("disabled container");
+        assert!(disabled
+            .tool_registry
+            .get_definition(&ToolName::from_string("LspDefinition"))
+            .await
+            .is_none());
+        assert!(disabled.lsp_manager.is_none());
+
+        let lsp = crate::lsp::LspConfig {
+            enabled: true,
+            ..crate::lsp::LspConfig::default()
+        };
+        let enabled = ServiceContainer::from_config(&ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            lsp,
+            ..ServiceConfig::default()
+        })
+        .await
+        .expect("enabled container");
+        assert!(enabled
+            .tool_registry
+            .get_definition(&ToolName::from_string("LspDefinition"))
+            .await
+            .is_some());
+        assert!(enabled.lsp_manager.is_some());
+    }
+
     #[tokio::test]
     async fn test_container_initializes_embedding_enabled_knowledge_wiring() {
         let mut config = ServiceConfig::default();
@@ -2126,6 +2391,27 @@ mod tests {
 
         sc.scheduler_manager.stop().await;
         assert!(!sc.scheduler_manager.is_running());
+    }
+
+    #[tokio::test]
+    async fn session_state_tracks_nested_active_turns() {
+        let state = SessionState::default();
+        let session_id = SessionId("session-active".to_string());
+
+        assert!(!state.is_turn_active(&session_id).await);
+
+        state.begin_turn(&session_id).await;
+        state.begin_turn(&session_id).await;
+        assert!(state.is_turn_active(&session_id).await);
+
+        state.finish_turn(&session_id).await;
+        assert!(state.is_turn_active(&session_id).await);
+
+        state.finish_turn(&session_id).await;
+        assert!(!state.is_turn_active(&session_id).await);
+
+        state.finish_turn(&session_id).await;
+        assert!(!state.is_turn_active(&session_id).await);
     }
 
     #[tokio::test]

@@ -19,11 +19,17 @@ pub mod agent_management;
 pub mod agent_service;
 pub mod app_config;
 pub mod background_tasks;
+pub mod background_wake;
 pub mod bot;
+#[cfg(feature = "capability_packs")]
+pub mod capability_pack;
 pub mod capability_reuse;
+mod capability_search;
 pub mod chat;
 pub mod chat_types;
 pub mod chat_worker;
+#[cfg(feature = "compaction_prefire")]
+pub mod compaction_prefire;
 pub mod config;
 pub mod config_service;
 pub mod container;
@@ -35,10 +41,13 @@ pub mod dynamic_agent_service;
 pub mod dynamic_tool_service;
 pub mod event_sink;
 pub mod evolution_feedback;
+#[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+mod hook_agent_runner;
 pub mod init;
 pub mod knowledge_context_retrieval;
 pub mod knowledge_service;
 pub mod loop_orchestrator;
+pub mod lsp;
 pub mod mcp_service;
 pub mod message_builder;
 pub mod observability;
@@ -47,6 +56,7 @@ pub mod plan_orchestrator;
 pub mod prompt_templates;
 pub mod rewind;
 pub mod scheduler_service;
+pub mod session_events;
 pub mod skill_creation;
 pub mod skill_evolution;
 pub mod skill_evolution_refinement;
@@ -57,6 +67,7 @@ pub mod skill_manifest_helper;
 pub mod skill_service;
 pub mod system;
 pub mod task_delegation_orchestrator;
+pub mod tool_runtime_events;
 pub mod tool_search_orchestrator;
 pub mod user_interaction_orchestrator;
 pub mod workflow_executors;
@@ -64,6 +75,7 @@ pub mod workflow_orchestrator;
 pub mod workflow_run_service;
 pub mod workflow_service;
 pub mod workspace;
+pub mod workspace_isolation;
 
 // Re-export primary types for convenience.
 pub use agent_management::AgentManagementService;
@@ -73,11 +85,15 @@ pub use agent_service::{
 };
 pub use app_config::{
     cleanup_old_logs, dirs_log, dirs_state, dirs_user_config, home_dir, validate_config,
-    ConfigLoader, YAgentConfig,
+    ConfigLoader, LoadedConfig, ProjectConfigProvenance, YAgentConfig,
 };
 pub use background_tasks::{
     BackgroundTaskInfo, BackgroundTaskPollRequest, BackgroundTaskService, BackgroundTaskSnapshot,
     BackgroundTaskWriteRequest,
+};
+pub use background_wake::{
+    BackgroundWakeConfig, BackgroundWakeContext, BackgroundWakeEvent, BackgroundWakePolicy,
+    BackgroundWakeService, BackgroundWakeSuppression,
 };
 pub use bot::{BotConfig, BotPersona, BotService, BotServiceError};
 pub use chat::{
@@ -111,6 +127,7 @@ pub use scheduler_service::{
     CreateScheduleRequest, ExecutionSummary, ScheduleSummary, SchedulerService,
     SchedulerServiceError, UpdateScheduleRequest,
 };
+pub use session_events::SessionEventService;
 pub use skill_creation::{
     create_skill_from_request, CreationDecision, CreationError, CreationResult, SkillCreateOutcome,
     SkillCreationService,
@@ -128,12 +145,15 @@ pub use system::{
     HealthReport, HttpProtocol, MemoryStats, ProviderInfo, ProviderTestRequest, StatusReport,
     SystemService,
 };
+pub use tool_runtime_events::{PublishedToolRuntimeEvent, ToolRuntimeEventService};
 pub use workflow_run_service::{WorkflowRunError, WorkflowRunService};
 pub use workflow_service::{
     CreateWorkflowRequest, DagEdge, DagNode, DagVisualization, UpdateWorkflowRequest,
     ValidationResult, WorkflowService, WorkflowServiceError,
 };
-pub use workspace::{WorkspaceRecord, WorkspaceService};
+pub use workspace::{
+    WorkspaceRecord, WorkspaceService, WorkspaceTrustDecision, WorkspaceTrustStatus,
+};
 
 // ---------------------------------------------------------------------------
 // Re-exports: infrastructure config types for presentation layers

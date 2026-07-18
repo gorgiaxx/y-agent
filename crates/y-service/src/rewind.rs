@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
 use y_core::types::Role;
 
@@ -535,18 +535,14 @@ impl RewindService {
         managers: &FileHistoryManagers,
         session_id: &SessionId,
         file_path: &str,
-    ) {
+    ) -> Result<(), String> {
         let mut map = managers.write().await;
-        if let Some(mgr) = map.get_mut(session_id) {
-            if let Err(e) = mgr.track_edit(file_path) {
-                warn!(
-                    session = %session_id.0,
-                    path = file_path,
-                    error = %e,
-                    "failed to track file edit"
-                );
-            }
-        }
+        let mgr = map
+            .get_mut(session_id)
+            .ok_or_else(|| format!("no file history manager for session {session_id}"))?;
+        mgr.track_edit(file_path)
+            .map(|_| ())
+            .map_err(|error| format!("failed to track '{file_path}' for rewind: {error}"))
     }
 
     /// Clean up file history when a session is deleted/archived.

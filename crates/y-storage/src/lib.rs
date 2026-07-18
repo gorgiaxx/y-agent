@@ -22,6 +22,7 @@ pub mod pool;
 pub mod provider_metrics_store;
 pub mod repository;
 pub mod schedule_store;
+pub mod session_event_store;
 pub mod session_store;
 pub mod transcript;
 pub mod transcript_display;
@@ -39,6 +40,7 @@ pub use provider_metrics_store::{
     AggregatedProviderMetrics, ProviderMetricsEvent, SqliteProviderMetricsStore,
 };
 pub use schedule_store::{ScheduleExecutionRow, ScheduleRow, SqliteScheduleStore};
+pub use session_event_store::SqliteSessionEventStore;
 pub use session_store::SqliteSessionStore;
 pub use sqlx::SqlitePool;
 pub use transcript::JsonlTranscriptStore;

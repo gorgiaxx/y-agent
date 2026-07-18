@@ -13,7 +13,7 @@ use crate::chat::TurnEvent;
 /// its own transport format.
 pub trait EventSink: Send + Sync + 'static {
     /// Emitted when the LLM turn has started (`run_id` -> `session_id` mapping).
-    fn emit_started(&self, run_id: &str, session_id: &str);
+    fn emit_started(&self, run_id: &str, session_id: &str, event_id: Option<u64>);
 
     /// Emitted for each real-time progress event during the turn.
     ///
@@ -21,7 +21,13 @@ pub trait EventSink: Send + Sync + 'static {
     /// running under a child session (plan phase, loop round, plan-writer);
     /// presentation layers should attribute the event to that session instead
     /// of the run's parent session. `None` for root-turn events.
-    fn emit_progress(&self, run_id: &str, event: &TurnEvent, child_session_id: Option<&str>);
+    fn emit_progress(
+        &self,
+        run_id: &str,
+        event: &TurnEvent,
+        child_session_id: Option<&str>,
+        event_id: Option<u64>,
+    );
 
     /// Emitted when the LLM requests user input (`AskUser` dialog).
     fn emit_ask_user(
@@ -30,6 +36,7 @@ pub trait EventSink: Send + Sync + 'static {
         session_id: &str,
         interaction_id: &str,
         questions: &serde_json::Value,
+        event_id: Option<u64>,
     );
 
     /// Emitted when a tool requests permission approval from the user.
@@ -42,6 +49,7 @@ pub trait EventSink: Send + Sync + 'static {
         action_description: &str,
         reason: &str,
         content_preview: Option<&str>,
+        event_id: Option<u64>,
     );
 
     /// Emitted when the plan orchestrator needs the user to approve or
@@ -54,14 +62,15 @@ pub trait EventSink: Send + Sync + 'static {
         session_id: &str,
         review_id: &str,
         plan: &serde_json::Value,
+        event_id: Option<u64>,
     );
 
     /// Emitted when the turn completes successfully.
-    fn emit_complete(&self, payload: &serde_json::Value);
+    fn emit_complete(&self, payload: &serde_json::Value, event_id: Option<u64>);
 
     /// Emitted when the turn fails with an error.
-    fn emit_error(&self, run_id: &str, session_id: &str, error: &str);
+    fn emit_error(&self, run_id: &str, session_id: &str, error: &str, event_id: Option<u64>);
 
     /// Emitted when a session title is generated or updated.
-    fn emit_title_updated(&self, session_id: &str, title: &str);
+    fn emit_title_updated(&self, session_id: &str, title: &str, event_id: Option<u64>);
 }

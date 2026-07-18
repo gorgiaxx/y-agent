@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
 
 use y_core::provider::{ImageGenerationOptions, RequestMode};
+use y_core::session_event::{SessionEventKind, SessionEventRetention};
 use y_core::tool::ToolOutput;
 use y_core::types::SessionId;
 use y_service::chat_types::OperationMode;
@@ -259,8 +260,11 @@ pub async fn chat_send(
         Arc::clone(&state.turn_meta_cache),
         Arc::clone(&state.pending_runs),
         cancel_token,
+        "chat",
         true, // may generate title
-    );
+    )
+    .await
+    .map_err(|error| error.to_string())?;
 
     Ok(ChatStarted {
         session_id: result_sid,
@@ -277,7 +281,7 @@ pub async fn chat_send(
 struct TauriEventSink(AppHandle);
 
 impl EventSink for TauriEventSink {
-    fn emit_started(&self, run_id: &str, session_id: &str) {
+    fn emit_started(&self, run_id: &str, session_id: &str, _event_id: Option<u64>) {
         let _ = self.0.emit(
             "chat:started",
             ChatStartedPayload {
@@ -288,7 +292,13 @@ impl EventSink for TauriEventSink {
         );
     }
 
-    fn emit_progress(&self, run_id: &str, event: &TurnEvent, child_session_id: Option<&str>) {
+    fn emit_progress(
+        &self,
+        run_id: &str,
+        event: &TurnEvent,
+        child_session_id: Option<&str>,
+        _event_id: Option<u64>,
+    ) {
         let _ = self.0.emit(
             "chat:progress",
             ProgressPayload {
@@ -305,6 +315,7 @@ impl EventSink for TauriEventSink {
         session_id: &str,
         interaction_id: &str,
         questions: &serde_json::Value,
+        _event_id: Option<u64>,
     ) {
         let _ = self.0.emit(
             "chat:AskUser",
@@ -326,6 +337,7 @@ impl EventSink for TauriEventSink {
         action_description: &str,
         reason: &str,
         content_preview: Option<&str>,
+        _event_id: Option<u64>,
     ) {
         let _ = self.0.emit(
             "chat:PermissionRequest",
@@ -347,6 +359,7 @@ impl EventSink for TauriEventSink {
         session_id: &str,
         review_id: &str,
         plan: &serde_json::Value,
+        _event_id: Option<u64>,
     ) {
         let _ = self.0.emit(
             "chat:PlanReview",
@@ -359,7 +372,7 @@ impl EventSink for TauriEventSink {
         );
     }
 
-    fn emit_complete(&self, payload: &serde_json::Value) {
+    fn emit_complete(&self, payload: &serde_json::Value, _event_id: Option<u64>) {
         // Deserialize the generic JSON payload into the typed
         // ChatCompletePayload that the Tauri frontend expects.
         if let Ok(typed) = serde_json::from_value::<ChatCompletePayload>(payload.clone()) {
@@ -367,7 +380,7 @@ impl EventSink for TauriEventSink {
         }
     }
 
-    fn emit_error(&self, run_id: &str, session_id: &str, error: &str) {
+    fn emit_error(&self, run_id: &str, session_id: &str, error: &str, _event_id: Option<u64>) {
         let _ = self.0.emit(
             "chat:error",
             ChatErrorPayload {
@@ -378,7 +391,7 @@ impl EventSink for TauriEventSink {
         );
     }
 
-    fn emit_title_updated(&self, session_id: &str, title: &str) {
+    fn emit_title_updated(&self, session_id: &str, title: &str, _event_id: Option<u64>) {
         let _ = self.0.emit(
             "session:title_updated",
             TitleUpdatedPayload {
@@ -523,6 +536,8 @@ pub async fn chat_cancel(state: State<'_, AppState>, run_id: String) -> Result<(
     if let Some(tok) = token {
         tracing::info!(run_id = %run_id, "chat_cancel: cancelling token");
         tok.cancel();
+    } else if state.container.background_wake_service.cancel(&run_id) {
+        tracing::info!(run_id = %run_id, "chat_cancel: cancelling background wake token");
     } else {
         tracing::warn!(run_id = %run_id, "chat_cancel: no token found -- run may have already completed");
     }
@@ -803,8 +818,11 @@ pub async fn chat_resend(
         Arc::clone(&state.turn_meta_cache),
         Arc::clone(&state.pending_runs),
         cancel_token,
+        "chat",
         false, // resend -- no title generation
-    );
+    )
+    .await
+    .map_err(|error| error.to_string())?;
 
     Ok(ChatStarted {
         session_id: result_sid,
@@ -1303,7 +1321,25 @@ pub async fn resume_plan_execution(
     from_task_id: String,
 ) -> Result<String, String> {
     let run_id = uuid::Uuid::new_v4().to_string();
+    let sid = SessionId(session_id.clone());
     let cancel_token = CancellationToken::new();
+
+    let _started = state
+        .container
+        .session_event_service
+        .publish(
+            &sid,
+            SessionEventKind::ChatStarted,
+            serde_json::json!({
+                "run_id": run_id,
+                "session_id": session_id,
+                "kind": "plan_resume",
+            }),
+            SessionEventRetention::Durable,
+            Some(&run_id),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
 
     if let Ok(mut runs) = state.pending_runs.lock() {
         runs.insert(run_id.clone(), cancel_token.clone());
@@ -1318,8 +1354,9 @@ pub async fn resume_plan_execution(
         },
     );
 
+    state.container.session_state.begin_turn(&sid).await;
+
     let container = state.container.clone();
-    let sid = SessionId(session_id.clone());
     let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &session_id);
     let working_directory = resolve_turn_working_directory(None, workspace_path, &state.state_dir);
     let run_id_clone = run_id.clone();
@@ -1331,13 +1368,33 @@ pub async fn resume_plan_execution(
 
         let progress_run_id = run_id_clone.clone();
         let progress_sink = Arc::clone(&sink);
+        let progress_container = container.clone();
+        let progress_sid = sid.clone();
         let progress_task = tokio::spawn(async move {
             while let Some((event, child_session_id)) = rx.recv().await {
-                progress_sink.emit_progress(
-                    &progress_run_id,
-                    &event,
-                    child_session_id.as_ref().map(SessionId::as_str),
-                );
+                match progress_container
+                    .session_event_service
+                    .publish_turn_event(
+                        &progress_sid,
+                        &progress_run_id,
+                        &event,
+                        child_session_id.as_ref(),
+                    )
+                    .await
+                {
+                    Ok(persisted) => progress_sink.emit_progress(
+                        &progress_run_id,
+                        &event,
+                        child_session_id.as_ref().map(SessionId::as_str),
+                        persisted.map(|event| event.event_id),
+                    ),
+                    Err(error) => tracing::error!(
+                        session_id = %progress_sid,
+                        run_id = %progress_run_id,
+                        %error,
+                        "failed to persist plan-resume progress event; live delivery suppressed"
+                    ),
+                }
             }
         });
 
@@ -1361,26 +1418,68 @@ pub async fn resume_plan_execution(
 
         match result {
             Ok(output) => {
-                sink.emit_complete(&build_plan_resume_complete_payload(
-                    &run_id_clone,
-                    &sid.0,
-                    &output,
-                ));
+                let payload = build_plan_resume_complete_payload(&run_id_clone, &sid.0, &output);
+                match container
+                    .session_event_service
+                    .publish(
+                        &sid,
+                        SessionEventKind::ChatComplete,
+                        payload.clone(),
+                        SessionEventRetention::Durable,
+                        Some(&run_id_clone),
+                    )
+                    .await
+                {
+                    Ok(event) => sink.emit_complete(&payload, Some(event.event_id)),
+                    Err(error) => tracing::error!(
+                        session_id = %sid,
+                        run_id = %run_id_clone,
+                        %error,
+                        "failed to persist plan-resume completion; live delivery suppressed"
+                    ),
+                }
                 tracing::info!(
                     plan_run_id = %plan_run_id,
                     from_task_id = %from_task_id,
                     "plan resume completed"
                 );
             }
-            Err(e) => {
+            Err(error) => {
+                let error = error.to_string();
                 tracing::error!(
                     plan_run_id = %plan_run_id,
-                    error = %e,
+                    error = %error,
                     "plan resume failed"
                 );
-                sink.emit_error(&run_id_clone, &sid.0, &e.to_string());
+                let payload = serde_json::json!({
+                    "run_id": run_id_clone,
+                    "session_id": sid.as_str(),
+                    "error": error,
+                });
+                match container
+                    .session_event_service
+                    .publish(
+                        &sid,
+                        SessionEventKind::ChatError,
+                        payload,
+                        SessionEventRetention::Durable,
+                        Some(&run_id_clone),
+                    )
+                    .await
+                {
+                    Ok(event) => {
+                        sink.emit_error(&run_id_clone, sid.as_str(), &error, Some(event.event_id));
+                    }
+                    Err(persist_error) => tracing::error!(
+                        session_id = %sid,
+                        run_id = %run_id_clone,
+                        error = %persist_error,
+                        "failed to persist plan-resume error; live delivery suppressed"
+                    ),
+                }
             }
         }
+        container.session_state.finish_turn(&sid).await;
     });
 
     Ok(run_id)

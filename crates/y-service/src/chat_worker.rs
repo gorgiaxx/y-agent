@@ -10,10 +10,11 @@ use std::sync::{Arc, Mutex, Once};
 
 use futures::FutureExt;
 use tokio_util::sync::CancellationToken;
-use y_core::types::{Message, Role};
+use y_core::session_event::{SessionEventKind, SessionEventRetention};
+use y_core::types::{Message, Role, SessionId};
 
 use crate::chat::TurnEvent;
-use crate::chat_types::TurnMeta;
+use crate::chat_types::{TurnEventReceiver, TurnMeta};
 use crate::event_sink::EventSink;
 use crate::{ChatService, PreparedTurn, ServiceContainer};
 
@@ -96,7 +97,7 @@ fn take_panic_location() -> Option<String> {
 /// 5. On error: emit error.
 /// 6. On panic: emit error.
 /// 7. Cleanup: remove from `pending_runs`.
-pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
+pub async fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
     sink: impl EventSink,
     container: Arc<ServiceContainer>,
     prepared: PreparedTurn,
@@ -104,8 +105,9 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
     turn_meta_cache: Arc<Mutex<HashMap<String, TurnMeta, S>>>,
     pending_runs: Arc<Mutex<HashMap<String, CancellationToken, S>>>,
     cancel_token: CancellationToken,
+    run_kind: &str,
     should_generate_title: bool,
-) {
+) -> Result<(), y_storage::StorageError> {
     install_panic_logger();
 
     let sid_clone = prepared.session_id.clone();
@@ -117,9 +119,30 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
     // main task (emit_complete / emit_error / emit_title_updated).
     let sink = Arc::new(sink);
 
+    let started_payload = build_started_payload(&run_id_clone, sid_clone.as_str(), run_kind);
+    let started = match container
+        .session_event_service
+        .publish(
+            &sid_clone,
+            SessionEventKind::ChatStarted,
+            started_payload,
+            SessionEventRetention::Durable,
+            Some(&run_id_clone),
+        )
+        .await
+    {
+        Ok(started) => started,
+        Err(error) => {
+            if let Ok(mut runs) = pending_runs.lock() {
+                runs.remove(&run_id_clone);
+            }
+            return Err(error);
+        }
+    };
     // Open TODO acceptance before clients observe the run as streaming.
     ChatService::begin_follow_up_run(&container, &sid_clone);
-    sink.emit_started(&run_id_clone, &sid_clone.0);
+    container.session_state.begin_turn(&sid_clone).await;
+    sink.emit_started(&run_id_clone, &sid_clone.0, Some(started.event_id));
 
     tokio::spawn(async move {
         let sink_inner = Arc::clone(&sink);
@@ -176,97 +199,21 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                         )
                         .await
                     {
-                        Ok(title) => title_sink.emit_title_updated(&title_sid.0, &title),
+                        Ok(title) => title_sink.emit_title_updated(&title_sid.0, &title, None),
                         Err(e) => tracing::warn!(error = %e, "title generation failed"),
                     }
                 });
             }
 
             // Set up progress channel -- forward TurnEvents via the EventSink.
-            let (tx, mut rx) = crate::chat::TurnEventSender::channel();
-            let sink_progress = Arc::clone(&sink_inner);
-            let run_id_progress = run_id_clone.clone();
-            let session_id_progress = sid_clone.0.clone();
-            let progress_task = tokio::spawn(async move {
-                while let Some((event, child_session_id)) = rx.recv().await {
-                    // Intercept AskUser events.
-                    if let TurnEvent::UserInteractionRequest {
-                        ref interaction_id,
-                        ref questions,
-                    } = event
-                    {
-                        sink_progress.emit_ask_user(
-                            &run_id_progress,
-                            &session_id_progress,
-                            interaction_id,
-                            questions,
-                        );
-                    }
-
-                    // Intercept PermissionRequest events.
-                    if let TurnEvent::PermissionRequest {
-                        ref request_id,
-                        ref tool_name,
-                        ref action_description,
-                        ref reason,
-                        ref content_preview,
-                    } = event
-                    {
-                        sink_progress.emit_permission_request(
-                            &run_id_progress,
-                            &session_id_progress,
-                            request_id,
-                            tool_name,
-                            action_description,
-                            reason,
-                            content_preview.as_deref(),
-                        );
-                    }
-
-                    // Intercept PlanReviewRequest events.
-                    if let TurnEvent::PlanReviewRequest {
-                        ref review_id,
-                        ref plan_title,
-                        ref plan_file,
-                        ref estimated_effort,
-                        ref overview,
-                        ref scope_in,
-                        ref scope_out,
-                        ref guardrails,
-                        ref plan_content,
-                        ref tasks,
-                    } = event
-                    {
-                        let plan_payload = serde_json::json!({
-                            "plan_title": plan_title,
-                            "plan_file": plan_file,
-                            "estimated_effort": estimated_effort,
-                            "overview": overview,
-                            "scope_in": scope_in,
-                            "scope_out": scope_out,
-                            "guardrails": guardrails,
-                            "plan_content": plan_content,
-                            "tasks": tasks,
-                        });
-                        sink_progress.emit_plan_review_request(
-                            &run_id_progress,
-                            &session_id_progress,
-                            review_id,
-                            &plan_payload,
-                        );
-                    }
-
-                    // Forward as generic progress event, attributed to the
-                    // originating sub-agent session when present.
-                    sink_progress.emit_progress(
-                        &run_id_progress,
-                        &event,
-                        child_session_id
-                            .as_ref()
-                            .map(y_core::types::SessionId::as_str),
-                    );
-                }
-            });
+            let (tx, rx) = crate::chat::TurnEventSender::channel();
+            let progress_task = tokio::spawn(forward_progress_events(
+                Arc::clone(&sink_inner),
+                Arc::clone(&container),
+                sid_clone.clone(),
+                run_id_clone.clone(),
+                rx,
+            ));
 
             let turn_result =
                 ChatService::execute_turn_with_progress(&container, &input, tx, Some(cancel_clone))
@@ -322,10 +269,36 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                         "cache_read_tokens": result.last_cache_read_tokens,
                         "cache_write_tokens": result.last_cache_write_tokens,
                     });
-                    sink_inner.emit_complete(&payload);
+                    if let Some(event_id) = publish_durable_event(
+                        &container,
+                        &sid_clone,
+                        SessionEventKind::ChatComplete,
+                        payload.clone(),
+                        Some(&run_id_clone),
+                    )
+                    .await
+                    {
+                        sink_inner.emit_complete(&payload, Some(event_id));
+                    }
                 }
                 Err(e) => {
-                    sink_inner.emit_error(&run_id_clone, &sid_clone.0, &e.to_string());
+                    let error = e.to_string();
+                    let payload = serde_json::json!({
+                        "run_id": run_id_clone,
+                        "session_id": sid_clone.0,
+                        "error": error,
+                    });
+                    if let Some(event_id) = publish_durable_event(
+                        &container,
+                        &sid_clone,
+                        SessionEventKind::ChatError,
+                        payload,
+                        Some(&run_id_clone),
+                    )
+                    .await
+                    {
+                        sink_inner.emit_error(&run_id_clone, &sid_clone.0, &error, Some(event_id));
+                    }
                 }
             }
 
@@ -351,11 +324,24 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                     panic.location = location.as_deref().unwrap_or("<unknown>"),
                     "LLM worker panicked; emitting error event"
                 );
-                sink.emit_error(
-                    &panic_run_id,
-                    &sid_clone.0,
-                    &format!("Internal error: LLM worker panicked: {detail}{location_suffix}"),
-                );
+                let error =
+                    format!("Internal error: LLM worker panicked: {detail}{location_suffix}");
+                let payload = serde_json::json!({
+                    "run_id": panic_run_id,
+                    "session_id": sid_clone.0,
+                    "error": error,
+                });
+                if let Some(event_id) = publish_durable_event(
+                    &container,
+                    &sid_clone,
+                    SessionEventKind::ChatError,
+                    payload,
+                    Some(&panic_run_id),
+                )
+                .await
+                {
+                    sink.emit_error(&panic_run_id, &sid_clone.0, &error, Some(event_id));
+                }
                 panic_run_id
             }
         };
@@ -365,12 +351,213 @@ pub fn spawn_llm_worker<S: BuildHasher + Send + 'static>(
                 runs.remove(&final_run_id);
             }
         }
+        container.session_state.finish_turn(&sid_clone).await;
     });
+
+    Ok(())
+}
+
+fn build_started_payload(run_id: &str, session_id: &str, run_kind: &str) -> serde_json::Value {
+    serde_json::json!({
+        "run_id": run_id,
+        "session_id": session_id,
+        "kind": run_kind,
+    })
+}
+
+async fn forward_progress_events<S: EventSink>(
+    sink: Arc<S>,
+    container: Arc<ServiceContainer>,
+    session_id: SessionId,
+    run_id: String,
+    mut rx: TurnEventReceiver,
+) {
+    while let Some((event, child_session_id)) = rx.recv().await {
+        if let TurnEvent::UserInteractionRequest {
+            ref interaction_id,
+            ref questions,
+        } = event
+        {
+            let payload = serde_json::json!({
+                "run_id": run_id,
+                "session_id": session_id.as_str(),
+                "interaction_id": interaction_id,
+                "questions": questions,
+            });
+            if let Some(event_id) = publish_durable_event(
+                &container,
+                &session_id,
+                SessionEventKind::AskUser,
+                payload,
+                Some(interaction_id),
+            )
+            .await
+            {
+                sink.emit_ask_user(
+                    &run_id,
+                    session_id.as_str(),
+                    interaction_id,
+                    questions,
+                    Some(event_id),
+                );
+            }
+        }
+
+        if let TurnEvent::PermissionRequest {
+            ref request_id,
+            ref tool_name,
+            ref action_description,
+            ref reason,
+            ref content_preview,
+        } = event
+        {
+            let payload = serde_json::json!({
+                "run_id": run_id,
+                "session_id": session_id.as_str(),
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "action_description": action_description,
+                "reason": reason,
+                "content_preview": content_preview,
+            });
+            if let Some(event_id) = publish_durable_event(
+                &container,
+                &session_id,
+                SessionEventKind::PermissionRequest,
+                payload,
+                Some(request_id),
+            )
+            .await
+            {
+                sink.emit_permission_request(
+                    &run_id,
+                    session_id.as_str(),
+                    request_id,
+                    tool_name,
+                    action_description,
+                    reason,
+                    content_preview.as_deref(),
+                    Some(event_id),
+                );
+            }
+        }
+
+        if let TurnEvent::PlanReviewRequest {
+            ref review_id,
+            ref plan_title,
+            ref plan_file,
+            ref estimated_effort,
+            ref overview,
+            ref scope_in,
+            ref scope_out,
+            ref guardrails,
+            ref plan_content,
+            ref tasks,
+        } = event
+        {
+            let plan_payload = serde_json::json!({
+                "plan_title": plan_title,
+                "plan_file": plan_file,
+                "estimated_effort": estimated_effort,
+                "overview": overview,
+                "scope_in": scope_in,
+                "scope_out": scope_out,
+                "guardrails": guardrails,
+                "plan_content": plan_content,
+                "tasks": tasks,
+            });
+            let payload = serde_json::json!({
+                "run_id": run_id,
+                "session_id": session_id.as_str(),
+                "review_id": review_id,
+                "plan": plan_payload,
+            });
+            if let Some(event_id) = publish_durable_event(
+                &container,
+                &session_id,
+                SessionEventKind::PlanReviewRequest,
+                payload,
+                Some(review_id),
+            )
+            .await
+            {
+                sink.emit_plan_review_request(
+                    &run_id,
+                    session_id.as_str(),
+                    review_id,
+                    &plan_payload,
+                    Some(event_id),
+                );
+            }
+        }
+
+        match container
+            .session_event_service
+            .publish_turn_event(&session_id, &run_id, &event, child_session_id.as_ref())
+            .await
+        {
+            Ok(persisted) => sink.emit_progress(
+                &run_id,
+                &event,
+                child_session_id.as_ref().map(SessionId::as_str),
+                persisted.map(|event| event.event_id),
+            ),
+            Err(error) => tracing::error!(
+                session_id = %session_id,
+                run_id = %run_id,
+                %error,
+                "failed to persist durable turn event; live delivery suppressed"
+            ),
+        }
+    }
+}
+
+async fn publish_durable_event(
+    container: &ServiceContainer,
+    session_id: &y_core::types::SessionId,
+    kind: SessionEventKind,
+    payload: serde_json::Value,
+    correlation_id: Option<&str>,
+) -> Option<u64> {
+    match container
+        .session_event_service
+        .publish(
+            session_id,
+            kind,
+            payload,
+            SessionEventRetention::Durable,
+            correlation_id,
+        )
+        .await
+    {
+        Ok(event) => Some(event.event_id),
+        Err(error) => {
+            tracing::error!(
+                session_id = %session_id,
+                event_kind = kind.as_str(),
+                %error,
+                "failed to persist durable session event; live delivery suppressed"
+            );
+            None
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{install_panic_logger, panic_message, take_panic_location};
+    use super::{build_started_payload, install_panic_logger, panic_message, take_panic_location};
+
+    #[test]
+    fn started_payload_preserves_background_wake_kind_for_replay() {
+        assert_eq!(
+            build_started_payload("run-1", "session-1", "background_auto_wake"),
+            serde_json::json!({
+                "run_id": "run-1",
+                "session_id": "session-1",
+                "kind": "background_auto_wake",
+            })
+        );
+    }
 
     #[test]
     fn test_panic_message_extracts_static_str() {

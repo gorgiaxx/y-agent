@@ -18,8 +18,23 @@ use crate::error::StorageError;
 /// Full DDL for a fresh database, embedded at compile time.
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// Monotonic storage schema version mirrored in `PRAGMA user_version`.
-pub const CURRENT_SCHEMA_VERSION: i64 = 1;
+pub const CURRENT_SCHEMA_VERSION: i64 = 2;
 
+const REQUIRED_TABLES_V1: &[&str] = &[
+    "session_metadata",
+    "orchestrator_workflows",
+    "orchestrator_checkpoints",
+    "schedule_definitions",
+    "schedule_executions",
+    "chat_checkpoints",
+    "chat_messages",
+    "diag_traces",
+    "diag_observations",
+    "diag_scores",
+    "provider_metrics_log",
+    "plan_runs",
+    "plan_step_results",
+];
 const REQUIRED_TABLES: &[&str] = &[
     "session_metadata",
     "orchestrator_workflows",
@@ -34,6 +49,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "provider_metrics_log",
     "plan_runs",
     "plan_step_results",
+    "session_events",
 ];
 
 const REQUIRED_SESSION_COLUMNS: &[&str] = &[
@@ -54,8 +70,9 @@ const REQUIRED_TRACE_COLUMNS: &[&str] = &["tags", "replay_context"];
 
 /// Prepare an on-disk database before normal pool creation.
 ///
-/// Existing databases created by the legacy sqlx migration flow or by an older
-/// incompatible schema revision are archived and replaced on the next startup.
+/// Compatible older schemas are upgraded in place. Databases created by the
+/// legacy sqlx migration flow or by an incompatible schema revision are
+/// archived and replaced on the next startup.
 pub async fn prepare_database(config: &StorageConfig) -> Result<(), StorageError> {
     if config.is_in_memory() {
         return Ok(());
@@ -132,6 +149,10 @@ async fn incompatibility_reason(
     }
 
     let user_version = current_user_version(connection).await?;
+    if user_version == 1 && schema_shape_matches_v1(connection, &table_names).await? {
+        upgrade_v1_to_v2(connection).await?;
+        return Ok(None);
+    }
     let schema_matches = schema_shape_matches(connection, &table_names).await?;
 
     if user_version == CURRENT_SCHEMA_VERSION && schema_matches {
@@ -173,6 +194,20 @@ async fn schema_shape_matches(
         return Ok(false);
     }
 
+    schema_shape_matches_v1(connection, table_names).await
+}
+
+async fn schema_shape_matches_v1(
+    connection: &mut SqliteConnection,
+    table_names: &BTreeSet<String>,
+) -> Result<bool, StorageError> {
+    if REQUIRED_TABLES_V1
+        .iter()
+        .any(|table| !table_names.contains(*table))
+    {
+        return Ok(false);
+    }
+
     if !table_has_columns(connection, "session_metadata", REQUIRED_SESSION_COLUMNS).await? {
         return Ok(false);
     }
@@ -196,6 +231,36 @@ async fn schema_shape_matches(
     }
 
     Ok(true)
+}
+
+async fn upgrade_v1_to_v2(connection: &mut SqliteConnection) -> Result<(), StorageError> {
+    sqlx::raw_sql(
+        r"CREATE TABLE IF NOT EXISTS session_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            retention_class TEXT NOT NULL CHECK (retention_class IN (
+                'durable', 'short_lived', 'reconstructable'
+            )),
+            correlation_id TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            CONSTRAINT unique_session_event_seq UNIQUE (session_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_session_events_session_seq
+            ON session_events(session_id, seq ASC);
+        CREATE INDEX IF NOT EXISTS idx_session_events_correlation
+            ON session_events(session_id, correlation_id, event_id DESC);",
+    )
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| StorageError::Migration {
+        message: format!("failed to upgrade schema v1 to v2: {error}"),
+    })?;
+    set_user_version(connection, CURRENT_SCHEMA_VERSION).await?;
+    info!("upgraded SQLite schema from v1 to v2");
+    Ok(())
 }
 
 async fn user_table_names(
@@ -325,6 +390,7 @@ mod tests {
         "diag_observations",
         "diag_scores",
         "provider_metrics_log",
+        "session_events",
     ];
 
     async fn setup_pool_with_migrations() -> SqlitePool {
@@ -510,5 +576,68 @@ mod tests {
             1,
             "expected one backup file after reset"
         );
+    }
+
+    #[tokio::test]
+    async fn test_prepare_database_upgrades_v1_without_archiving_session_data() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("v1.db");
+        let config = StorageConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            pool_size: 1,
+            wal_enabled: true,
+            busy_timeout_ms: 5000,
+            transcript_dir: temp_dir.path().join("transcripts"),
+        };
+        std::fs::create_dir_all(&config.transcript_dir).unwrap();
+        let pool = create_pool(&config).await.unwrap();
+        run_embedded_migrations(&pool).await.unwrap();
+        sqlx::query("DROP TABLE session_events")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA user_version = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            r"INSERT INTO session_metadata
+               (id, root_id, path, session_type, transcript_path)
+               VALUES ('preserved-session', 'preserved-session', '/preserved', 'main', '/tmp/transcript')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        prepare_database(&config).await.unwrap();
+        let upgraded = create_pool(&config).await.unwrap();
+        run_embedded_migrations(&upgraded).await.unwrap();
+
+        let version: i64 = sqlx::query("PRAGMA user_version")
+            .fetch_one(&upgraded)
+            .await
+            .unwrap()
+            .get(0);
+        let preserved: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM session_metadata WHERE id = 'preserved-session'")
+                .fetch_one(&upgraded)
+                .await
+                .unwrap();
+        let event_table: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_events'",
+        )
+        .fetch_one(&upgraded)
+        .await
+        .unwrap();
+
+        assert_eq!(version, 2);
+        assert_eq!(preserved.0, 1);
+        assert_eq!(event_table.0, 1);
+        assert!(!std::fs::read_dir(temp_dir.path()).unwrap().any(|entry| {
+            entry
+                .ok()
+                .is_some_and(|entry| entry.file_name().to_string_lossy().contains("incompatible"))
+        }));
     }
 }

@@ -294,3 +294,25 @@ CREATE TABLE IF NOT EXISTS plan_step_results (
 
 CREATE INDEX IF NOT EXISTS idx_plan_step_results_run
     ON plan_step_results(plan_run_id);
+
+------------------------------------------------------------------------
+-- 9. Replayable session event log
+------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS session_events (
+    event_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id      TEXT NOT NULL,
+    seq             INTEGER NOT NULL,
+    kind            TEXT NOT NULL,
+    payload         TEXT NOT NULL,
+    retention_class TEXT NOT NULL CHECK (retention_class IN (
+                        'durable', 'short_lived', 'reconstructable'
+                    )),
+    correlation_id  TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    CONSTRAINT unique_session_event_seq UNIQUE (session_id, seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_events_session_seq
+    ON session_events(session_id, seq ASC);
+CREATE INDEX IF NOT EXISTS idx_session_events_correlation
+    ON session_events(session_id, correlation_id, event_id DESC);
