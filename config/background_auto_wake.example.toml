@@ -1,0 +1,12 @@
+# Automatic model turns triggered by eligible background-task completion.
+# The Cargo feature and this switch must both be enabled.
+enabled = false
+
+# Rolling per-session budget for successfully started automatic turns.
+max_wakes_per_hour = 2
+
+# Minimum spacing between successfully started automatic turns in one session.
+cooldown_secs = 300
+
+# Keep Plan execution isolated unless an operator explicitly accepts the risk.
+allow_during_orchestration = false

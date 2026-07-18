@@ -161,6 +161,9 @@ impl BackgroundTaskService {
         request: BackgroundTaskPollRequest,
     ) -> anyhow::Result<BackgroundTaskSnapshot> {
         let session_id = parse_session_id(&request.session_id)?;
+        container
+            .background_wake_service
+            .begin_observation(&session_id, &request.process_id);
         let snapshot = container
             .runtime_manager
             .read_process(
@@ -169,7 +172,23 @@ impl BackgroundTaskService {
                 bounded_yield_time(request.yield_time_ms),
                 bounded_max_output_bytes(request.max_output_bytes),
             )
-            .await?;
+            .await;
+        let snapshot = match snapshot {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                container.background_wake_service.finish_observation(
+                    &session_id,
+                    &request.process_id,
+                    false,
+                );
+                return Err(error.into());
+            }
+        };
+        container.background_wake_service.finish_observation(
+            &session_id,
+            &request.process_id,
+            process_status_is_terminal(&snapshot.status),
+        );
         Ok(snapshot.into())
     }
 
@@ -179,6 +198,9 @@ impl BackgroundTaskService {
         request: BackgroundTaskWriteRequest,
     ) -> anyhow::Result<BackgroundTaskSnapshot> {
         let session_id = parse_session_id(&request.session_id)?;
+        container
+            .background_wake_service
+            .begin_observation(&session_id, &request.process_id);
         let snapshot = container
             .runtime_manager
             .write_process(
@@ -188,7 +210,23 @@ impl BackgroundTaskService {
                 bounded_yield_time(request.yield_time_ms),
                 bounded_max_output_bytes(request.max_output_bytes),
             )
-            .await?;
+            .await;
+        let snapshot = match snapshot {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                container.background_wake_service.finish_observation(
+                    &session_id,
+                    &request.process_id,
+                    false,
+                );
+                return Err(error.into());
+            }
+        };
+        container.background_wake_service.finish_observation(
+            &session_id,
+            &request.process_id,
+            process_status_is_terminal(&snapshot.status),
+        );
         Ok(snapshot.into())
     }
 
@@ -198,6 +236,9 @@ impl BackgroundTaskService {
         request: BackgroundTaskPollRequest,
     ) -> anyhow::Result<BackgroundTaskSnapshot> {
         let session_id = parse_session_id(&request.session_id)?;
+        container
+            .background_wake_service
+            .mark_killed(&session_id, &request.process_id);
         let snapshot = container
             .runtime_manager
             .kill_process(
@@ -209,6 +250,13 @@ impl BackgroundTaskService {
             .await?;
         Ok(snapshot.into())
     }
+}
+
+fn process_status_is_terminal(status: &ProcessStatus) -> bool {
+    matches!(
+        status,
+        ProcessStatus::Completed { .. } | ProcessStatus::Failed { .. }
+    )
 }
 
 #[cfg(test)]
