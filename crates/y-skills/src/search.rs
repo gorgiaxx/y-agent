@@ -16,6 +16,17 @@ pub struct ScoredSkillSummary {
     pub score: usize,
 }
 
+/// Compact source document for cross-capability lexical search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillSearchDocument {
+    pub id: y_core::types::SkillId,
+    pub name: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub trigger_patterns: Vec<String>,
+    pub token_estimate: u32,
+}
+
 impl SkillSearch {
     /// Create a new empty skill search index.
     pub fn new() -> Self {
@@ -32,6 +43,21 @@ impl SkillSearch {
     /// Remove a manifest from the search index.
     pub fn remove(&mut self, skill_id: &y_core::types::SkillId) {
         self.manifests.retain(|m| m.id != *skill_id);
+    }
+
+    /// Return compact searchable documents without loading skill body content.
+    pub fn documents(&self) -> Vec<SkillSearchDocument> {
+        self.manifests
+            .iter()
+            .map(|manifest| SkillSearchDocument {
+                id: manifest.id.clone(),
+                name: manifest.name.clone(),
+                description: manifest.description.clone(),
+                tags: manifest.tags.clone(),
+                trigger_patterns: manifest.trigger_patterns.clone(),
+                token_estimate: manifest.token_estimate,
+            })
+            .collect()
     }
 
     /// Search skills by query string.
@@ -268,5 +294,25 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].summary.name, "rust-errors");
         assert!(results[0].score >= 12);
+    }
+
+    #[test]
+    fn searchable_documents_include_trigger_hints_without_skill_content() {
+        let mut search = SkillSearch::new();
+        search.index(test_manifest(
+            "rust-errors",
+            &["rust", "diagnostics"],
+            &["explain compiler error codes"],
+        ));
+
+        let documents = search.documents();
+
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].name, "rust-errors");
+        assert_eq!(documents[0].tags, vec!["rust", "diagnostics"]);
+        assert_eq!(
+            documents[0].trigger_patterns,
+            vec!["explain compiler error codes"]
+        );
     }
 }

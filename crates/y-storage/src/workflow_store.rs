@@ -82,6 +82,40 @@ impl SqliteWorkflowStore {
         Ok(())
     }
 
+    /// Update an existing workflow template while preserving its identity.
+    ///
+    /// Returns `true` when the row existed and was updated.
+    #[instrument(skip(self, row), fields(workflow_id = %row.id, name = %row.name))]
+    pub async fn update(&self, row: &WorkflowRow) -> Result<bool, StorageError> {
+        let result = sqlx::query(
+            r"UPDATE orchestrator_workflows
+              SET name = ?2,
+                  description = ?3,
+                  definition = ?4,
+                  compiled_dag = ?5,
+                  parameter_schema = ?6,
+                  tags = ?7,
+                  creator = ?8,
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+              WHERE id = ?1",
+        )
+        .bind(&row.id)
+        .bind(&row.name)
+        .bind(&row.description)
+        .bind(&row.definition)
+        .bind(&row.compiled_dag)
+        .bind(&row.parameter_schema)
+        .bind(&row.tags)
+        .bind(&row.creator)
+        .execute(&self.pool)
+        .await
+        .map_err(|error| StorageError::Database {
+            message: format!("update workflow '{}': {error}", row.id),
+        })?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     /// Get a workflow by ID.
     #[instrument(skip(self))]
     pub async fn get(&self, id: &str) -> Result<Option<WorkflowRow>, StorageError> {
@@ -274,6 +308,24 @@ mod tests {
             .unwrap()
             .expect("should exist");
         assert_eq!(loaded.id, "wf-1");
+    }
+
+    #[tokio::test]
+    async fn test_update_preserves_identity_and_replaces_content() {
+        let (_pool, store) = setup().await;
+        let mut row = sample_row("wf-1", "my-flow");
+        store.save(&row).await.unwrap();
+
+        row.definition = "prepare >> execute >> verify".to_string();
+        row.compiled_dag = r#"["prepare","execute","verify"]"#.to_string();
+        row.description = Some("Updated workflow".to_string());
+        store.update(&row).await.unwrap();
+
+        let loaded = store.get("wf-1").await.unwrap().expect("should exist");
+        assert_eq!(loaded.id, "wf-1");
+        assert_eq!(loaded.name, "my-flow");
+        assert_eq!(loaded.definition, "prepare >> execute >> verify");
+        assert_eq!(loaded.description.as_deref(), Some("Updated workflow"));
     }
 
     #[tokio::test]

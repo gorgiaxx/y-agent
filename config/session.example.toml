@@ -12,6 +12,10 @@ max_active_per_root = 8
 # context window (e.g. 85 = compact when usage exceeds 85%).
 compaction_threshold_pct = 85
 
+# Start immutable background compaction before the hard threshold. The result
+# is applied only if its source-prefix fingerprint still matches.
+compaction_prefire_threshold_pct = 75
+
 # Auto-archive sessions when they are merged.
 auto_archive_merged = true
 

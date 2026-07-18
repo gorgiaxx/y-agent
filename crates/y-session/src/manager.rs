@@ -1219,6 +1219,7 @@ mod tests {
                     output_tokens: 4,
                     model_used: "test-model".to_string(),
                     duration_ms: 1,
+                    workspace_isolation: None,
                 })
             }
         }

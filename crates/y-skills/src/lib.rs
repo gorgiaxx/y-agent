@@ -89,7 +89,7 @@ pub use config::SkillConfig;
 pub use error::SkillModuleError;
 pub use manifest::ManifestParser;
 pub use registry::SkillRegistryImpl;
-pub use search::{ScoredSkillSummary, SkillSearch};
+pub use search::{ScoredSkillSummary, SkillSearch, SkillSearchDocument};
 pub use store::FilesystemSkillStore;
 pub use version::PersistentVersionStore;
 pub use version::VersionStore;

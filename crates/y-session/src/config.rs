@@ -22,6 +22,11 @@ pub struct SessionConfig {
     #[serde(default = "default_compaction_threshold_pct")]
     pub compaction_threshold_pct: u32,
 
+    /// Percentage at which an immutable background compaction may be
+    /// prefired for later use. Must remain below the hard threshold.
+    #[serde(default = "default_compaction_prefire_threshold_pct")]
+    pub compaction_prefire_threshold_pct: u32,
+
     /// Whether to auto-archive sessions when merged.
     #[serde(default = "default_auto_archive_merged")]
     pub auto_archive_merged: bool,
@@ -44,6 +49,10 @@ fn default_compaction_threshold_pct() -> u32 {
     85
 }
 
+fn default_compaction_prefire_threshold_pct() -> u32 {
+    75
+}
+
 fn default_auto_archive_merged() -> bool {
     true
 }
@@ -58,6 +67,7 @@ impl Default for SessionConfig {
             max_depth: default_max_depth(),
             max_active_per_root: default_max_active_per_root(),
             compaction_threshold_pct: default_compaction_threshold_pct(),
+            compaction_prefire_threshold_pct: default_compaction_prefire_threshold_pct(),
             auto_archive_merged: default_auto_archive_merged(),
             title_summarize_interval: default_title_summarize_interval(),
         }
@@ -74,6 +84,7 @@ mod tests {
         assert_eq!(config.max_depth, 10);
         assert_eq!(config.max_active_per_root, 50);
         assert_eq!(config.compaction_threshold_pct, 85);
+        assert_eq!(config.compaction_prefire_threshold_pct, 75);
         assert!(config.auto_archive_merged);
         assert_eq!(config.title_summarize_interval, 3);
     }

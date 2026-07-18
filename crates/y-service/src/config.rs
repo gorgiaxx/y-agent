@@ -22,6 +22,9 @@ use y_session::SessionConfig;
 use y_storage::StorageConfig;
 use y_tools::ToolRegistryConfig;
 
+use crate::background_wake::BackgroundWakeConfig;
+use crate::lsp::LspConfig;
+
 /// Combined struct for deserializing `session.toml` which contains both
 /// session configuration and a nested `[pruning]` section.
 #[derive(Debug, Clone, Deserialize)]
@@ -72,6 +75,12 @@ pub struct ServiceConfig {
     /// Loaded from the `[pruning]` section in `session.toml`.
     pub pruning: PruningConfig,
 
+    /// Bounded automatic follow-up turns for completed background tasks.
+    pub background_auto_wake: BackgroundWakeConfig,
+
+    /// Optional Language Server Protocol integration.
+    pub lsp: LspConfig,
+
     /// Path to the user prompts override directory (`~/.config/y-agent/prompts/`).
     /// When set, prompt files here take priority over compiled-in defaults.
     #[serde(skip)]
@@ -105,6 +114,8 @@ const CONFIG_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "background_auto_wake",
+    "lsp",
     "langfuse",
 ];
 
@@ -217,6 +228,10 @@ impl ServiceConfig {
                 "guardrails" => parse_section!(config.guardrails, GuardrailConfig),
                 "browser" => parse_section!(config.browser, BrowserConfig),
                 "knowledge" => parse_section!(config.knowledge, KnowledgeConfig),
+                "background_auto_wake" => {
+                    parse_section!(config.background_auto_wake, BackgroundWakeConfig);
+                }
+                "lsp" => parse_section!(config.lsp, LspConfig),
                 #[cfg(feature = "langfuse")]
                 "langfuse" => parse_section!(config.langfuse, LangfuseConfig),
                 _ => {}
@@ -361,6 +376,62 @@ api_key_env = "OPENAI_API_KEY"
         assert_eq!(config.storage.db_path, "/tmp/test.db");
         // Providers should fall back to default (empty).
         assert!(config.providers.providers.is_empty());
+    }
+
+    #[test]
+    fn loads_background_auto_wake_as_disabled_by_default_and_explicitly_configurable() {
+        let empty_dir = TempDir::new().unwrap();
+        let defaults = ServiceConfig::load_from_directory(empty_dir.path(), None);
+        assert!(!defaults.background_auto_wake.enabled);
+
+        let configured_dir = TempDir::new().unwrap();
+        std::fs::write(
+            configured_dir.path().join("background_auto_wake.toml"),
+            r#"
+enabled = true
+max_wakes_per_hour = 4
+cooldown_secs = 90
+allow_during_orchestration = true
+"#,
+        )
+        .unwrap();
+
+        let configured = ServiceConfig::load_from_directory(configured_dir.path(), None);
+        assert!(configured.background_auto_wake.enabled);
+        assert_eq!(configured.background_auto_wake.max_wakes_per_hour, 4);
+        assert_eq!(configured.background_auto_wake.cooldown_secs, 90);
+        assert!(configured.background_auto_wake.allow_during_orchestration);
+    }
+
+    #[test]
+    fn loads_lsp_as_disabled_by_default_and_explicitly_configurable() {
+        let empty_dir = TempDir::new().unwrap();
+        let defaults = ServiceConfig::load_from_directory(empty_dir.path(), None);
+        assert!(!defaults.lsp.enabled);
+
+        let configured_dir = TempDir::new().unwrap();
+        std::fs::write(
+            configured_dir.path().join("lsp.toml"),
+            r#"
+enabled = true
+request_timeout_ms = 5000
+max_restarts = 2
+
+[[servers]]
+id = "rust-custom"
+command = "/opt/bin/rust-analyzer"
+language_id = "rust"
+extensions = ["rs"]
+root_markers = ["Cargo.toml"]
+"#,
+        )
+        .unwrap();
+
+        let configured = ServiceConfig::load_from_directory(configured_dir.path(), None);
+        assert!(configured.lsp.enabled);
+        assert_eq!(configured.lsp.request_timeout_ms, 5000);
+        assert_eq!(configured.lsp.max_restarts, 2);
+        assert_eq!(configured.lsp.servers[0].id, "rust-custom");
     }
 
     #[test]

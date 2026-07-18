@@ -54,7 +54,10 @@ impl AgentManagementService {
     ///
     /// Reads all definitions from the registry where `user_callable == true`
     /// and writes a markdown-formatted summary into the shared handle.
-    async fn refresh_callable_agents_text(registry: &AgentRegistry, handle: &Arc<RwLock<String>>) {
+    pub(crate) async fn refresh_callable_agents_text(
+        registry: &AgentRegistry,
+        handle: &Arc<RwLock<String>>,
+    ) {
         let callable: Vec<_> = registry
             .list()
             .into_iter()

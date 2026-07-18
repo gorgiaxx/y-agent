@@ -26,6 +26,8 @@ pub const CONFIG_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "background_auto_wake",
+    "lsp",
     "langfuse",
 ];
 

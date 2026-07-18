@@ -30,6 +30,8 @@ impl McpToolAdapter {
         description: &str,
         schema: serde_json::Value,
     ) -> Self {
+        let capabilities = capabilities_from_schema(&schema);
+        let is_dangerous = capabilities.filesystem.mutation.is_some();
         let def = ToolDefinition {
             name: ToolName::from_string(name),
             description: description.to_string(),
@@ -38,8 +40,8 @@ impl McpToolAdapter {
             result_schema: None,
             category: ToolCategory::Custom,
             tool_type: ToolType::Mcp,
-            capabilities: RuntimeCapability::default(),
-            is_dangerous: false,
+            capabilities,
+            is_dangerous,
         };
         Self { client, def }
     }
@@ -93,6 +95,8 @@ impl McpManagedToolAdapter {
         description: &str,
         schema: serde_json::Value,
     ) -> Self {
+        let capabilities = capabilities_from_schema(&schema);
+        let is_dangerous = capabilities.filesystem.mutation.is_some();
         let def = ToolDefinition {
             name: ToolName::from_string(prefixed_name),
             description: description.to_string(),
@@ -101,8 +105,8 @@ impl McpManagedToolAdapter {
             result_schema: None,
             category: ToolCategory::Custom,
             tool_type: ToolType::Mcp,
-            capabilities: RuntimeCapability::default(),
-            is_dangerous: false,
+            capabilities,
+            is_dangerous,
         };
         Self {
             manager,
@@ -115,6 +119,20 @@ impl McpManagedToolAdapter {
     pub fn definition(&self) -> &ToolDefinition {
         &self.def
     }
+}
+
+fn capabilities_from_schema(schema: &serde_json::Value) -> RuntimeCapability {
+    let mut capabilities = RuntimeCapability::default();
+    if let Some(value) = schema.get("x-y-agent-file-mutation") {
+        match serde_json::from_value(value.clone()) {
+            Ok(mutation) => capabilities.filesystem.mutation = Some(mutation),
+            Err(error) => tracing::warn!(
+                %error,
+                "ignored invalid x-y-agent-file-mutation MCP schema extension"
+            ),
+        }
+    }
+    capabilities
 }
 
 #[async_trait]
@@ -185,5 +203,36 @@ mod tests {
         assert_eq!(def.name.as_str(), "mcp_search");
         assert_eq!(def.tool_type, ToolType::Mcp);
         assert_eq!(def.category, ToolCategory::Custom);
+    }
+
+    #[test]
+    fn test_adapter_imports_explicit_file_mutation_schema_extension() {
+        let transport: Arc<dyn McpTransport> = Arc::new(DummyTransport);
+        let client = Arc::new(McpClient::new(transport, "test"));
+        let adapter = McpToolAdapter::new(
+            client,
+            "mcp_write",
+            "Write via MCP",
+            serde_json::json!({
+                "type": "object",
+                "x-y-agent-file-mutation": {
+                    "operation": "modify",
+                    "path_argument": "path"
+                }
+            }),
+        );
+
+        let mutation = adapter
+            .definition()
+            .capabilities
+            .filesystem
+            .mutation
+            .as_ref()
+            .unwrap();
+        assert_eq!(mutation.path_argument, "path");
+        assert_eq!(
+            mutation.operation,
+            y_core::file_mutation::FileMutationOperation::Modify
+        );
     }
 }

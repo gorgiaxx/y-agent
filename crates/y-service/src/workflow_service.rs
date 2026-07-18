@@ -239,10 +239,13 @@ impl WorkflowService {
             existing.tags = parse_tags_to_json(Some(tags.as_str()));
         }
 
-        store
-            .save(&existing)
+        let updated = store
+            .update(&existing)
             .await
             .map_err(WorkflowServiceError::Storage)?;
+        if !updated {
+            return Err(WorkflowServiceError::NotFound { id: existing.id });
+        }
 
         Self::get(store, id).await
     }

@@ -43,6 +43,7 @@ impl AgentDelegator for MockRefiner {
             output_tokens: 30,
             model_used: "test-model".to_string(),
             duration_ms: 12,
+            workspace_isolation: None,
         })
     }
 }

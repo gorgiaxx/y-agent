@@ -877,6 +877,7 @@ mod tests {
                 output_tokens: 20,
                 model_used: "mock".to_string(),
                 duration_ms: 500,
+                workspace_isolation: None,
             })
         }
     }

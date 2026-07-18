@@ -31,21 +31,7 @@ impl McpService {
         let configs: Vec<y_mcp::McpServerConfigRef> = mcp_configs
             .iter()
             .filter(|c| c.enabled)
-            .map(|c| y_mcp::McpServerConfigRef {
-                name: c.name.clone(),
-                transport: c.transport.clone(),
-                command: c.command.clone(),
-                args: c.args.clone(),
-                url: c.url.clone(),
-                env: c.env.clone(),
-                headers: c.headers.clone(),
-                startup_timeout_secs: c.startup_timeout_secs,
-                tool_timeout_secs: c.tool_timeout_secs,
-                cwd: c.cwd.clone(),
-                bearer_token: c.bearer_token.clone(),
-                auto_reconnect: c.auto_reconnect,
-                max_reconnect_attempts: c.max_reconnect_attempts,
-            })
+            .map(mcp_config_ref)
             .collect();
 
         if configs.is_empty() {
@@ -127,18 +113,7 @@ impl McpService {
             "MCP tools registered in tool registry"
         );
 
-        // Inject MCP server instructions into prompt context so they appear
-        // in the system prompt alongside the MCP hint section.
-        let instructions = container.mcp_manager.collect_server_instructions().await;
-        if !instructions.is_empty() {
-            use std::fmt::Write;
-            let mut text = String::from("## MCP Server Instructions\n");
-            for (server_name, instruction) in &instructions {
-                let _ = write!(text, "\n### {server_name}\n{instruction}\n");
-            }
-            let mut pctx = container.prompt_context.write().await;
-            pctx.mcp_server_instructions = Some(text);
-        }
+        Self::refresh_mcp_instructions(container).await;
     }
 
     /// Spawn a background task that listens for MCP lifecycle events
@@ -186,10 +161,23 @@ impl McpService {
             .collect();
 
         let mcp_configs = container.tool_registry.config().mcp_servers;
+        let selected_config = mcp_configs
+            .iter()
+            .find(|config| config.name == server_name)
+            .cloned();
+        #[cfg(feature = "capability_packs")]
+        if selected_config.is_none() {
+            selected_config = container
+                .active_capability_pack_mcp
+                .read()
+                .await
+                .get(server_name)
+                .cloned();
+        }
         let mut registered_names = Vec::new();
 
         for (sname, tool_info) in &server_tools {
-            if let Some(cfg) = mcp_configs.iter().find(|c| c.name == *sname) {
+            if let Some(cfg) = selected_config.as_ref() {
                 if let Some(ref wl) = cfg.enabled_tools {
                     if !wl.contains(&tool_info.name) {
                         continue;
@@ -239,6 +227,8 @@ impl McpService {
             count = registered_names.len(),
             "MCP server tools refreshed after reconnection"
         );
+        Self::reconcile_mcp_taxonomy(container).await;
+        Self::refresh_mcp_instructions(container).await;
     }
 
     /// Deactivate tools from a disconnected MCP server.
@@ -263,5 +253,239 @@ impl McpService {
                 "MCP server tools deactivated after disconnect"
             );
         }
+        Self::reconcile_mcp_taxonomy(container).await;
+        Self::refresh_mcp_instructions(container).await;
+    }
+
+    #[cfg(feature = "capability_packs")]
+    pub(crate) async fn activate_capability_pack_server(
+        container: &Arc<ServiceContainer>,
+        config: y_tools::McpServerConfig,
+    ) -> Result<(), String> {
+        if !config.enabled {
+            return Err(format!(
+                "capability-pack MCP declaration is disabled: {}",
+                config.name
+            ));
+        }
+        if container
+            .tool_registry
+            .config()
+            .mcp_servers
+            .iter()
+            .any(|configured| configured.name == config.name)
+        {
+            return Err(format!(
+                "capability-pack MCP server conflicts with user configuration: {}",
+                config.name
+            ));
+        }
+
+        let already_owned = container
+            .active_capability_pack_mcp
+            .read()
+            .await
+            .contains_key(&config.name);
+        if !already_owned
+            && matches!(
+                container.mcp_manager.server_status(&config.name).await,
+                Some(y_mcp::McpServerStatus::Connected)
+            )
+        {
+            return Err(format!(
+                "MCP server is already connected outside capability-pack ownership: {}",
+                config.name
+            ));
+        }
+
+        if !matches!(
+            container.mcp_manager.server_status(&config.name).await,
+            Some(y_mcp::McpServerStatus::Connected)
+        ) {
+            container
+                .mcp_manager
+                .connect_all(vec![mcp_config_ref(&config)])
+                .await;
+        }
+        match container.mcp_manager.server_status(&config.name).await {
+            Some(y_mcp::McpServerStatus::Connected) => {}
+            Some(status) => {
+                return Err(format!(
+                    "capability-pack MCP server failed to connect: {} ({status})",
+                    config.name
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "capability-pack MCP server produced no connection state: {}",
+                    config.name
+                ));
+            }
+        }
+
+        container
+            .active_capability_pack_mcp
+            .write()
+            .await
+            .insert(config.name.clone(), config.clone());
+        if let Err(error) = Self::register_capability_pack_server_tools(container, &config).await {
+            let _ = container.mcp_manager.disconnect(&config.name).await;
+            container
+                .active_capability_pack_mcp
+                .write()
+                .await
+                .remove(&config.name);
+            return Err(error);
+        }
+        Self::refresh_mcp_instructions(container).await;
+        Ok(())
+    }
+
+    #[cfg(feature = "capability_packs")]
+    pub(crate) async fn deactivate_capability_pack_server(
+        container: &ServiceContainer,
+        server_name: &str,
+    ) -> Result<bool, String> {
+        if !container
+            .active_capability_pack_mcp
+            .read()
+            .await
+            .contains_key(server_name)
+        {
+            return Ok(false);
+        }
+        Self::deactivate_mcp_server_tools(container, server_name).await;
+        container
+            .mcp_manager
+            .disconnect(server_name)
+            .await
+            .map_err(|error| format!("failed to disconnect MCP server {server_name}: {error}"))?;
+        container
+            .active_capability_pack_mcp
+            .write()
+            .await
+            .remove(server_name);
+        Self::refresh_mcp_instructions(container).await;
+        Ok(true)
+    }
+
+    #[cfg(feature = "capability_packs")]
+    async fn register_capability_pack_server_tools(
+        container: &Arc<ServiceContainer>,
+        config: &y_tools::McpServerConfig,
+    ) -> Result<(), String> {
+        Self::deactivate_mcp_server_tools(container, &config.name).await;
+        let server_tools = container
+            .mcp_manager
+            .list_all_tools()
+            .await
+            .into_iter()
+            .filter(|(server_name, _)| server_name == &config.name)
+            .collect::<Vec<_>>();
+        let mut registered_names = Vec::new();
+        for (server_name, tool_info) in server_tools {
+            if config
+                .enabled_tools
+                .as_ref()
+                .is_some_and(|enabled| !enabled.contains(&tool_info.name))
+                || config
+                    .disabled_tools
+                    .as_ref()
+                    .is_some_and(|disabled| disabled.contains(&tool_info.name))
+            {
+                continue;
+            }
+            let prefixed = format!("mcp_{}_{}", server_name, tool_info.name);
+            let adapter = y_mcp::McpManagedToolAdapter::new(
+                Arc::clone(&container.mcp_manager),
+                &server_name,
+                &tool_info.name,
+                &prefixed,
+                tool_info.description.as_deref().unwrap_or(""),
+                tool_info
+                    .input_schema
+                    .unwrap_or_else(|| serde_json::json!({})),
+            );
+            let definition = adapter.definition().clone();
+            if let Err(error) = container
+                .tool_registry
+                .register_tool(Arc::new(adapter), definition)
+                .await
+            {
+                Self::deactivate_mcp_server_tools(container, &config.name).await;
+                return Err(format!(
+                    "failed to register capability-pack MCP tool {prefixed}: {error}"
+                ));
+            }
+            registered_names.push(prefixed);
+        }
+        if !registered_names.is_empty() {
+            container.tool_taxonomy.write().await.add_dynamic_category(
+                "mcp",
+                "MCP tools from external servers",
+                registered_names,
+            );
+        }
+        Self::reconcile_mcp_taxonomy(container).await;
+        Ok(())
+    }
+
+    async fn reconcile_mcp_taxonomy(container: &ServiceContainer) {
+        let live_tools = container
+            .tool_registry
+            .get_all_definitions()
+            .await
+            .into_iter()
+            .filter_map(|definition| {
+                definition
+                    .name
+                    .as_str()
+                    .starts_with("mcp_")
+                    .then(|| definition.name.as_str().to_string())
+            })
+            .collect::<std::collections::HashSet<_>>();
+        container
+            .tool_taxonomy
+            .write()
+            .await
+            .retain_category_tools("mcp", &live_tools);
+    }
+
+    async fn refresh_mcp_instructions(container: &ServiceContainer) {
+        use std::fmt::Write;
+
+        let instructions = container.mcp_manager.collect_server_instructions().await;
+        let text = if instructions.is_empty() {
+            None
+        } else {
+            let mut text = String::from("## MCP Server Instructions\n");
+            for (server_name, instruction) in &instructions {
+                let _ = write!(text, "\n### {server_name}\n{instruction}\n");
+            }
+            Some(text)
+        };
+        container
+            .prompt_context
+            .write()
+            .await
+            .mcp_server_instructions = text;
+    }
+}
+
+fn mcp_config_ref(config: &y_tools::McpServerConfig) -> y_mcp::McpServerConfigRef {
+    y_mcp::McpServerConfigRef {
+        name: config.name.clone(),
+        transport: config.transport.clone(),
+        command: config.command.clone(),
+        args: config.args.clone(),
+        url: config.url.clone(),
+        env: config.env.clone(),
+        headers: config.headers.clone(),
+        startup_timeout_secs: config.startup_timeout_secs,
+        tool_timeout_secs: config.tool_timeout_secs,
+        cwd: config.cwd.clone(),
+        bearer_token: config.bearer_token.clone(),
+        auto_reconnect: config.auto_reconnect,
+        max_reconnect_attempts: config.max_reconnect_attempts,
     }
 }
