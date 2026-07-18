@@ -111,6 +111,21 @@ pub struct CompactionResult {
     pub tokens_saved: u32,
     /// Estimated tokens in the summary.
     pub summary_tokens: u32,
+    /// Whether the result came from the LLM, a fallback, or no work.
+    pub outcome: CompactionOutcome,
+}
+
+/// How a compaction result was produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionOutcome {
+    Noop,
+    Summarized,
+    Fallback { failure: Option<CompactionLlmError> },
+}
+
+struct SummaryOutcome {
+    summary: String,
+    failure: Option<CompactionLlmError>,
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +139,38 @@ pub struct CompactionResult {
 #[async_trait]
 pub trait CompactionLlm: Send + Sync {
     /// Send a compaction prompt and return the summary text.
-    async fn summarize(&self, prompt: &str) -> Result<String, String>;
+    async fn summarize(&self, prompt: &str) -> Result<String, CompactionLlmError>;
+}
+
+/// Retry classification for a failed compaction model call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactionFailureClass {
+    Deterministic,
+    Transient,
+}
+
+/// Structured failure from the compaction LLM boundary.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
+pub struct CompactionLlmError {
+    pub class: CompactionFailureClass,
+    pub message: String,
+}
+
+impl CompactionLlmError {
+    pub fn deterministic(message: impl Into<String>) -> Self {
+        Self {
+            class: CompactionFailureClass::Deterministic,
+            message: message.into(),
+        }
+    }
+
+    pub fn transient(message: impl Into<String>) -> Self {
+        Self {
+            class: CompactionFailureClass::Transient,
+            message: message.into(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -132,9 +178,10 @@ pub trait CompactionLlm: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Compaction engine with LLM-based summarization and fallback.
+#[derive(Clone)]
 pub struct CompactionEngine {
     pub config: CompactionConfig,
-    llm: Option<Box<dyn CompactionLlm>>,
+    llm: Option<std::sync::Arc<dyn CompactionLlm>>,
 }
 
 impl CompactionEngine {
@@ -155,7 +202,7 @@ impl CompactionEngine {
     pub fn with_llm(config: CompactionConfig, llm: Box<dyn CompactionLlm>) -> Self {
         Self {
             config,
-            llm: Some(llm),
+            llm: Some(std::sync::Arc::from(llm)),
         }
     }
 
@@ -176,6 +223,7 @@ impl CompactionEngine {
                 messages_compacted: 0,
                 tokens_saved: 0,
                 summary_tokens: 0,
+                outcome: CompactionOutcome::Noop,
             };
         }
 
@@ -196,6 +244,7 @@ impl CompactionEngine {
             messages_compacted: to_compact,
             tokens_saved: original_tokens.saturating_sub(summary_tokens),
             summary_tokens,
+            outcome: CompactionOutcome::Fallback { failure: None },
         }
     }
 
@@ -239,6 +288,7 @@ impl CompactionEngine {
                 messages_compacted: 0,
                 tokens_saved: 0,
                 summary_tokens: 0,
+                outcome: CompactionOutcome::Noop,
             };
         }
 
@@ -247,10 +297,16 @@ impl CompactionEngine {
         let original_tokens: u32 = compacted.iter().map(|m| estimate_tokens(m)).sum();
 
         let Some(llm) = &self.llm else {
-            return self.compact_with_retain(messages, retain_window);
+            let mut result = self.compact_with_retain(messages, retain_window);
+            result.outcome = CompactionOutcome::Fallback {
+                failure: Some(CompactionLlmError::deterministic(
+                    "compaction LLM is not configured",
+                )),
+            };
+            return result;
         };
 
-        let summary = match &self.config.strategy {
+        let summary_outcome = match &self.config.strategy {
             CompactionStrategy::Summarize => {
                 self.summarize_all(llm.as_ref(), compacted, previous_summary)
                     .await
@@ -262,6 +318,7 @@ impl CompactionEngine {
                 self.selective_retain(llm.as_ref(), compacted).await
             }
         };
+        let summary = summary_outcome.summary;
 
         let summary_tokens = estimate_tokens(&summary);
 
@@ -270,6 +327,13 @@ impl CompactionEngine {
             messages_compacted: to_compact,
             tokens_saved: original_tokens.saturating_sub(summary_tokens),
             summary_tokens,
+            outcome: summary_outcome
+                .failure
+                .map_or(CompactionOutcome::Summarized, |failure| {
+                    CompactionOutcome::Fallback {
+                        failure: Some(failure),
+                    }
+                }),
         }
     }
 
@@ -282,7 +346,7 @@ impl CompactionEngine {
         llm: &dyn CompactionLlm,
         messages: &[String],
         previous_summary: Option<&str>,
-    ) -> String {
+    ) -> SummaryOutcome {
         let prompt = match previous_summary {
             Some(prev) if !prev.is_empty() => build_update_summarize_prompt(messages, prev),
             _ => build_summarize_prompt(messages),
@@ -292,16 +356,33 @@ impl CompactionEngine {
     }
 
     /// Strategy: `SegmentedSummarize` — divide into segments, summarize each.
-    async fn segmented_summarize(&self, llm: &dyn CompactionLlm, messages: &[String]) -> String {
+    async fn segmented_summarize(
+        &self,
+        llm: &dyn CompactionLlm,
+        messages: &[String],
+    ) -> SummaryOutcome {
         let segment_size = self.config.segment_size.max(1);
         let mut segments: Vec<String> = Vec::new();
+        let mut failure = None;
+        let mut deterministic_failure = false;
 
         for chunk in messages.chunks(segment_size) {
-            let prompt = build_segment_prompt(chunk, segments.len() + 1);
-            let segment_summary = self
-                .call_with_retry(llm, &prompt)
-                .await
-                .unwrap_or_else(|| truncate_fallback(chunk));
+            let segment_summary = if deterministic_failure {
+                truncate_fallback(chunk)
+            } else {
+                let prompt = build_segment_prompt(chunk, segments.len() + 1);
+                match self.call_with_retry(llm, &prompt).await {
+                    Ok(summary) => summary,
+                    Err(error) => {
+                        deterministic_failure =
+                            error.class == CompactionFailureClass::Deterministic;
+                        if failure.is_none() {
+                            failure = Some(error);
+                        }
+                        truncate_fallback(chunk)
+                    }
+                }
+            };
             segments.push(segment_summary);
         }
 
@@ -316,11 +397,18 @@ impl CompactionEngine {
 
         // Validate identifiers on the final result.
         self.validate_identifiers(messages, &result);
-        result
+        SummaryOutcome {
+            summary: result,
+            failure,
+        }
     }
 
     /// Strategy: `SelectiveRetain` — score messages, keep important ones verbatim.
-    async fn selective_retain(&self, llm: &dyn CompactionLlm, messages: &[String]) -> String {
+    async fn selective_retain(
+        &self,
+        llm: &dyn CompactionLlm,
+        messages: &[String],
+    ) -> SummaryOutcome {
         // Score messages by simple heuristics (length, keywords).
         let mut sorted: Vec<(usize, f64)> = messages
             .iter()
@@ -344,14 +432,15 @@ impl CompactionEngine {
             .map(|(_, m)| m)
             .collect();
 
-        let summary_of_rest = if to_summarize.is_empty() {
-            String::new()
+        let (summary_of_rest, failure) = if to_summarize.is_empty() {
+            (String::new(), None)
         } else {
             let summarize_strs: Vec<String> = to_summarize.iter().map(|s| (*s).clone()).collect();
             let prompt = build_summarize_prompt(&summarize_strs);
-            self.call_with_retry(llm, &prompt)
-                .await
-                .unwrap_or_else(|| truncate_fallback(&summarize_strs))
+            match self.call_with_retry(llm, &prompt).await {
+                Ok(summary) => (summary, None),
+                Err(error) => (truncate_fallback(&summarize_strs), Some(error)),
+            }
         };
 
         // Build final: retained verbatim + summary of rest.
@@ -373,7 +462,10 @@ impl CompactionEngine {
         }
 
         self.validate_identifiers(messages, &result);
-        result
+        SummaryOutcome {
+            summary: result,
+            failure,
+        }
     }
 
     /// Call LLM with retry and identifier validation.
@@ -382,31 +474,49 @@ impl CompactionEngine {
         llm: &dyn CompactionLlm,
         prompt: &str,
         original_messages: &[String],
-    ) -> String {
+    ) -> SummaryOutcome {
         let result = self.call_with_retry(llm, prompt).await;
 
         match result {
-            Some(summary) => {
+            Ok(summary) => {
                 self.validate_identifiers(original_messages, &summary);
-                summary
+                SummaryOutcome {
+                    summary,
+                    failure: None,
+                }
             }
-            None => truncate_fallback(original_messages),
+            Err(error) => SummaryOutcome {
+                summary: truncate_fallback(original_messages),
+                failure: Some(error),
+            },
         }
     }
 
     /// Call LLM with retry logic.
-    async fn call_with_retry(&self, llm: &dyn CompactionLlm, prompt: &str) -> Option<String> {
-        for attempt in 0..self.config.max_retries {
+    async fn call_with_retry(
+        &self,
+        llm: &dyn CompactionLlm,
+        prompt: &str,
+    ) -> Result<String, CompactionLlmError> {
+        let attempts = self.config.max_retries.max(1);
+        let mut last_error = CompactionLlmError::transient("compaction LLM returned no result");
+        for attempt in 0..attempts {
             match llm.summarize(prompt).await {
                 Ok(summary) if !summary.trim().is_empty() => {
                     tracing::debug!(attempt, "compaction LLM call succeeded");
-                    return Some(summary);
+                    return Ok(summary);
                 }
                 Ok(_) => {
                     tracing::warn!(attempt, "compaction LLM returned empty summary");
+                    last_error =
+                        CompactionLlmError::transient("compaction LLM returned an empty summary");
                 }
-                Err(e) => {
-                    tracing::warn!(attempt, error = %e, "compaction LLM call failed");
+                Err(error) => {
+                    tracing::warn!(attempt, error = %error, "compaction LLM call failed");
+                    if error.class == CompactionFailureClass::Deterministic {
+                        return Err(error);
+                    }
+                    last_error = error;
                 }
             }
         }
@@ -415,7 +525,7 @@ impl CompactionEngine {
             max_retries = self.config.max_retries,
             "all compaction LLM retries exhausted; falling back to truncation"
         );
-        None
+        Err(last_error)
     }
 
     /// Validate that identifiers from original messages appear in summary.
@@ -659,6 +769,9 @@ fn score_importance(message: &str) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
     use super::*;
 
     // Mock LLM for testing.
@@ -669,9 +782,9 @@ mod tests {
 
     #[async_trait]
     impl CompactionLlm for MockLlm {
-        async fn summarize(&self, _prompt: &str) -> Result<String, String> {
+        async fn summarize(&self, _prompt: &str) -> Result<String, CompactionLlmError> {
             if self.should_fail {
-                Err("mock error".to_string())
+                Err(CompactionLlmError::transient("mock error"))
             } else {
                 Ok(self.response.clone())
             }
@@ -806,6 +919,89 @@ mod tests {
         assert!(result.summary.contains("LLM unavailable"));
     }
 
+    #[tokio::test]
+    async fn llm_failure_is_explicit_in_compaction_outcome() {
+        let llm = MockLlm {
+            response: String::new(),
+            should_fail: true,
+        };
+        let engine = CompactionEngine::with_llm(CompactionConfig::default(), Box::new(llm));
+        let messages: Vec<String> = (0..20).map(|i| format!("message {i}")).collect();
+
+        let result = engine.compact_async(&messages).await;
+
+        assert!(matches!(result.outcome, CompactionOutcome::Fallback { .. }));
+    }
+
+    struct DeterministicFailingLlm {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl CompactionLlm for DeterministicFailingLlm {
+        async fn summarize(&self, _prompt: &str) -> Result<String, CompactionLlmError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(CompactionLlmError::deterministic(
+                "invalid compaction input",
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn deterministic_compaction_failure_is_not_retried() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let llm = DeterministicFailingLlm {
+            calls: Arc::clone(&calls),
+        };
+        let mut config = CompactionConfig::default();
+        config.max_retries = 3;
+        let engine = CompactionEngine::with_llm(config, Box::new(llm));
+        let messages: Vec<String> = (0..20).map(|i| format!("message {i}")).collect();
+
+        let result = engine.compact_async(&messages).await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            result.outcome,
+            CompactionOutcome::Fallback {
+                failure: Some(CompactionLlmError {
+                    class: CompactionFailureClass::Deterministic,
+                    ..
+                })
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn deterministic_segmented_failure_stops_calling_later_segments() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let llm = DeterministicFailingLlm {
+            calls: Arc::clone(&calls),
+        };
+        let config = CompactionConfig {
+            strategy: CompactionStrategy::SegmentedSummarize,
+            retain_window: 2,
+            max_retries: 3,
+            segment_size: 2,
+            ..CompactionConfig::default()
+        };
+        let engine = CompactionEngine::with_llm(config, Box::new(llm));
+        let messages: Vec<String> = (0..8).map(|i| format!("message {i}")).collect();
+
+        let result = engine.compact_async(&messages).await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            result.outcome,
+            CompactionOutcome::Fallback {
+                failure: Some(CompactionLlmError {
+                    class: CompactionFailureClass::Deterministic,
+                    ..
+                })
+            }
+        ));
+    }
+
     /// T-P3-06: Retry logic works (mock LLM failures).
     #[tokio::test]
     async fn test_retry_exhaustion() {
@@ -818,7 +1014,7 @@ mod tests {
         let engine = CompactionEngine::with_config(config);
 
         let result = engine.call_with_retry(&llm, "test").await;
-        assert!(result.is_none());
+        assert!(result.is_err());
     }
 
     /// Score importance function works.

@@ -32,14 +32,15 @@ pub mod pipeline;
 pub mod pruning;
 pub mod recall;
 pub mod repair;
+pub mod sampling;
 pub mod system_prompt;
 pub mod token_utils;
 pub mod working_memory;
 
 // Re-export primary types.
 pub use compaction::{
-    CompactionConfig, CompactionEngine, CompactionLlm, CompactionResult, CompactionStrategy,
-    IdentifierPolicy,
+    CompactionConfig, CompactionEngine, CompactionFailureClass, CompactionLlm, CompactionLlmError,
+    CompactionOutcome, CompactionResult, CompactionStrategy, IdentifierPolicy,
 };
 pub use context_manager::{ContextManager, PreparedContext};
 pub use context_status::InjectContextStatus;
