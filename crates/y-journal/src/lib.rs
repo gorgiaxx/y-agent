@@ -24,6 +24,7 @@ pub mod error;
 pub mod file_history;
 mod hash;
 pub mod middleware;
+pub mod mutation_event_journal;
 pub mod rollback;
 pub mod storage;
 
@@ -34,6 +35,7 @@ pub use file_history::{
     DiffStats, FileHistoryManager, FileHistorySnapshot, RewindConflict, RewindPoint, RewindReport,
 };
 pub use middleware::FileJournalMiddleware;
+pub use mutation_event_journal::MutationEventJournal;
 pub use rollback::{rollback_scope, RollbackReport};
 pub use storage::{
     FileOperation, JournalEntry, JournalScope, JournalStore, ScopeStatus, ScopeType,

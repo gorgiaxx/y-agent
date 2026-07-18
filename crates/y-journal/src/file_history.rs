@@ -137,8 +137,9 @@ impl FileHistoryManager {
     /// Track a file edit by creating a backup before the mutation occurs.
     ///
     /// Called by the file journal middleware before each file-mutating
-    /// tool call. Returns `Ok(true)` if a backup was created, `Ok(false)`
-    /// if skipped (non-existent file = creation, or file too large).
+    /// tool call. Returns `Ok(true)` if a backup was created and `Ok(false)`
+    /// for a tracked file creation. Oversized files fail closed because they
+    /// cannot be made rewindable.
     pub fn track_edit(&mut self, file_path: &str) -> Result<bool, JournalError> {
         let path = Path::new(file_path);
 
@@ -146,6 +147,7 @@ impl FileHistoryManager {
             // File does not exist yet -- tool will create it.
             // Track it so we know to delete it on rewind.
             self.tracked_files.insert(file_path.to_string());
+            self.attach_to_latest_snapshot(file_path, None, 0);
             debug!(path = %file_path, "tracking new file creation (no backup needed)");
             return Ok(false);
         }
@@ -157,12 +159,13 @@ impl FileHistoryManager {
         })?;
 
         if metadata.len() > MAX_BACKUP_FILE_SIZE {
-            warn!(
-                path = %file_path,
-                size = metadata.len(),
-                "file too large for backup; skipping"
-            );
-            return Ok(false);
+            return Err(JournalError::CaptureFailed {
+                path: file_path.to_string(),
+                message: format!(
+                    "file size {} exceeds rewind backup limit {MAX_BACKUP_FILE_SIZE}",
+                    metadata.len()
+                ),
+            });
         }
 
         // Compute backup file name: {hash_prefix}@v{version}
@@ -178,6 +181,7 @@ impl FileHistoryManager {
         })?;
 
         self.tracked_files.insert(file_path.to_string());
+        self.attach_to_latest_snapshot(file_path, Some(backup_name.clone()), version);
 
         debug!(
             path = %file_path,
@@ -187,6 +191,29 @@ impl FileHistoryManager {
         );
 
         Ok(true)
+    }
+
+    fn attach_to_latest_snapshot(
+        &mut self,
+        file_path: &str,
+        backup_file_name: Option<String>,
+        version: u32,
+    ) {
+        let Some(snapshot) = self.snapshots.back_mut() else {
+            return;
+        };
+        if snapshot.file_backups.contains_key(file_path) {
+            return;
+        }
+        snapshot.file_backups.insert(
+            file_path.to_string(),
+            FileBackup {
+                backup_file_name,
+                version,
+                backup_time: chrono::Utc::now().timestamp(),
+            },
+        );
+        self.save_state();
     }
 
     /// Create a snapshot at the current user message boundary.
@@ -721,6 +748,22 @@ mod tests {
         let report = mgr.rewind_to("msg-001").unwrap();
         assert!(!report.restored.is_empty());
         assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "version 1");
+    }
+
+    #[test]
+    fn test_first_edit_after_snapshot_is_rewindable() {
+        let (mut mgr, _dir) = setup_manager();
+        let test_dir = tempfile::tempdir().unwrap();
+        let file_path = test_dir.path().join("first-edit.txt");
+        std::fs::write(&file_path, "before").unwrap();
+
+        mgr.make_snapshot("msg-001");
+        mgr.track_edit(file_path.to_str().unwrap()).unwrap();
+        std::fs::write(&file_path, "after").unwrap();
+
+        let report = mgr.rewind_to("msg-001").unwrap();
+        assert_eq!(report.restored, vec![file_path.display().to_string()]);
+        assert_eq!(std::fs::read_to_string(&file_path).unwrap(), "before");
     }
 
     #[test]

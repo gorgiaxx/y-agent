@@ -1,6 +1,5 @@
 //! `FileJournalMiddleware`: intercepts file-mutating tool calls and captures state.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -8,9 +7,7 @@ use tokio::sync::Mutex;
 use crate::error::JournalError;
 use crate::hash::compute_sha256_hex;
 use crate::storage::{FileOperation, JournalEntry, JournalStore, ScopeType, StorageStrategy};
-
-/// List of core tools known to mutate the filesystem.
-const FILE_MUTATING_TOOLS: &[&str] = &["FileWrite", "FilePatch", "FileDelete"];
+use y_core::file_mutation::FileMutationCapability;
 
 /// Maximum file size for inline storage (256KB).
 const _INLINE_THRESHOLD: u64 = 256 * 1024;
@@ -25,26 +22,17 @@ const BLOB_THRESHOLD: u64 = 10 * 1024 * 1024;
 /// On capture failure, the tool still executes (fail-open).
 pub struct FileJournalMiddleware {
     store: Arc<Mutex<JournalStore>>,
-    /// Override set of tool names considered file-mutating.
-    mutating_tools: HashSet<String>,
 }
 
 impl FileJournalMiddleware {
     /// Create a new middleware with the given journal store.
     pub fn new(store: Arc<Mutex<JournalStore>>) -> Self {
-        let mutating_tools = FILE_MUTATING_TOOLS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect();
-        Self {
-            store,
-            mutating_tools,
-        }
+        Self { store }
     }
 
-    /// Check if a tool is file-mutating.
-    pub fn is_file_mutating(&self, tool_name: &str) -> bool {
-        self.mutating_tools.contains(tool_name)
+    /// Check if a tool explicitly declares file mutation semantics.
+    pub fn is_file_mutating(&self, capability: Option<&FileMutationCapability>) -> bool {
+        capability.is_some()
     }
 
     /// Capture file state before a tool execution.
@@ -55,10 +43,10 @@ impl FileJournalMiddleware {
         &self,
         scope_id: &str,
         scope_type: ScopeType,
-        tool_name: &str,
+        capability: Option<&FileMutationCapability>,
         file_path: &str,
     ) -> Result<Option<u64>, JournalError> {
-        if !self.is_file_mutating(tool_name) {
+        if !self.is_file_mutating(capability) {
             return Ok(None);
         }
 
@@ -146,18 +134,19 @@ mod tests {
     #[test]
     fn test_middleware_identifies_file_mutating_tools() {
         let mw = FileJournalMiddleware::new(make_store());
-        assert!(mw.is_file_mutating("FileWrite"));
-        assert!(mw.is_file_mutating("FilePatch"));
-        assert!(mw.is_file_mutating("FileDelete"));
-        assert!(!mw.is_file_mutating("FileRead"));
-        assert!(!mw.is_file_mutating("web_search"));
+        let mutation = y_core::file_mutation::FileMutationCapability::new(
+            y_core::file_mutation::FileMutationOperation::Modify,
+            "path",
+        );
+        assert!(mw.is_file_mutating(Some(&mutation)));
+        assert!(!mw.is_file_mutating(None));
     }
 
     #[tokio::test]
     async fn test_middleware_skips_non_mutating_tools() {
         let mw = FileJournalMiddleware::new(make_store());
         let result = mw
-            .capture_before("scope1", ScopeType::Task, "FileRead", "/tmp/test.txt")
+            .capture_before("scope1", ScopeType::Task, None, "/tmp/test.txt")
             .await
             .unwrap();
         assert!(result.is_none());
@@ -171,7 +160,10 @@ mod tests {
             .capture_before(
                 "scope1",
                 ScopeType::Task,
-                "FileWrite",
+                Some(&y_core::file_mutation::FileMutationCapability::new(
+                    y_core::file_mutation::FileMutationOperation::CreateOrModify,
+                    "path",
+                )),
                 "/tmp/nonexistent_y_journal_test_file.txt",
             )
             .await
@@ -198,7 +190,10 @@ mod tests {
             .capture_before(
                 "scope1",
                 ScopeType::Pipeline,
-                "FileWrite",
+                Some(&y_core::file_mutation::FileMutationCapability::new(
+                    y_core::file_mutation::FileMutationOperation::CreateOrModify,
+                    "path",
+                )),
                 path.to_str().unwrap(),
             )
             .await
