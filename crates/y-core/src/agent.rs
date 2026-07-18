@@ -37,6 +37,99 @@ pub enum ContextStrategyHint {
 }
 
 // ---------------------------------------------------------------------------
+// Workspace isolation
+// ---------------------------------------------------------------------------
+
+/// Isolation preference declared by an agent or delegation caller.
+///
+/// This is an input to service policy, not authority to weaken an isolation
+/// decision selected for a write-capable child.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIsolationPreference {
+    /// Let y-service select from effective capabilities and execution context.
+    #[default]
+    Auto,
+    /// Prefer sharing the parent workspace; service policy may strengthen it.
+    Shared,
+    /// Prefer a Git worktree, with fallback allowed only when policy permits.
+    PreferWorktree,
+    /// Fail the delegation unless a Git worktree can be provisioned.
+    RequireWorktree,
+}
+
+/// Effective filesystem isolation used for one delegation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceIsolationMode {
+    Shared,
+    Worktree,
+}
+
+/// Cleanup state for an isolated workspace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceCleanupStatus {
+    NotRequired,
+    Pending,
+    Cleaned,
+    Failed,
+}
+
+/// Conflict state reported by an isolation or future merge workflow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceConflictStatus {
+    NotChecked,
+    Clean,
+    Conflicted,
+}
+
+/// Transport-neutral evidence returned from a delegated workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceIsolationMetadata {
+    pub preference: WorkspaceIsolationPreference,
+    pub mode: WorkspaceIsolationMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_error: Option<String>,
+    pub cleanup_status: WorkspaceCleanupStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup_error: Option<String>,
+    pub conflict_status: WorkspaceConflictStatus,
+}
+
+impl WorkspaceIsolationMetadata {
+    pub fn shared(preference: WorkspaceIsolationPreference) -> Self {
+        Self {
+            preference,
+            mode: WorkspaceIsolationMode::Shared,
+            worktree_id: None,
+            snapshot_id: None,
+            workspace_path: None,
+            base_revision: None,
+            changed_files: Vec::new(),
+            patch: None,
+            evidence_error: None,
+            cleanup_status: WorkspaceCleanupStatus::NotRequired,
+            cleanup_error: None,
+            conflict_status: WorkspaceConflictStatus::NotChecked,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Delegation output
 // ---------------------------------------------------------------------------
 
@@ -55,6 +148,9 @@ pub struct DelegationOutput {
     pub model_used: String,
     /// Wall-clock duration of the delegation in milliseconds.
     pub duration_ms: u64,
+    /// Filesystem isolation evidence for interactive delegated work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_isolation: Option<WorkspaceIsolationMetadata>,
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +287,10 @@ pub struct AgentRunConfig {
     /// When set, the provider enforces the response conforms to the
     /// specified format (e.g., a JSON Schema).
     pub response_format: Option<ResponseFormat>,
+    /// Requested workspace isolation; y-service remains the final authority.
+    pub workspace_isolation: WorkspaceIsolationPreference,
+    /// Optional durable workspace snapshot to rehydrate before execution.
+    pub workspace_snapshot_id: Option<String>,
 }
 
 /// Output from a single agent execution.
@@ -208,6 +308,9 @@ pub struct AgentRunOutput {
     pub model_used: String,
     /// Wall-clock duration in milliseconds.
     pub duration_ms: u64,
+    /// Effective workspace isolation and captured change evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_isolation: Option<WorkspaceIsolationMetadata>,
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +417,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn workspace_isolation_preference_defaults_and_roundtrips() {
+        assert_eq!(
+            WorkspaceIsolationPreference::default(),
+            WorkspaceIsolationPreference::Auto
+        );
+
+        for (preference, encoded) in [
+            (WorkspaceIsolationPreference::Auto, "\"auto\""),
+            (WorkspaceIsolationPreference::Shared, "\"shared\""),
+            (
+                WorkspaceIsolationPreference::PreferWorktree,
+                "\"prefer_worktree\"",
+            ),
+            (
+                WorkspaceIsolationPreference::RequireWorktree,
+                "\"require_worktree\"",
+            ),
+        ] {
+            assert_eq!(serde_json::to_string(&preference).unwrap(), encoded);
+            assert_eq!(
+                serde_json::from_str::<WorkspaceIsolationPreference>(encoded).unwrap(),
+                preference
+            );
+        }
+    }
+
+    #[test]
+    fn shared_isolation_metadata_has_no_worktree_side_effects() {
+        let metadata = WorkspaceIsolationMetadata::shared(WorkspaceIsolationPreference::Auto);
+
+        assert_eq!(metadata.mode, WorkspaceIsolationMode::Shared);
+        assert_eq!(metadata.cleanup_status, WorkspaceCleanupStatus::NotRequired);
+        assert_eq!(
+            metadata.conflict_status,
+            WorkspaceConflictStatus::NotChecked
+        );
+        assert!(metadata.worktree_id.is_none());
+        assert!(metadata.snapshot_id.is_none());
+        assert!(metadata.changed_files.is_empty());
+        assert!(metadata.patch.is_none());
+    }
+
     /// T-MA-P2-03: `DelegationOutput` fields are accessible and constructible.
     #[test]
     fn test_delegation_output_fields() {
@@ -324,6 +470,7 @@ mod tests {
             output_tokens: 50,
             model_used: "gpt-4o".to_string(),
             duration_ms: 1200,
+            workspace_isolation: None,
         };
 
         assert_eq!(output.text, "summarized content");
@@ -375,6 +522,7 @@ mod tests {
             output_tokens: 12,
             model_used: "gpt-4o".to_string(),
             duration_ms: 500,
+            workspace_isolation: None,
         };
         let json = serde_json::to_string(&output).unwrap();
         let parsed: DelegationOutput = serde_json::from_str(&json).unwrap();
@@ -412,6 +560,8 @@ mod tests {
             trace_id: None,
             prune_tool_history: false,
             response_format: None,
+            workspace_isolation: WorkspaceIsolationPreference::default(),
+            workspace_snapshot_id: None,
         };
         assert_eq!(config.agent_name, "title-generator");
         assert_eq!(config.preferred_models.len(), 1);
@@ -427,6 +577,7 @@ mod tests {
             output_tokens: 5,
             model_used: "gpt-4o-mini".to_string(),
             duration_ms: 200,
+            workspace_isolation: None,
         };
         let json = serde_json::to_string(&output).unwrap();
         let parsed: AgentRunOutput = serde_json::from_str(&json).unwrap();

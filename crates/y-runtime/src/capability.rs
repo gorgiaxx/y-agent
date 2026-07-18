@@ -194,6 +194,7 @@ mod tests {
             env: HashMap::new(),
             stdin: None,
             owner_session_id: None,
+            event_tool_name: None,
             capabilities: caps,
             image: None,
         }
@@ -279,6 +280,7 @@ mod tests {
                     mode: MountMode::ReadOnly,
                 }],
                 host_access: false,
+                mutation: None,
             },
             ..Default::default()
         });
@@ -297,6 +299,7 @@ mod tests {
             filesystem: FilesystemCapability {
                 mounts: vec![],
                 host_access: true,
+                mutation: None,
             },
             ..Default::default()
         });

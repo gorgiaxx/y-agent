@@ -14,7 +14,7 @@ use tracing::instrument;
 use y_core::runtime::{
     BackgroundProcessInfo, BackgroundProcessSnapshot, CommandRunner, ExecutionRequest,
     ExecutionResult, ProcessCapability, ProcessHandle, ProcessStatus, RuntimeAdapter,
-    RuntimeBackend, RuntimeCapability, RuntimeError, RuntimeHealth,
+    RuntimeBackend, RuntimeCapability, RuntimeError, RuntimeHealth, ToolRuntimeEventSink,
 };
 use y_core::types::SessionId;
 
@@ -61,6 +61,29 @@ impl RuntimeManager {
     /// Create a runtime manager with the given configuration.
     pub fn new(config: RuntimeConfig, audit_trail: Option<Arc<AuditTrail>>) -> Self {
         let native = NativeRuntime::new(config.clone(), audit_trail.clone());
+        let docker = DockerRuntime::with_audit(config.clone(), audit_trail.clone());
+        let ssh = SshRuntime::new(config.ssh.clone());
+        let security_policy = SecurityPolicy::from_config(&config);
+        Self {
+            config: RwLock::new(config),
+            native,
+            docker,
+            ssh,
+            audit_trail,
+            concurrency_semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
+            resource_monitor: Arc::new(ResourceMonitor::with_defaults()),
+            security_policy: RwLock::new(security_policy),
+        }
+    }
+
+    /// Create a runtime manager with a non-blocking runtime event sink.
+    pub fn with_event_sink(
+        config: RuntimeConfig,
+        audit_trail: Option<Arc<AuditTrail>>,
+        event_sink: Arc<dyn ToolRuntimeEventSink>,
+    ) -> Self {
+        let native =
+            NativeRuntime::with_event_sink(config.clone(), audit_trail.clone(), event_sink);
         let docker = DockerRuntime::with_audit(config.clone(), audit_trail.clone());
         let ssh = SshRuntime::new(config.ssh.clone());
         let security_policy = SecurityPolicy::from_config(&config);
@@ -206,6 +229,34 @@ impl RuntimeManager {
         })
     }
 
+    /// Spawn a host-managed process through the native backend regardless of
+    /// the configured default backend.
+    ///
+    /// Long-lived protocol servers need the native process I/O APIs exposed by
+    /// [`CommandRunner`]. This entry point preserves capability, security, and
+    /// resource checks instead of exposing the backend directly.
+    pub async fn spawn_managed_native(
+        &self,
+        request: ExecutionRequest,
+    ) -> Result<ProcessHandle, RuntimeError> {
+        let config = self.read_config().clone();
+        let checker = CapabilityChecker::new(&config);
+        checker
+            .validate(&request)
+            .map_err(|error| -> RuntimeError { error.into() })?;
+        self.read_security_policy().enforce(&request)?;
+        self.check_resource_quota().await?;
+
+        let health = self.native.health_check().await?;
+        if !health.available {
+            return Err(RuntimeError::RuntimeNotAvailable {
+                backend: RuntimeBackend::Native,
+            });
+        }
+
+        self.native.spawn(request).await
+    }
+
     fn shell_request(
         &self,
         command: &str,
@@ -234,6 +285,7 @@ impl RuntimeManager {
             env: HashMap::new(),
             stdin: None,
             owner_session_id,
+            event_tool_name: Some("ShellExec".to_string()),
             capabilities: RuntimeCapability {
                 process: ProcessCapability {
                     shell: true,
@@ -502,6 +554,7 @@ mod tests {
             env: HashMap::new(),
             stdin: None,
             owner_session_id: None,
+            event_tool_name: None,
             capabilities: caps,
             image: image.map(std::string::ToString::to_string),
         }
@@ -544,6 +597,24 @@ mod tests {
         let req = make_request(None, RuntimeCapability::default());
         let result = mgr.execute(req).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn managed_native_spawn_ignores_the_default_backend() {
+        let config = RuntimeConfig {
+            default_backend: RuntimeBackend::Docker,
+            ..Default::default()
+        };
+        let manager = RuntimeManager::new(config, None);
+        let request = make_request(None, RuntimeCapability::default());
+
+        let handle = manager
+            .spawn_managed_native(request)
+            .await
+            .expect("native process");
+
+        assert_eq!(handle.backend, RuntimeBackend::Native);
+        manager.cleanup().await.expect("cleanup");
     }
 
     // T-RT-004-05

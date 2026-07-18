@@ -1,12 +1,14 @@
-//! Workspace service -- CRUD for folder-backed workspaces and
-//! session-to-workspace mapping.
+//! Workspace service -- CRUD, session mapping, and project-configuration trust.
 //!
 //! Workspaces are metadata stored in `workspaces.toml` and
-//! `session_workspaces.toml` inside the config directory. Each workspace
+//! `session_workspaces.toml` inside the config directory. Explicit trust
+//! decisions use canonical paths and are stored in `workspace_trust.toml`.
+//! Each workspace
 //! references a directory on the local filesystem and groups sessions via a
 //! simple session-to-workspace mapping.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,42 @@ struct WorkspacesFile {
 struct SessionWorkspacesFile {
     #[serde(default)]
     assignments: HashMap<String, String>,
+}
+
+/// Persisted trust state for one canonical workspace path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceTrustStatus {
+    /// No explicit decision exists for this canonical path.
+    Unknown,
+    /// Project-origin configuration may be activated.
+    Trusted,
+    /// Project-origin configuration must remain blocked.
+    Untrusted,
+}
+
+/// Result of resolving trust for a workspace path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceTrustDecision {
+    /// Canonical filesystem identity used by the trust store.
+    pub canonical_path: String,
+    /// Explicit or default trust state.
+    pub status: WorkspaceTrustStatus,
+    /// Last mutation timestamp for explicit decisions.
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WorkspaceTrustRecord {
+    canonical_path: String,
+    status: WorkspaceTrustStatus,
+    updated_at: String,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct WorkspaceTrustFile {
+    #[serde(default)]
+    workspaces: Vec<WorkspaceTrustRecord>,
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +177,86 @@ impl WorkspaceService {
             .map(|w| w.path.clone())
     }
 
+    // -- Workspace trust -------------------------------------------------
+
+    /// Resolve trust for a workspace using its canonical filesystem path.
+    pub fn workspace_trust(&self, path: &Path) -> anyhow::Result<WorkspaceTrustDecision> {
+        let canonical_path = canonical_workspace_path(path)?;
+        self.ensure_trust_store_outside_workspace(&canonical_path)?;
+        let data = self.read_workspace_trust_result()?;
+        let record = data
+            .workspaces
+            .iter()
+            .find(|record| record.canonical_path == canonical_path);
+
+        Ok(WorkspaceTrustDecision {
+            canonical_path,
+            status: record.map_or(WorkspaceTrustStatus::Unknown, |record| record.status),
+            updated_at: record.map(|record| record.updated_at.clone()),
+        })
+    }
+
+    /// Explicitly trust project-origin configuration from a workspace.
+    pub fn trust_workspace(&self, path: &Path) -> anyhow::Result<WorkspaceTrustDecision> {
+        self.set_workspace_trust(path, WorkspaceTrustStatus::Trusted)
+    }
+
+    /// Explicitly block project-origin configuration from a workspace.
+    pub fn untrust_workspace(&self, path: &Path) -> anyhow::Result<WorkspaceTrustDecision> {
+        self.set_workspace_trust(path, WorkspaceTrustStatus::Untrusted)
+    }
+
+    fn set_workspace_trust(
+        &self,
+        path: &Path,
+        status: WorkspaceTrustStatus,
+    ) -> anyhow::Result<WorkspaceTrustDecision> {
+        let canonical_path = canonical_workspace_path(path)?;
+        std::fs::create_dir_all(&self.config_dir)?;
+        self.ensure_trust_store_outside_workspace(&canonical_path)?;
+        let mut data = self.read_workspace_trust_result()?;
+        let updated_at = chrono::Utc::now().to_rfc3339();
+        data.workspaces
+            .retain(|record| record.canonical_path != canonical_path);
+        data.workspaces.push(WorkspaceTrustRecord {
+            canonical_path: canonical_path.clone(),
+            status,
+            updated_at: updated_at.clone(),
+        });
+        data.workspaces
+            .sort_by(|left, right| left.canonical_path.cmp(&right.canonical_path));
+        self.write_workspace_trust(&data)?;
+        tracing::info!(workspace = %canonical_path, ?status, "workspace trust decision updated");
+
+        Ok(WorkspaceTrustDecision {
+            canonical_path,
+            status,
+            updated_at: Some(updated_at),
+        })
+    }
+
+    fn ensure_trust_store_outside_workspace(
+        &self,
+        canonical_workspace: &str,
+    ) -> anyhow::Result<()> {
+        if !self.config_dir.exists() {
+            return Ok(());
+        }
+        let canonical_config_dir = std::fs::canonicalize(&self.config_dir).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to canonicalize trust store directory {}: {error}",
+                self.config_dir.display()
+            )
+        })?;
+        if canonical_config_dir.starts_with(Path::new(canonical_workspace)) {
+            anyhow::bail!(
+                "workspace trust store must be outside the workspace: {}",
+                canonical_config_dir.display()
+            );
+        }
+        Ok(())
+    }
+
     // -- Private file I/O helpers -----------------------------------------
 
     fn workspaces_path(&self) -> PathBuf {
@@ -147,6 +265,10 @@ impl WorkspaceService {
 
     fn session_workspaces_path(&self) -> PathBuf {
         self.config_dir.join("session_workspaces.toml")
+    }
+
+    fn workspace_trust_path(&self) -> PathBuf {
+        self.config_dir.join("workspace_trust.toml")
     }
 
     fn read_workspaces(&self) -> WorkspacesFile {
@@ -202,6 +324,42 @@ impl WorkspaceService {
         std::fs::write(self.session_workspaces_path(), content)?;
         Ok(())
     }
+
+    fn read_workspace_trust_result(&self) -> anyhow::Result<WorkspaceTrustFile> {
+        let path = self.workspace_trust_path();
+        if !path.exists() {
+            return Ok(WorkspaceTrustFile::default());
+        }
+        let content = std::fs::read_to_string(&path)
+            .map_err(|error| anyhow::anyhow!("failed to read {}: {error}", path.display()))?;
+        toml::from_str(&content)
+            .map_err(|error| anyhow::anyhow!("failed to parse {}: {error}", path.display()))
+    }
+
+    fn write_workspace_trust(&self, data: &WorkspaceTrustFile) -> anyhow::Result<()> {
+        std::fs::create_dir_all(&self.config_dir)?;
+        let content = toml::to_string_pretty(data)?;
+        let path = self.workspace_trust_path();
+        let mut temporary = tempfile::NamedTempFile::new_in(&self.config_dir)?;
+        temporary.write_all(content.as_bytes())?;
+        temporary.as_file().sync_all()?;
+        temporary.persist(&path).map_err(|error| {
+            anyhow::anyhow!("failed to persist {}: {}", path.display(), error.error)
+        })?;
+        Ok(())
+    }
+}
+
+fn canonical_workspace_path(path: &Path) -> anyhow::Result<String> {
+    if !path.is_dir() {
+        anyhow::bail!(
+            "workspace path is not an existing directory: {}",
+            path.display()
+        );
+    }
+    std::fs::canonicalize(path)
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| anyhow::anyhow!("failed to canonicalize {}: {error}", path.display()))
 }
 
 // ---------------------------------------------------------------------------
@@ -316,5 +474,82 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn workspace_trust_is_explicit_persistent_and_path_bound() {
+        let (svc, dir) = make_service();
+        let workspace = dir.path().join("project");
+        let moved_workspace = dir.path().join("project-moved");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&moved_workspace).unwrap();
+
+        assert_eq!(
+            svc.workspace_trust(&workspace).unwrap().status,
+            WorkspaceTrustStatus::Unknown
+        );
+
+        svc.trust_workspace(&workspace).unwrap();
+        let reloaded = WorkspaceService::new(dir.path());
+        assert_eq!(
+            reloaded.workspace_trust(&workspace).unwrap().status,
+            WorkspaceTrustStatus::Trusted
+        );
+        assert_eq!(
+            reloaded.workspace_trust(&moved_workspace).unwrap().status,
+            WorkspaceTrustStatus::Unknown
+        );
+
+        reloaded.untrust_workspace(&workspace).unwrap();
+        assert_eq!(
+            reloaded.workspace_trust(&workspace).unwrap().status,
+            WorkspaceTrustStatus::Untrusted
+        );
+    }
+
+    #[test]
+    fn corrupt_workspace_trust_store_fails_closed_without_overwrite() {
+        let (svc, dir) = make_service();
+        let workspace = dir.path().join("project");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let trust_path = dir.path().join("workspace_trust.toml");
+        std::fs::write(&trust_path, "invalid = [").unwrap();
+        let original = std::fs::read_to_string(&trust_path).unwrap();
+
+        assert!(svc.workspace_trust(&workspace).is_err());
+        assert_eq!(std::fs::read_to_string(&trust_path).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_trust_uses_canonical_path_for_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let (svc, dir) = make_service();
+        let workspace = dir.path().join("project");
+        let alias = dir.path().join("project-alias");
+        std::fs::create_dir_all(&workspace).unwrap();
+        symlink(&workspace, &alias).unwrap();
+
+        svc.trust_workspace(&alias).unwrap();
+
+        let direct = svc.workspace_trust(&workspace).unwrap();
+        let through_alias = svc.workspace_trust(&alias).unwrap();
+        assert_eq!(direct.status, WorkspaceTrustStatus::Trusted);
+        assert_eq!(direct.canonical_path, through_alias.canonical_path);
+    }
+
+    #[test]
+    fn workspace_cannot_store_its_own_trust_grant() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path().join("project");
+        let project_owned_config = workspace.join(".y-agent-user");
+        std::fs::create_dir_all(&project_owned_config).unwrap();
+        let service = WorkspaceService::new(&project_owned_config);
+
+        let result = service.trust_workspace(&workspace);
+
+        assert!(result.is_err());
+        assert!(!project_owned_config.join("workspace_trust.toml").exists());
     }
 }

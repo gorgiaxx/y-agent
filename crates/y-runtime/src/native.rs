@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -22,7 +23,7 @@ use tracing::instrument;
 use y_core::runtime::{
     BackgroundProcessInfo, BackgroundProcessSnapshot, ExecutionRequest, ExecutionResult,
     ProcessHandle, ProcessStatus, ResourceUsage, RuntimeAdapter, RuntimeBackend, RuntimeError,
-    RuntimeHealth,
+    RuntimeHealth, ToolRuntimeEvent, ToolRuntimeEventKind, ToolRuntimeEventSink, ToolRuntimeStream,
 };
 use y_core::types::SessionId;
 
@@ -42,8 +43,12 @@ struct ManagedNativeProcess {
     command: String,
     working_dir: Option<String>,
     owner_session_id: Option<SessionId>,
+    event_tool_name: String,
     started_at: Instant,
     status: ProcessStatus,
+    terminal_notified: bool,
+    output_readers_remaining: Arc<AtomicUsize>,
+    runtime_events_open: Arc<AtomicBool>,
 }
 
 /// Native runtime backend using `tokio::process::Command`.
@@ -56,6 +61,7 @@ pub struct NativeRuntime {
     audit_trail: Option<Arc<AuditTrail>>,
     /// Spawned long-running processes, keyed by handle ID.
     spawned: Arc<Mutex<HashMap<String, ManagedNativeProcess>>>,
+    event_sink: Option<Arc<dyn ToolRuntimeEventSink>>,
 }
 
 impl NativeRuntime {
@@ -65,6 +71,21 @@ impl NativeRuntime {
             config,
             audit_trail,
             spawned: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: None,
+        }
+    }
+
+    /// Create a native runtime that reports background-process events.
+    pub fn with_event_sink(
+        config: RuntimeConfig,
+        audit_trail: Option<Arc<AuditTrail>>,
+        event_sink: Arc<dyn ToolRuntimeEventSink>,
+    ) -> Self {
+        Self {
+            config,
+            audit_trail,
+            spawned: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: Some(event_sink),
         }
     }
 
@@ -254,8 +275,18 @@ impl NativeRuntime {
         buffer.drain(0..drain_len).collect()
     }
 
-    fn spawn_output_reader<R>(mut reader: R, buffer: SharedOutputBuffer, notify: Arc<Notify>)
-    where
+    fn spawn_output_reader<R>(
+        mut reader: R,
+        buffer: SharedOutputBuffer,
+        notify: Arc<Notify>,
+        event_sink: Option<Arc<dyn ToolRuntimeEventSink>>,
+        owner_session_id: Option<SessionId>,
+        process_id: String,
+        event_tool_name: String,
+        stream: ToolRuntimeStream,
+        readers_remaining: Arc<AtomicUsize>,
+        runtime_events_open: Arc<AtomicBool>,
+    ) where
         R: AsyncRead + Unpin + Send + 'static,
     {
         tokio::spawn(async move {
@@ -268,6 +299,22 @@ impl NativeRuntime {
                             let mut guard = buffer.lock().await;
                             Self::append_capped(&mut guard, &chunk[..n]);
                         }
+                        if runtime_events_open.load(Ordering::Acquire) {
+                            if let (Some(sink), Some(session_id)) =
+                                (event_sink.as_ref(), owner_session_id.as_ref())
+                            {
+                                sink.publish(ToolRuntimeEvent::new(
+                                    session_id.clone(),
+                                    process_id.clone(),
+                                    event_tool_name.clone(),
+                                    Some(RuntimeBackend::Native),
+                                    ToolRuntimeEventKind::OutputChunk {
+                                        stream,
+                                        content: String::from_utf8_lossy(&chunk[..n]).into_owned(),
+                                    },
+                                ));
+                            }
+                        }
                         notify.notify_waiters();
                     }
                     Err(error) => {
@@ -276,7 +323,80 @@ impl NativeRuntime {
                     }
                 }
             }
+            readers_remaining.fetch_sub(1, Ordering::AcqRel);
             notify.notify_waiters();
+        });
+    }
+
+    fn duration_ms(started_at: Instant) -> u64 {
+        u64::try_from(started_at.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    fn take_terminal_event(
+        entry: &mut ManagedNativeProcess,
+        process_id: &str,
+        status: &ProcessStatus,
+    ) -> Option<ToolRuntimeEvent> {
+        if entry.terminal_notified
+            || matches!(status, ProcessStatus::Running)
+            || entry.output_readers_remaining.load(Ordering::Acquire) > 0
+        {
+            return None;
+        }
+        entry.terminal_notified = true;
+        let session_id = entry.owner_session_id.clone()?;
+        let duration_ms = Self::duration_ms(entry.started_at);
+        let kind = match status {
+            ProcessStatus::Completed { exit_code } => ToolRuntimeEventKind::ProcessCompleted {
+                exit_code: *exit_code,
+                duration_ms,
+            },
+            ProcessStatus::Failed { error } => ToolRuntimeEventKind::ProcessFailed {
+                error: error.clone(),
+                duration_ms,
+            },
+            ProcessStatus::Running | ProcessStatus::Unknown => return None,
+        };
+        Some(ToolRuntimeEvent::new(
+            session_id,
+            process_id,
+            entry.event_tool_name.clone(),
+            Some(RuntimeBackend::Native),
+            kind,
+        ))
+    }
+
+    fn publish_event(
+        event_sink: Option<&dyn ToolRuntimeEventSink>,
+        event: Option<ToolRuntimeEvent>,
+    ) {
+        if let (Some(sink), Some(event)) = (event_sink, event) {
+            sink.publish(event);
+        }
+    }
+
+    fn spawn_completion_monitor(
+        spawned: Arc<Mutex<HashMap<String, ManagedNativeProcess>>>,
+        event_sink: Option<Arc<dyn ToolRuntimeEventSink>>,
+        process_id: String,
+    ) {
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                let event = {
+                    let mut spawned = spawned.lock().await;
+                    let Some(entry) = spawned.get_mut(&process_id) else {
+                        return;
+                    };
+                    let status = Self::refresh_entry_status(entry);
+                    if status == ProcessStatus::Running {
+                        continue;
+                    }
+                    Self::take_terminal_event(entry, &process_id, &status)
+                };
+                Self::publish_event(event_sink.as_deref(), event);
+                return;
+            }
         });
     }
 
@@ -356,7 +476,7 @@ impl NativeRuntime {
             tokio::time::sleep(Duration::from_millis(10).min(yield_time)).await;
         }
 
-        let (snapshot, remove_process) = {
+        let (snapshot, remove_process, terminal_event) = {
             let mut spawned = self.spawned.lock().await;
             let entry = spawned
                 .get_mut(process_id)
@@ -365,6 +485,7 @@ impl NativeRuntime {
                 })?;
             Self::ensure_process_owner(entry, process_id, owner_session_id)?;
             let status = Self::refresh_entry_status(entry);
+            let terminal_event = Self::take_terminal_event(entry, process_id, &status);
             let stdout = {
                 let mut guard = entry.stdout.lock().await;
                 Self::drain_limited(&mut guard, max_output_bytes)
@@ -384,12 +505,18 @@ impl NativeRuntime {
                 stderr,
                 duration: entry.started_at.elapsed(),
             };
-            (snapshot, status != ProcessStatus::Running)
+            (
+                snapshot,
+                status != ProcessStatus::Running
+                    && entry.output_readers_remaining.load(Ordering::Acquire) == 0,
+                terminal_event,
+            )
         };
 
         if remove_process {
             self.spawned.lock().await.remove(process_id);
         }
+        Self::publish_event(self.event_sink.as_deref(), terminal_event);
 
         Ok(snapshot)
     }
@@ -488,6 +615,7 @@ impl NativeRuntime {
                     message: format!("no spawned process with id {process_id}"),
                 })?
         };
+        entry.runtime_events_open.store(false, Ordering::Release);
 
         let status = match entry.child.try_wait() {
             Ok(Some(status)) => ProcessStatus::Completed {
@@ -524,6 +652,21 @@ impl NativeRuntime {
             Self::drain_limited(&mut guard, max_output_bytes)
         };
 
+        Self::publish_event(
+            self.event_sink.as_deref(),
+            entry.owner_session_id.clone().map(|session_id| {
+                ToolRuntimeEvent::new(
+                    session_id,
+                    process_id,
+                    entry.event_tool_name.clone(),
+                    Some(RuntimeBackend::Native),
+                    ToolRuntimeEventKind::ProcessKilled {
+                        duration_ms: Self::duration_ms(entry.started_at),
+                    },
+                )
+            }),
+        );
+
         Ok(BackgroundProcessSnapshot {
             handle: ProcessHandle {
                 id: process_id.to_string(),
@@ -559,6 +702,7 @@ impl NativeRuntime {
         owner_session_id: Option<&SessionId>,
     ) -> Vec<BackgroundProcessInfo> {
         let mut completed = Vec::new();
+        let mut terminal_events = Vec::new();
         let mut results = Vec::new();
         {
             let mut spawned = self.spawned.lock().await;
@@ -569,7 +713,12 @@ impl NativeRuntime {
                     }
                 }
                 let status = Self::refresh_entry_status(entry);
-                if status != ProcessStatus::Running {
+                if status != ProcessStatus::Running
+                    && entry.output_readers_remaining.load(Ordering::Acquire) == 0
+                {
+                    if let Some(event) = Self::take_terminal_event(entry, id, &status) {
+                        terminal_events.push(event);
+                    }
                     completed.push(id.clone());
                 }
                 results.push(BackgroundProcessInfo {
@@ -587,6 +736,9 @@ impl NativeRuntime {
             for id in &completed {
                 spawned.remove(id);
             }
+        }
+        for event in terminal_events {
+            Self::publish_event(self.event_sink.as_deref(), Some(event));
         }
         results
     }
@@ -745,45 +897,108 @@ impl RuntimeAdapter for NativeRuntime {
         let stderr = Arc::new(Mutex::new(Vec::new()));
         let output_notify = Arc::new(Notify::new());
 
-        if let Some(stdout_reader) = child.stdout.take() {
-            Self::spawn_output_reader(
-                stdout_reader,
-                Arc::clone(&stdout),
-                Arc::clone(&output_notify),
-            );
-        }
-        if let Some(stderr_reader) = child.stderr.take() {
-            Self::spawn_output_reader(
-                stderr_reader,
-                Arc::clone(&stderr),
-                Arc::clone(&output_notify),
-            );
-        }
+        let stdout_reader = child.stdout.take();
+        let stderr_reader = child.stderr.take();
         let stdin = child.stdin.take();
+        let owner_session_id = request.owner_session_id.clone();
+        let event_tool_name = request
+            .event_tool_name
+            .clone()
+            .unwrap_or_else(|| "ShellExec".to_string());
+        let command = Self::command_display(&request);
+        let working_dir = request.working_dir.clone();
+        let output_readers_remaining = Arc::new(AtomicUsize::new(
+            usize::from(stdout_reader.is_some()) + usize::from(stderr_reader.is_some()),
+        ));
+        let runtime_events_open = Arc::new(AtomicBool::new(true));
 
         let entry = ManagedNativeProcess {
             child,
             stdin,
-            stdout,
-            stderr,
-            output_notify,
-            command: Self::command_display(&request),
-            working_dir: request.working_dir.clone(),
-            owner_session_id: request.owner_session_id.clone(),
+            stdout: Arc::clone(&stdout),
+            stderr: Arc::clone(&stderr),
+            output_notify: Arc::clone(&output_notify),
+            command: command.clone(),
+            working_dir: working_dir.clone(),
+            owner_session_id: owner_session_id.clone(),
+            event_tool_name: event_tool_name.clone(),
             started_at: Instant::now(),
             status: ProcessStatus::Running,
+            terminal_notified: false,
+            output_readers_remaining: Arc::clone(&output_readers_remaining),
+            runtime_events_open: Arc::clone(&runtime_events_open),
         };
 
-        self.spawned.lock().await.insert(id, entry);
+        self.spawned.lock().await.insert(id.clone(), entry);
+
+        Self::publish_event(
+            self.event_sink.as_deref(),
+            owner_session_id.clone().map(|session_id| {
+                ToolRuntimeEvent::new(
+                    session_id,
+                    id.clone(),
+                    event_tool_name.clone(),
+                    Some(RuntimeBackend::Native),
+                    ToolRuntimeEventKind::ProcessStarted {
+                        command,
+                        working_dir,
+                    },
+                )
+            }),
+        );
+        if let Some(stdout_reader) = stdout_reader {
+            Self::spawn_output_reader(
+                stdout_reader,
+                Arc::clone(&stdout),
+                Arc::clone(&output_notify),
+                self.event_sink.clone(),
+                owner_session_id.clone(),
+                id.clone(),
+                event_tool_name.clone(),
+                ToolRuntimeStream::Stdout,
+                Arc::clone(&output_readers_remaining),
+                Arc::clone(&runtime_events_open),
+            );
+        }
+        if let Some(stderr_reader) = stderr_reader {
+            Self::spawn_output_reader(
+                stderr_reader,
+                Arc::clone(&stderr),
+                Arc::clone(&output_notify),
+                self.event_sink.clone(),
+                owner_session_id,
+                id.clone(),
+                event_tool_name,
+                ToolRuntimeStream::Stderr,
+                Arc::clone(&output_readers_remaining),
+                Arc::clone(&runtime_events_open),
+            );
+        }
+        Self::spawn_completion_monitor(Arc::clone(&self.spawned), self.event_sink.clone(), id);
 
         Ok(handle)
     }
 
     async fn kill(&self, handle: &ProcessHandle) -> Result<(), RuntimeError> {
         if let Some(mut entry) = self.spawned.lock().await.remove(&handle.id) {
+            entry.runtime_events_open.store(false, Ordering::Release);
             entry.child.kill().await.map_err(|e| RuntimeError::Other {
                 message: format!("failed to kill process {}: {e}", handle.id),
             })?;
+            Self::publish_event(
+                self.event_sink.as_deref(),
+                entry.owner_session_id.map(|session_id| {
+                    ToolRuntimeEvent::new(
+                        session_id,
+                        handle.id.clone(),
+                        entry.event_tool_name,
+                        Some(RuntimeBackend::Native),
+                        ToolRuntimeEventKind::ProcessKilled {
+                            duration_ms: Self::duration_ms(entry.started_at),
+                        },
+                    )
+                }),
+            );
             Ok(())
         } else {
             Err(RuntimeError::Other {
@@ -796,9 +1011,14 @@ impl RuntimeAdapter for NativeRuntime {
         let mut spawned = self.spawned.lock().await;
         if let Some(entry) = spawned.get_mut(&handle.id) {
             let status = Self::refresh_entry_status(entry);
-            if status != ProcessStatus::Running {
+            let terminal_event = Self::take_terminal_event(entry, &handle.id, &status);
+            if status != ProcessStatus::Running
+                && entry.output_readers_remaining.load(Ordering::Acquire) == 0
+            {
                 spawned.remove(&handle.id);
             }
+            drop(spawned);
+            Self::publish_event(self.event_sink.as_deref(), terminal_event);
             Ok(status)
         } else {
             Ok(ProcessStatus::Unknown)
@@ -836,6 +1056,7 @@ mod tests {
             env: HashMap::new(),
             stdin: None,
             owner_session_id: None,
+            event_tool_name: None,
             capabilities: RuntimeCapability::default(),
             image: None,
         }
@@ -849,6 +1070,7 @@ mod tests {
             env: HashMap::new(),
             stdin: None,
             owner_session_id: None,
+            event_tool_name: None,
             capabilities: RuntimeCapability {
                 container: ContainerCapability {
                     resources: ResourceLimits {

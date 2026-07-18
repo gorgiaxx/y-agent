@@ -50,9 +50,18 @@ toml = { workspace = true }
 reqwest = { workspace = true }
 jsonschema = { workspace = true }
 tempfile = "3"
+url = "2"
+sha2 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+semver = { version = "1", optional = true }
 
 [features]
-default = []
+default = ["compaction_prefire", "worktree_isolation"]
+background_auto_wake = []
+compaction_prefire = []
+capability_packs = ["dep:hex", "dep:semver", "dep:sha2"]
+lsp = ["y-tools/lsp"]
+worktree_isolation = ["y-runtime/worktree_isolation"]
 hook_handlers = ["y-hooks/hook_handlers"]
 llm_hooks = ["y-hooks/llm_hooks"]
 langfuse = ["y-diagnostics/langfuse"]

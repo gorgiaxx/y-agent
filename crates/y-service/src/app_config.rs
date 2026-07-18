@@ -22,6 +22,7 @@ use crate::config_types::{
     BrowserConfig, GuardrailConfig, HookConfig, KnowledgeConfig, ProviderPoolConfig, PruningConfig,
     RuntimeConfig, SessionConfig, StorageConfig, ToolRegistryConfig,
 };
+use crate::workspace::{WorkspaceService, WorkspaceTrustStatus};
 
 /// Combined struct for deserializing `session.toml` which contains both
 /// session configuration and a nested `[pruning]` section.
@@ -122,6 +123,30 @@ const CONFIG_FILE_SECTIONS: &[&str] = &[
     "knowledge",
 ];
 
+/// Provenance and trust result for one project configuration source.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProjectConfigProvenance {
+    /// Project file or split-config directory considered by the loader.
+    pub source_path: PathBuf,
+    /// Workspace directory whose canonical identity controls activation.
+    pub workspace_path: PathBuf,
+    /// Resolved workspace trust state.
+    pub trust: WorkspaceTrustStatus,
+    /// Whether this source was merged into the effective configuration.
+    pub applied: bool,
+    /// Fail-closed reason when trust could not be resolved.
+    pub blocked_reason: Option<String>,
+}
+
+/// Effective configuration plus project-source provenance.
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    /// Effective configuration after trusted project, user, environment, and CLI layers.
+    pub config: YAgentConfig,
+    /// Trust and activation outcome for every discovered project source.
+    pub project_sources: Vec<ProjectConfigProvenance>,
+}
+
 /// Config loader that merges multiple configuration sources.
 #[derive(Debug)]
 pub struct ConfigLoader {
@@ -203,19 +228,44 @@ impl ConfigLoader {
     /// 6. Config directory files (`./config/*.toml`)
     /// 7. Built-in defaults
     pub fn load(&self) -> Result<YAgentConfig> {
+        Ok(self.load_with_provenance()?.config)
+    }
+
+    /// Load configuration while retaining trust decisions for project sources.
+    pub fn load_with_provenance(&self) -> Result<LoadedConfig> {
         // Start with defaults.
         let mut config = YAgentConfig::default();
+        let mut project_sources = Vec::new();
 
         // Layer 6: project config directory (split per-concern files).
-        Self::load_config_dir_from(self.config_dir_path.as_ref(), &mut config)?;
+        if let Some(config_dir) = self.config_dir_path.as_ref().filter(|path| path.is_dir()) {
+            let provenance = self.project_source_provenance(config_dir);
+            if provenance.applied {
+                Self::load_config_dir_from(Some(&provenance.source_path), &mut config)?;
+            }
+            project_sources.push(provenance);
+        }
 
         // Layer 5: project config file (monolithic, backward compat).
         if let Some(ref path) = self.project_config_path {
             if path.exists() {
-                let content = std::fs::read_to_string(path)
-                    .with_context(|| format!("reading project config: {}", path.display()))?;
-                config = toml::from_str(&content)
-                    .with_context(|| format!("parsing project config: {}", path.display()))?;
+                let provenance = self.project_source_provenance(path);
+                if provenance.applied {
+                    let content =
+                        std::fs::read_to_string(&provenance.source_path).with_context(|| {
+                            format!(
+                                "reading project config: {}",
+                                provenance.source_path.display()
+                            )
+                        })?;
+                    config = toml::from_str(&content).with_context(|| {
+                        format!(
+                            "parsing project config: {}",
+                            provenance.source_path.display()
+                        )
+                    })?;
+                }
+                project_sources.push(provenance);
             }
         }
 
@@ -244,7 +294,61 @@ impl ConfigLoader {
         // `~/.local/state/y-agent/data/y-agent.db` regardless of cwd.
         resolve_storage_paths(&mut config);
 
-        Ok(config)
+        Ok(LoadedConfig {
+            config,
+            project_sources,
+        })
+    }
+
+    fn project_source_provenance(&self, source_path: &Path) -> ProjectConfigProvenance {
+        let (canonical_source_path, workspace_path) = match project_source_identity(source_path) {
+            Ok(identity) => identity,
+            Err(error) => {
+                return ProjectConfigProvenance {
+                    source_path: source_path.to_path_buf(),
+                    workspace_path: source_path
+                        .parent()
+                        .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+                    trust: WorkspaceTrustStatus::Unknown,
+                    applied: false,
+                    blocked_reason: Some(error.to_string()),
+                };
+            }
+        };
+        let Some(trust_config_dir) = self.trust_config_dir() else {
+            return ProjectConfigProvenance {
+                source_path: canonical_source_path,
+                workspace_path,
+                trust: WorkspaceTrustStatus::Unknown,
+                applied: false,
+                blocked_reason: Some("user trust store directory is unavailable".to_string()),
+            };
+        };
+        match WorkspaceService::new(&trust_config_dir).workspace_trust(&workspace_path) {
+            Ok(decision) => ProjectConfigProvenance {
+                source_path: canonical_source_path,
+                workspace_path: PathBuf::from(decision.canonical_path),
+                trust: decision.status,
+                applied: decision.status == WorkspaceTrustStatus::Trusted,
+                blocked_reason: (decision.status != WorkspaceTrustStatus::Trusted)
+                    .then(|| format!("workspace trust is {:?}", decision.status)),
+            },
+            Err(error) => ProjectConfigProvenance {
+                source_path: canonical_source_path,
+                workspace_path,
+                trust: WorkspaceTrustStatus::Unknown,
+                applied: false,
+                blocked_reason: Some(error.to_string()),
+            },
+        }
+    }
+
+    fn trust_config_dir(&self) -> Option<PathBuf> {
+        self.user_config_dir_path.clone().or_else(|| {
+            self.user_config_path
+                .as_ref()
+                .and_then(|path| path.parent().map(Path::to_path_buf))
+        })
     }
 
     /// Load per-concern config files from a config directory.
@@ -386,9 +490,24 @@ impl ConfigLoader {
     /// Override the user config directory path.
     #[must_use]
     pub fn with_user_config_dir(mut self, path: Option<PathBuf>) -> Self {
+        self.user_config_path = path.as_ref().map(|dir| dir.join("config.toml"));
         self.user_config_dir_path = path;
         self
     }
+}
+
+fn project_source_identity(source_path: &Path) -> Result<(PathBuf, PathBuf)> {
+    let canonical_source = std::fs::canonicalize(source_path).with_context(|| {
+        format!(
+            "canonicalizing project configuration source: {}",
+            source_path.display()
+        )
+    })?;
+    let workspace_path = canonical_source
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    Ok((canonical_source, workspace_path))
 }
 
 #[cfg(test)]
@@ -632,7 +751,15 @@ db_path = "/tmp/test.db"
 "#;
         std::fs::write(&config_path, toml_content).unwrap();
 
-        let loader = ConfigLoader::for_testing().with_project_config(Some(config_path));
+        let user_root = tempfile::tempdir().unwrap();
+        let user_dir = user_root.path().to_path_buf();
+        crate::workspace::WorkspaceService::new(&user_dir)
+            .trust_workspace(dir.path())
+            .unwrap();
+
+        let loader = ConfigLoader::for_testing()
+            .with_project_config(Some(config_path))
+            .with_user_config_dir(Some(user_dir));
         let config = loader.load().expect("toml should load");
 
         assert_eq!(config.log_level, "debug");
@@ -747,7 +874,15 @@ log_level = "debug"
         )
         .unwrap();
 
-        let loader = ConfigLoader::for_testing().with_config_dir(Some(config_dir));
+        let user_root = tempfile::tempdir().unwrap();
+        let user_dir = user_root.path().to_path_buf();
+        crate::workspace::WorkspaceService::new(&user_dir)
+            .trust_workspace(dir.path())
+            .unwrap();
+
+        let loader = ConfigLoader::for_testing()
+            .with_config_dir(Some(config_dir))
+            .with_user_config_dir(Some(user_dir));
         let config = loader.load().expect("config dir should load");
 
         assert_eq!(config.log_level, "debug");
@@ -769,14 +904,28 @@ log_level = "debug"
         let project_path = dir.path().join("y-agent.toml");
         std::fs::write(&project_path, "log_level = \"warn\"\n").unwrap();
 
+        let user_root = tempfile::tempdir().unwrap();
+        let user_dir = user_root.path().to_path_buf();
+        crate::workspace::WorkspaceService::new(&user_dir)
+            .trust_workspace(dir.path())
+            .unwrap();
+
         let loader = ConfigLoader::for_testing()
             .with_config_dir(Some(config_dir))
-            .with_project_config(Some(project_path));
-        let config = loader.load().expect("override should work");
+            .with_project_config(Some(project_path))
+            .with_user_config_dir(Some(user_dir));
+        let loaded = loader.load_with_provenance().expect("override should work");
+        let config = loaded.config;
 
         assert_eq!(
             config.log_level, "warn",
             "project config should override config dir"
+        );
+        assert_eq!(loaded.project_sources.len(), 2);
+        assert!(loaded.project_sources.iter().all(|source| source.applied));
+        assert_eq!(
+            loaded.project_sources[0].workspace_path,
+            loaded.project_sources[1].workspace_path
         );
     }
 
@@ -835,6 +984,208 @@ log_level = "debug"
             config.storage.db_path.ends_with("data/user.db"),
             "user config dir should override project config dir, got: {}",
             config.storage.db_path
+        );
+    }
+
+    #[test]
+    fn unknown_workspace_blocks_project_mcp_before_config_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        let config_dir = project_dir.join("config");
+        let user_dir = dir.path().join("user");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::write(
+            config_dir.join("tools.toml"),
+            r#"
+[[mcp_servers]]
+name = "project-server"
+transport = "stdio"
+command = "project-command"
+"#,
+        )
+        .unwrap();
+
+        let loaded = ConfigLoader::for_testing()
+            .with_config_dir(Some(config_dir))
+            .with_user_config_dir(Some(user_dir))
+            .load_with_provenance()
+            .unwrap();
+
+        assert!(loaded.config.tools.mcp_servers.is_empty());
+        assert_eq!(loaded.project_sources.len(), 1);
+        assert!(!loaded.project_sources[0].applied);
+        assert_eq!(
+            loaded.project_sources[0].trust,
+            crate::workspace::WorkspaceTrustStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn trusted_workspace_activates_project_mcp_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        let config_dir = project_dir.join("config");
+        let user_dir = dir.path().join("user");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::write(
+            config_dir.join("tools.toml"),
+            r#"
+[[mcp_servers]]
+name = "project-server"
+transport = "stdio"
+command = "project-command"
+"#,
+        )
+        .unwrap();
+        crate::workspace::WorkspaceService::new(&user_dir)
+            .trust_workspace(&project_dir)
+            .unwrap();
+
+        let loaded = ConfigLoader::for_testing()
+            .with_config_dir(Some(config_dir))
+            .with_user_config_dir(Some(user_dir))
+            .load_with_provenance()
+            .unwrap();
+
+        assert_eq!(loaded.config.tools.mcp_servers.len(), 1);
+        assert_eq!(loaded.config.tools.mcp_servers[0].name, "project-server");
+        assert!(loaded.project_sources[0].applied);
+        assert_eq!(
+            loaded.project_sources[0].trust,
+            crate::workspace::WorkspaceTrustStatus::Trusted
+        );
+    }
+
+    #[test]
+    fn untrusted_project_does_not_disable_user_mcp_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        let config_dir = project_dir.join("config");
+        let user_dir = dir.path().join("user");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::write(
+            config_dir.join("tools.toml"),
+            r#"
+[[mcp_servers]]
+name = "project-server"
+transport = "stdio"
+command = "project-command"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            user_dir.join("tools.toml"),
+            r#"
+[[mcp_servers]]
+name = "user-server"
+transport = "stdio"
+command = "user-command"
+"#,
+        )
+        .unwrap();
+        crate::workspace::WorkspaceService::new(&user_dir)
+            .untrust_workspace(&project_dir)
+            .unwrap();
+
+        let loaded = ConfigLoader::for_testing()
+            .with_config_dir(Some(config_dir))
+            .with_user_config_dir(Some(user_dir))
+            .load_with_provenance()
+            .unwrap();
+
+        assert_eq!(loaded.config.tools.mcp_servers.len(), 1);
+        assert_eq!(loaded.config.tools.mcp_servers[0].name, "user-server");
+        assert_eq!(
+            loaded.project_sources[0].trust,
+            crate::workspace::WorkspaceTrustStatus::Untrusted
+        );
+    }
+
+    #[test]
+    fn corrupt_trust_store_blocks_project_config_but_keeps_user_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        let config_dir = project_dir.join("config");
+        let user_dir = dir.path().join("user");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::write(
+            config_dir.join("tools.toml"),
+            r#"
+[[mcp_servers]]
+name = "project-server"
+transport = "stdio"
+command = "project-command"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            user_dir.join("tools.toml"),
+            r#"
+[[mcp_servers]]
+name = "user-server"
+transport = "stdio"
+command = "user-command"
+"#,
+        )
+        .unwrap();
+        std::fs::write(user_dir.join("workspace_trust.toml"), "invalid = [").unwrap();
+
+        let loaded = ConfigLoader::for_testing()
+            .with_config_dir(Some(config_dir))
+            .with_user_config_dir(Some(user_dir))
+            .load_with_provenance()
+            .unwrap();
+
+        assert_eq!(loaded.config.tools.mcp_servers.len(), 1);
+        assert_eq!(loaded.config.tools.mcp_servers[0].name, "user-server");
+        assert!(!loaded.project_sources[0].applied);
+        assert!(loaded.project_sources[0].blocked_reason.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_workspace_does_not_cover_symlinked_external_config_directory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("project");
+        let external_dir = dir.path().join("external");
+        let external_config_dir = external_dir.join("config");
+        let linked_config_dir = project_dir.join("config");
+        let user_dir = dir.path().join("user");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::create_dir_all(&external_config_dir).unwrap();
+        std::fs::create_dir_all(&user_dir).unwrap();
+        std::fs::write(
+            external_config_dir.join("tools.toml"),
+            r#"
+[[mcp_servers]]
+name = "external-server"
+transport = "stdio"
+command = "external-command"
+"#,
+        )
+        .unwrap();
+        symlink(&external_config_dir, &linked_config_dir).unwrap();
+        crate::workspace::WorkspaceService::new(&user_dir)
+            .trust_workspace(&project_dir)
+            .unwrap();
+
+        let loaded = ConfigLoader::for_testing()
+            .with_config_dir(Some(linked_config_dir))
+            .with_user_config_dir(Some(user_dir))
+            .load_with_provenance()
+            .unwrap();
+
+        assert!(loaded.config.tools.mcp_servers.is_empty());
+        assert!(!loaded.project_sources[0].applied);
+        assert_eq!(
+            loaded.project_sources[0].trust,
+            crate::workspace::WorkspaceTrustStatus::Unknown
         );
     }
 

@@ -37,6 +37,8 @@ pub mod resource_monitor;
 pub mod security_policy;
 pub mod ssh;
 pub mod venv;
+#[cfg(feature = "worktree_isolation")]
+pub mod worktree;
 
 // Re-export primary types.
 pub use audit::{AuditEntry, AuditEventType, AuditOutcome, AuditTrail};

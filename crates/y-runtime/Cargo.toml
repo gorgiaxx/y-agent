@@ -21,11 +21,13 @@ futures-util = { workspace = true, optional = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 toml.workspace = true
+tempfile = { workspace = true }
 
 [features]
 sandbox_bwrap = []
 runtime_docker = ["bollard", "futures-util"]
 runtime_docker_integration_test = ["runtime_docker"]
+worktree_isolation = []
 
 [lints]
 workspace = true
