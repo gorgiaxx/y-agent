@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use tauri::State;
 
-use y_service::{WorkspaceRecord, WorkspaceService};
+use y_service::{WorkspaceRecord, WorkspaceService, WorkspaceTrustDecision};
 
 use crate::state::AppState;
 
@@ -107,4 +107,41 @@ pub async fn workspace_unassign_session(
     svc(&state)
         .unassign_session(&session_id)
         .map_err(|e| format!("Failed to unassign session: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Workspace trust commands
+// ---------------------------------------------------------------------------
+
+/// Resolve the project-configuration trust status for a workspace path.
+#[tauri::command]
+pub async fn workspace_trust_status(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<WorkspaceTrustDecision, String> {
+    svc(&state)
+        .workspace_trust(std::path::Path::new(&path))
+        .map_err(|error| format!("Failed to resolve workspace trust: {error}"))
+}
+
+/// Trust project-origin configuration from a workspace path.
+#[tauri::command]
+pub async fn workspace_trust(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<WorkspaceTrustDecision, String> {
+    svc(&state)
+        .trust_workspace(std::path::Path::new(&path))
+        .map_err(|error| format!("Failed to trust workspace: {error}"))
+}
+
+/// Explicitly block project-origin configuration from a workspace path.
+#[tauri::command]
+pub async fn workspace_untrust(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<WorkspaceTrustDecision, String> {
+    svc(&state)
+        .untrust_workspace(std::path::Path::new(&path))
+        .map_err(|error| format!("Failed to block workspace: {error}"))
 }

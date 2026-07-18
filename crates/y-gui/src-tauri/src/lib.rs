@@ -234,6 +234,51 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // Bridge service-owned tool runtime notifications to the shared frontend.
+    {
+        let mut rx = container.tool_runtime_event_service.subscribe();
+        let app_handle = app.handle().clone();
+        rt.spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(published) => {
+                        let _ = app_handle.emit("tool:runtime", &published.event);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            skipped = n,
+                            "tool runtime broadcast bridge lagged -- events dropped"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
+    // Bridge automatic wake turns through the same lifecycle event names as
+    // user-started turns. Tauri remains a transport-only adapter.
+    {
+        let mut rx = container.background_wake_service.subscribe();
+        let app_handle = app.handle().clone();
+        rt.spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        let _ = app_handle.emit(event.event_name(), event.payload());
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(
+                            skipped = n,
+                            "background wake broadcast bridge lagged -- events dropped"
+                        );
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
     let app_state = AppState::new(Arc::clone(&container), config_path.clone(), state_path);
 
     // Periodic sweep of stale pending_runs entries.
@@ -477,6 +522,9 @@ pub fn run() {
             commands::workspace::workspace_session_map,
             commands::workspace::workspace_assign_session,
             commands::workspace::workspace_unassign_session,
+            commands::workspace::workspace_trust_status,
+            commands::workspace::workspace_trust,
+            commands::workspace::workspace_untrust,
             // Skills
             commands::skills::skill_list,
             commands::skills::skill_get,

@@ -61,6 +61,11 @@ reqwest = { workspace = true }
 # Encoding
 base64 = { workspace = true }
 
+[features]
+default = []
+background_auto_wake = ["y-service/background_auto_wake"]
+lsp = ["y-service/lsp"]
+
 [lints]
 workspace = true
 

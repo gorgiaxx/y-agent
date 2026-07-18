@@ -383,6 +383,7 @@ mod tests {
             capabilities: vec!["chat".to_string()],
             icon: Some("R".to_string()),
             working_directory: Some("/tmp/workspace".to_string()),
+            workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
             toolcall_enabled: Some(true),
             skills_enabled: Some(true),
             knowledge_enabled: Some(false),
