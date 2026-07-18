@@ -472,6 +472,30 @@ impl AgentDelegator for AgentPool {
             }
         })?;
         let response_format = schema_override.or(base_response_format);
+        let workspace_isolation = input
+            .get("_workspace_isolation")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| DelegationError::DelegationFailed {
+                message: format!(
+                    "invalid workspace isolation override for agent '{agent_name}': {error}"
+                ),
+            })?
+            .unwrap_or(definition.workspace_isolation);
+        let workspace_snapshot_id = input
+            .get("_workspace_snapshot_id")
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| DelegationError::DelegationFailed {
+                        message: format!(
+                            "invalid workspace snapshot id for agent '{agent_name}': expected string"
+                        ),
+                    })
+            })
+            .transpose()?;
 
         let config = AgentRunConfig {
             agent_name: definition.id.clone(),
@@ -492,6 +516,8 @@ impl AgentDelegator for AgentPool {
             trace_id: None,
             prune_tool_history: definition.prune_tool_history,
             response_format,
+            workspace_isolation,
+            workspace_snapshot_id,
         };
 
         // Register for observability before execution.
@@ -512,6 +538,7 @@ impl AgentDelegator for AgentPool {
             output_tokens: output.output_tokens,
             model_used: output.model_used,
             duration_ms: output.duration_ms,
+            workspace_isolation: output.workspace_isolation,
         })
     }
 }
@@ -532,6 +559,7 @@ mod tests {
             capabilities: vec![],
             icon: None,
             working_directory: None,
+            workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
             toolcall_enabled: None,
             skills_enabled: None,
             knowledge_enabled: None,
@@ -704,6 +732,7 @@ mod tests {
                     output_tokens: 2,
                     model_used: "mock".to_string(),
                     duration_ms: 5,
+                    workspace_isolation: None,
                 })
             }
         }
@@ -724,6 +753,65 @@ mod tests {
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.text.contains("tool-engineer"));
+    }
+
+    #[tokio::test]
+    async fn delegation_workspace_overrides_reach_runner_config() {
+        use std::sync::Mutex as StdMutex;
+
+        use y_core::agent::{
+            AgentRunConfig, AgentRunOutput, AgentRunner, WorkspaceIsolationPreference,
+        };
+
+        struct RecordingRunner {
+            workspace: Arc<StdMutex<(Option<WorkspaceIsolationPreference>, Option<String>)>>,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentRunner for RecordingRunner {
+            async fn run(&self, config: AgentRunConfig) -> Result<AgentRunOutput, DelegationError> {
+                *self.workspace.lock().unwrap() = (
+                    Some(config.workspace_isolation),
+                    config.workspace_snapshot_id,
+                );
+                Ok(AgentRunOutput {
+                    text: "done".into(),
+                    tokens_used: 1,
+                    input_tokens: 1,
+                    output_tokens: 0,
+                    model_used: "mock".into(),
+                    duration_ms: 1,
+                    workspace_isolation: None,
+                })
+            }
+        }
+
+        let workspace = Arc::new(StdMutex::new((None, None)));
+        let mut pool = AgentPool::new(MultiAgentConfig::default());
+        pool.set_runner(Arc::new(RecordingRunner {
+            workspace: Arc::clone(&workspace),
+        }));
+
+        pool.delegate(
+            "tool-engineer",
+            serde_json::json!({
+                "task": "test",
+                "_workspace_isolation": "require_worktree",
+                "_workspace_snapshot_id": "snapshot-1",
+            }),
+            ContextStrategyHint::None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *workspace.lock().unwrap(),
+            (
+                Some(WorkspaceIsolationPreference::RequireWorktree),
+                Some("snapshot-1".to_string())
+            )
+        );
     }
 
     /// T-MA-P2-06: Delegation to unknown agent returns `AgentNotFound`.
@@ -764,6 +852,7 @@ mod tests {
                     output_tokens: 5,
                     model_used: "mock".to_string(),
                     duration_ms: 10,
+                    workspace_isolation: None,
                 })
             }
         }

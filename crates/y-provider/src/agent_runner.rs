@@ -175,6 +175,7 @@ impl AgentRunner for SingleTurnRunner {
             output_tokens: u64::from(response.usage.output_tokens),
             model_used: response.model,
             duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+            workspace_isolation: None,
         })
     }
 }
@@ -275,6 +276,8 @@ mod tests {
             prune_tool_history: false,
             response_format: None,
             fallback_provider_tags: vec![],
+            workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
+            workspace_snapshot_id: None,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -311,6 +314,8 @@ mod tests {
             prune_tool_history: false,
             response_format: None,
             fallback_provider_tags: vec![],
+            workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
+            workspace_snapshot_id: None,
         };
 
         let request = SingleTurnRunner::build_request(&config);
@@ -339,6 +344,8 @@ mod tests {
             prune_tool_history: false,
             response_format: None,
             fallback_provider_tags: vec![],
+            workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
+            workspace_snapshot_id: None,
         };
 
         let route = SingleTurnRunner::build_route(&config);
@@ -366,6 +373,8 @@ mod tests {
             trace_id: None,
             prune_tool_history: false,
             response_format: None::<ResponseFormat>,
+            workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
+            workspace_snapshot_id: None,
         };
 
         let output = runner.run(config).await.unwrap();

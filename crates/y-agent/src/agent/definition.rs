@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent::error::MultiAgentError;
 use crate::agent::trust::TrustTier;
+use y_core::agent::WorkspaceIsolationPreference;
 use y_core::permission_types::PermissionMode;
 use y_core::provider::{ResponseFormat, ThinkingConfig, ThinkingEffort};
 
@@ -168,6 +169,9 @@ pub struct AgentDefinition {
     /// Preferred working directory for user-facing agent sessions.
     #[serde(default)]
     pub working_directory: Option<String>,
+    /// Preferred filesystem isolation for delegated executions.
+    #[serde(default)]
+    pub workspace_isolation: WorkspaceIsolationPreference,
     /// Whether tool calling is enabled for user-facing sessions of this agent.
     ///
     /// `None` preserves legacy behavior for older definitions.
@@ -483,6 +487,7 @@ system_prompt = ""
             capabilities: vec![],
             icon: None,
             working_directory: None,
+            workspace_isolation: WorkspaceIsolationPreference::default(),
             toolcall_enabled: None,
             skills_enabled: None,
             knowledge_enabled: None,

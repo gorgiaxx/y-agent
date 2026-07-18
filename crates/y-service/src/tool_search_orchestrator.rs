@@ -9,6 +9,7 @@
 //! Since v0.4, keyword search also queries `SkillSearch` and `AgentRegistry`
 //! so that skills, agents, and workflows are discoverable through the same meta-tool.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, RwLock};
@@ -19,14 +20,18 @@ use y_core::types::ToolName;
 use y_skills::SkillSearch;
 use y_tools::{ToolActivationSet, ToolRegistryImpl, ToolTaxonomy};
 
+use crate::capability_search::{CapabilityDocument, CapabilityKind, CapabilitySearchIndex};
+
 /// Optional extra capability sources for unified search.
 ///
 /// Compact reusable workflow descriptor for unified capability search.
+#[derive(Debug, Clone)]
 pub struct WorkflowSearchItem {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
     pub tags: Vec<String>,
+    pub parameter_names: Vec<String>,
 }
 
 /// When provided, keyword search (`query`) also returns matching skills,
@@ -262,109 +267,205 @@ impl ToolSearchOrchestrator {
         activation_set: &Arc<RwLock<ToolActivationSet>>,
         sources: &CapabilitySearchSources<'_>,
     ) -> Result<ToolOutput, y_core::tool::ToolError> {
-        // --- 1. Search tools (registry + taxonomy) ---
-        let registry_results = registry.search_tools(query, None).await;
-        let taxonomy_hits = taxonomy.search(query);
+        let tool_definitions = registry.get_all_definitions().await;
+        let taxonomy_hits: HashSet<String> = taxonomy.search(query).into_iter().collect();
+        let skill_documents = if let Some(skill_search) = sources.skill_search {
+            skill_search.read().await.documents()
+        } else {
+            Vec::new()
+        };
+        let agent_definitions = if let Some(agent_registry) = sources.agent_registry {
+            agent_registry
+                .lock()
+                .await
+                .list()
+                .into_iter()
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let workflows = sources.workflows.unwrap_or_default();
 
-        // Merge: registry results first, then any taxonomy-only names.
-        let mut result_defs: Vec<ToolDefinition> = registry_results;
-        for tool_name_str in &taxonomy_hits {
-            let tn = ToolName::from_string(tool_name_str);
-            if !result_defs.iter().any(|d| d.name == tn) {
-                if let Some(def) = registry.get_definition(&tn).await {
-                    result_defs.push(def);
-                }
+        let mut documents = Vec::with_capacity(
+            tool_definitions.len()
+                + skill_documents.len()
+                + agent_definitions.len()
+                + workflows.len(),
+        );
+        documents.extend(tool_definitions.iter().map(|definition| {
+            let mut keywords = schema_parameter_names(&definition.parameters);
+            keywords.push(format!("{:?}", definition.category));
+            keywords.push(format!("{:?}", definition.tool_type));
+            if let Some(help) = &definition.help {
+                keywords.push(help.clone());
             }
-        }
+            if let Ok(capabilities) = serde_json::to_string(&definition.capabilities) {
+                keywords.push(capabilities);
+            }
+            if taxonomy_hits.contains(definition.name.as_str()) {
+                keywords.push(query.to_string());
+            }
+            CapabilityDocument {
+                kind: CapabilityKind::Tool,
+                id: definition.name.as_str().to_string(),
+                name: definition.name.as_str().to_string(),
+                description: definition.description.clone(),
+                aliases: tool_aliases(definition.name.as_str()),
+                keywords,
+            }
+        }));
+        documents.extend(skill_documents.iter().map(|skill| {
+            CapabilityDocument {
+                kind: CapabilityKind::Skill,
+                id: skill.id.to_string(),
+                name: skill.name.clone(),
+                description: skill.description.clone(),
+                aliases: Vec::new(),
+                keywords: skill
+                    .tags
+                    .iter()
+                    .chain(skill.trigger_patterns.iter())
+                    .cloned()
+                    .collect(),
+            }
+        }));
+        documents.extend(agent_definitions.iter().map(|agent| {
+            CapabilityDocument {
+                kind: CapabilityKind::Agent,
+                id: agent.id.clone(),
+                name: agent.name.clone(),
+                description: agent.description.clone(),
+                aliases: Vec::new(),
+                keywords: agent
+                    .capabilities
+                    .iter()
+                    .cloned()
+                    .chain([
+                        format!("{:?}", agent.mode),
+                        format!("{:?}", agent.trust_tier),
+                    ])
+                    .collect(),
+            }
+        }));
+        documents.extend(workflows.iter().map(|workflow| {
+            CapabilityDocument {
+                kind: CapabilityKind::Workflow,
+                id: workflow.id.clone(),
+                name: workflow.name.clone(),
+                description: workflow.description.clone().unwrap_or_default(),
+                aliases: Vec::new(),
+                keywords: workflow
+                    .tags
+                    .iter()
+                    .chain(workflow.parameter_names.iter())
+                    .cloned()
+                    .collect(),
+            }
+        }));
 
-        // Activate all found tools.
-        let mut activated_names: Vec<String> = result_defs
+        let search_limit = registry.config().search_limit;
+        let ranked = CapabilitySearchIndex::build(documents).search(query, 40);
+        let tool_by_id: HashMap<_, _> = tool_definitions
             .iter()
-            .map(|d| d.name.as_str().to_string())
+            .map(|definition| (definition.name.as_str(), definition))
+            .collect();
+        let skill_by_id: HashMap<_, _> = skill_documents
+            .iter()
+            .map(|skill| (skill.id.to_string(), skill))
+            .collect();
+        let agent_by_id: HashMap<_, _> = agent_definitions
+            .iter()
+            .map(|agent| (agent.id.as_str(), agent))
+            .collect();
+        let workflow_by_id: HashMap<_, _> = workflows
+            .iter()
+            .map(|workflow| (workflow.id.as_str(), workflow))
             .collect();
 
-        {
-            let mut set = activation_set.write().await;
-            for def in &result_defs {
-                set.activate(def.clone());
-            }
-        }
-
-        let tools_json: Vec<serde_json::Value> =
-            result_defs.iter().map(Self::summary_to_json).collect();
-
-        // --- 2. Search skills ---
-        let skills_json = if let Some(skill_search) = sources.skill_search {
-            let ss = skill_search.read().await;
-            let skill_results = ss.search(query, 10);
-            skill_results
-                .iter()
-                .map(|s| {
-                    serde_json::json!({
+        let mut tools_json = Vec::new();
+        let mut skills_json = Vec::new();
+        let mut agents_json = Vec::new();
+        let mut workflows_json = Vec::new();
+        let mut unified_json = Vec::new();
+        let mut activated_names = Vec::new();
+        for hit in ranked {
+            let score = hit.score;
+            let match_reason = hit.reason.as_str();
+            match hit.kind {
+                CapabilityKind::Tool if tools_json.len() < search_limit => {
+                    let Some(definition) = tool_by_id.get(hit.id.as_str()).copied() else {
+                        continue;
+                    };
+                    activation_set.write().await.activate(definition.clone());
+                    activated_names.push(hit.id.clone());
+                    let mut result = Self::summary_to_json(definition);
+                    result["type"] = serde_json::json!("tool");
+                    result["id"] = serde_json::json!(hit.id);
+                    result["score"] = serde_json::json!(score);
+                    result["match_reason"] = serde_json::json!(match_reason);
+                    unified_json.push(result.clone());
+                    tools_json.push(result);
+                }
+                CapabilityKind::Skill if skills_json.len() < 10 => {
+                    let Some(skill) = skill_by_id.get(&hit.id) else {
+                        continue;
+                    };
+                    let result = serde_json::json!({
                         "type": "skill",
-                        "name": s.name,
-                        "description": s.description,
-                        "tags": s.tags,
-                    })
-                })
-                .collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
-
-        // --- 3. Search agents ---
-        let agents_json = if let Some(agent_registry) = sources.agent_registry {
-            let ar = agent_registry.lock().await;
-            let agent_results = ar.search(query);
-            agent_results
-                .iter()
-                .map(|a| {
-                    serde_json::json!({
+                        "id": skill.id,
+                        "name": skill.name,
+                        "description": skill.description,
+                        "tags": skill.tags,
+                        "score": score,
+                        "match_reason": match_reason,
+                    });
+                    unified_json.push(result.clone());
+                    skills_json.push(result);
+                }
+                CapabilityKind::Agent if agents_json.len() < 10 => {
+                    let Some(agent) = agent_by_id.get(hit.id.as_str()).copied() else {
+                        continue;
+                    };
+                    let result = serde_json::json!({
                         "type": "agent",
-                        "id": a.id,
-                        "name": a.name,
-                        "description": a.description,
-                        "mode": format!("{:?}", a.mode),
-                        "capabilities": a.capabilities,
+                        "id": agent.id,
+                        "name": agent.name,
+                        "description": agent.description,
+                        "mode": format!("{:?}", agent.mode),
+                        "capabilities": agent.capabilities,
+                        "score": score,
+                        "match_reason": match_reason,
                         "usage": "Use the 'task' tool to delegate work to this agent: \
                             task({\"agent_name\": \"<id>\", \"prompt\": \"<your_task>\"})",
-                    })
-                })
-                .collect::<Vec<_>>()
-        } else {
-            vec![]
-        };
-
-        // --- 4. Search workflows ---
-        let workflows_json = sources.workflows.map_or_else(Vec::new, |workflows| {
-            let mut matches: Vec<_> = workflows
-                .iter()
-                .filter_map(|workflow| {
-                    let score = workflow_match_score(workflow, query);
-                    (score > 0).then_some((score, workflow))
-                })
-                .collect();
-            matches.sort_by(|left, right| {
-                right
-                    .0
-                    .cmp(&left.0)
-                    .then_with(|| left.1.name.cmp(&right.1.name))
-            });
-            matches
-                .into_iter()
-                .take(10)
-                .map(|(_, workflow)| {
-                    serde_json::json!({
+                    });
+                    unified_json.push(result.clone());
+                    agents_json.push(result);
+                }
+                CapabilityKind::Workflow if workflows_json.len() < 10 => {
+                    let Some(workflow) = workflow_by_id.get(hit.id.as_str()).copied() else {
+                        continue;
+                    };
+                    let result = serde_json::json!({
                         "type": "workflow",
                         "id": workflow.id,
                         "name": workflow.name,
                         "description": workflow.description,
                         "tags": workflow.tags,
+                        "parameter_names": workflow.parameter_names,
+                        "score": score,
+                        "match_reason": match_reason,
                         "usage": "Use WorkflowRun with this workflow's id or name.",
-                    })
-                })
-                .collect()
-        });
+                    });
+                    unified_json.push(result.clone());
+                    workflows_json.push(result);
+                }
+                CapabilityKind::Tool
+                | CapabilityKind::Skill
+                | CapabilityKind::Agent
+                | CapabilityKind::Workflow => {}
+            }
+        }
         if !workflows_json.is_empty() && !activated_names.iter().any(|name| name == "WorkflowRun") {
             let workflow_run = ToolName::from_string("WorkflowRun");
             if let Some(definition) = registry.get_definition(&workflow_run).await {
@@ -383,6 +484,7 @@ impl ToolSearchOrchestrator {
                 "query": query,
                 "note": "Items under 'tools' can be called directly. \
                     To delegate to an agent, use the 'task' tool with the agent's id.",
+                "results": unified_json,
                 "tools": {
                     "results": tools_json,
                     "count": tools_json.len(),
@@ -422,36 +524,50 @@ impl ToolSearchOrchestrator {
     }
 }
 
-fn workflow_match_score(workflow: &WorkflowSearchItem, query: &str) -> usize {
-    let name = workflow.name.to_lowercase();
-    let description = workflow
-        .description
-        .as_deref()
-        .unwrap_or_default()
-        .to_lowercase();
-    let tags: Vec<_> = workflow.tags.iter().map(|tag| tag.to_lowercase()).collect();
-    query
-        .split(|character: char| !character.is_alphanumeric())
-        .map(str::to_lowercase)
-        .filter(|token| token.len() >= 3)
-        .map(|token| {
-            let tag_score: usize = tags
-                .iter()
-                .map(|tag| {
-                    if tag == &token {
-                        10
-                    } else if tag.contains(&token) {
-                        6
-                    } else {
-                        0
-                    }
-                })
-                .sum();
-            tag_score
-                + usize::from(name.contains(&token)) * 4
-                + usize::from(description.contains(&token)) * 2
-        })
-        .sum()
+fn schema_parameter_names(schema: &serde_json::Value) -> Vec<String> {
+    fn visit(value: &serde_json::Value, names: &mut Vec<String>) {
+        if let Some(properties) = value
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+        {
+            for (name, nested) in properties {
+                names.push(name.clone());
+                visit(nested, names);
+            }
+        }
+        if let Some(items) = value.get("items") {
+            visit(items, names);
+        }
+    }
+
+    let mut names = Vec::new();
+    visit(schema, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+pub(crate) fn schema_parameter_names_from_text(schema: Option<&str>) -> Vec<String> {
+    schema
+        .and_then(|value| serde_json::from_str(value).ok())
+        .map_or_else(Vec::new, |value| schema_parameter_names(&value))
+}
+
+fn tool_aliases(name: &str) -> Vec<String> {
+    let mut aliases = Vec::new();
+    if let Some(remainder) = name.strip_prefix("mcp_") {
+        if let Some((_, bare_name)) = remainder.split_once('_') {
+            aliases.push(bare_name.to_string());
+        }
+    }
+    for delimiter in ["::", ".", "/"] {
+        if let Some((_, bare_name)) = name.rsplit_once(delimiter) {
+            aliases.push(bare_name.to_string());
+        }
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
 }
 
 #[cfg(test)]
@@ -524,6 +640,32 @@ tools = ["ToolSearch"]
         let activation_set = Arc::new(RwLock::new(ToolActivationSet::new(20)));
 
         (registry, taxonomy, activation_set)
+    }
+
+    #[test]
+    fn workflow_schema_parameter_names_include_nested_inputs() {
+        let names = schema_parameter_names_from_text(Some(
+            r#"{
+                "type": "object",
+                "properties": {
+                    "repository": {"type": "string"},
+                    "release": {
+                        "type": "object",
+                        "properties": {"version": {"type": "string"}}
+                    }
+                }
+            }"#,
+        ));
+
+        assert_eq!(names, vec!["release", "repository", "version"]);
+    }
+
+    #[test]
+    fn mcp_tool_alias_uses_the_bare_tool_name() {
+        assert_eq!(
+            tool_aliases("mcp_github_search_repos"),
+            vec!["search_repos"]
+        );
     }
 
     #[tokio::test]
@@ -617,6 +759,88 @@ tools = ["ToolSearch"]
     }
 
     #[tokio::test]
+    async fn keyword_search_returns_unified_bm25_ranking() {
+        let (registry, taxonomy, activation_set) = setup().await;
+        use y_core::tool::ToolRegistry;
+        for index in 0..20 {
+            registry
+                .register(sample_def(
+                    &format!("GenericTool{index}"),
+                    "General formatting and text conversion helper",
+                ))
+                .await
+                .expect("register generic tool");
+        }
+        registry
+            .register(sample_def(
+                "RepositoryIssueLookup",
+                "Search repository issue tracker entries by label and state",
+            ))
+            .await
+            .expect("register relevant tool");
+
+        let result = ToolSearchOrchestrator::handle(
+            &serde_json::json!({"query": "find repository issues by label"}),
+            &registry,
+            &taxonomy,
+            &activation_set,
+        )
+        .await
+        .expect("search");
+
+        let ranked = result.content["results"]
+            .as_array()
+            .expect("ranked results");
+        assert_eq!(ranked[0]["type"], "tool");
+        assert_eq!(ranked[0]["id"], "RepositoryIssueLookup");
+        assert!(ranked[0]["score"].as_u64().expect("score") > 0);
+        assert_eq!(ranked[0]["match_reason"], "bm25");
+    }
+
+    #[tokio::test]
+    async fn exact_workflow_id_outranks_cross_type_lexical_matches() {
+        let (registry, taxonomy, activation_set) = setup().await;
+        use y_core::tool::ToolRegistry;
+        registry
+            .register(sample_def(
+                "ReleaseNotes",
+                "Prepare output for the release pipeline",
+            ))
+            .await
+            .expect("register tool");
+        let workflows = vec![WorkflowSearchItem {
+            id: "release-pipeline".to_string(),
+            name: "Release Pipeline".to_string(),
+            description: Some("Build, verify, and publish a release".to_string()),
+            tags: vec!["build".to_string(), "publish".to_string()],
+            parameter_names: vec!["version".to_string()],
+        }];
+        let sources = CapabilitySearchSources {
+            skill_search: None,
+            agent_registry: None,
+            workflows: Some(&workflows),
+        };
+
+        let result = ToolSearchOrchestrator::handle_with_sources(
+            &serde_json::json!({"query": "release-pipeline"}),
+            &registry,
+            &taxonomy,
+            &activation_set,
+            &sources,
+        )
+        .await
+        .expect("search");
+
+        let ranked = result.content["results"]
+            .as_array()
+            .expect("ranked results");
+        assert_eq!(ranked[0]["type"], "workflow");
+        assert_eq!(ranked[0]["id"], "release-pipeline");
+        assert_eq!(ranked[0]["score"], 10_000);
+        assert_eq!(ranked[0]["match_reason"], "exact_id");
+    }
+
+    #[tokio::test]
     async fn test_no_params_returns_error() {
         let (registry, taxonomy, activation_set) = setup().await;
 
@@ -681,6 +905,7 @@ tools = ["ToolSearch"]
             name: "file-review-pipeline".to_string(),
             description: Some("Review files and summarize findings".to_string()),
             tags: vec!["file".to_string(), "review".to_string()],
+            parameter_names: vec!["path".to_string()],
         }];
 
         let sources = CapabilitySearchSources {

@@ -277,6 +277,7 @@ mod tests {
                 output_tokens: 2,
                 model_used: "test-model".to_string(),
                 duration_ms: 25,
+                workspace_isolation: None,
             })
         }
     }

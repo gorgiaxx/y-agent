@@ -45,6 +45,11 @@ pub struct HookSystem {
     /// None if no handlers are configured or `handlers_enabled` = false.
     #[cfg(feature = "hook_handlers")]
     handler_executor: Option<crate::hook_handler::HookHandlerExecutor>,
+    /// Dependency injection survives handler-executor rebuilds on reload.
+    #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+    llm_runner: Option<Arc<dyn y_core::hook::HookLlmRunner>>,
+    #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+    agent_runner: Option<Arc<dyn y_core::hook::HookAgentRunner>>,
 }
 
 impl HookSystem {
@@ -74,6 +79,10 @@ impl HookSystem {
             runner: ChainRunner::new(config.middleware_timeout()),
             #[cfg(feature = "hook_handlers")]
             handler_executor,
+            #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+            llm_runner: None,
+            #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
+            agent_runner: None,
         }
     }
 
@@ -274,6 +283,15 @@ impl HookSystem {
                 } else {
                     None
                 };
+            #[cfg(feature = "llm_hooks")]
+            if let Some(executor) = self.handler_executor.as_mut() {
+                if let Some(runner) = &self.llm_runner {
+                    executor.set_llm_runner(Arc::clone(runner));
+                }
+                if let Some(runner) = &self.agent_runner {
+                    executor.set_agent_runner(Arc::clone(runner));
+                }
+            }
         }
 
         tracing::info!("Hook system config hot-reloaded");
@@ -285,6 +303,7 @@ impl HookSystem {
     /// If no executor exists (no handlers configured), this is a no-op.
     #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
     pub fn set_llm_runner(&mut self, runner: std::sync::Arc<dyn y_core::hook::HookLlmRunner>) {
+        self.llm_runner = Some(Arc::clone(&runner));
         if let Some(ref mut executor) = self.handler_executor {
             executor.set_llm_runner(runner);
         }
@@ -296,6 +315,7 @@ impl HookSystem {
     /// If no executor exists (no handlers configured), this is a no-op.
     #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
     pub fn set_agent_runner(&mut self, runner: std::sync::Arc<dyn y_core::hook::HookAgentRunner>) {
+        self.agent_runner = Some(Arc::clone(&runner));
         if let Some(ref mut executor) = self.handler_executor {
             executor.set_agent_runner(runner);
         }
@@ -363,6 +383,67 @@ mod tests {
         assert!(system.llm_chain().is_empty());
         assert!(system.compaction_chain().is_empty());
         assert!(system.memory_chain().is_empty());
+    }
+
+    #[cfg(feature = "llm_hooks")]
+    #[tokio::test]
+    async fn reload_preserves_injected_prompt_hook_runner() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        use crate::config::{HandlerConfig, HookHandlerGroupConfig};
+        use crate::{HookDecision, HookInput};
+        use y_core::hook::{HookLlmRunner, HookPoint};
+
+        struct CountingRunner(Arc<AtomicUsize>);
+
+        #[async_trait::async_trait]
+        impl HookLlmRunner for CountingRunner {
+            async fn evaluate(
+                &self,
+                _system_prompt: &str,
+                _user_message: &str,
+                _model: Option<&str>,
+                _timeout: Duration,
+            ) -> Result<String, String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(r#"{"ok":true,"reason":"approved"}"#.to_string())
+            }
+        }
+
+        let config = HookConfig {
+            hook_handlers: std::collections::HashMap::from([(
+                "pre_tool_execute".to_string(),
+                vec![HookHandlerGroupConfig {
+                    matcher: "*".to_string(),
+                    timeout_ms: None,
+                    handlers: vec![HandlerConfig::Prompt {
+                        prompt: "Review $ARGUMENTS".to_string(),
+                        model: None,
+                    }],
+                }],
+            )]),
+            ..HookConfig::default()
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut system = HookSystem::new(&config);
+        system.set_llm_runner(Arc::new(CountingRunner(Arc::clone(&calls))));
+
+        system.reload_config(&config);
+        let result = system
+            .execute_hook_handlers(
+                HookPoint::PreToolExecute,
+                &HookInput {
+                    session_id: None,
+                    hook_event: "pre_tool_execute".to_string(),
+                    timestamp: "2026-07-18T00:00:00Z".to_string(),
+                    extra: serde_json::json!({"tool_name": "FileRead"}),
+                },
+            )
+            .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.decision, HookDecision::Allow);
     }
 
     #[test]

@@ -188,24 +188,27 @@ impl TaskDelegationOrchestrator {
 
         // Extract optional result_schema for structured output validation.
         let result_schema = arguments.get("result_schema").cloned();
+        let workspace_isolation = arguments.get("workspace_isolation").cloned();
+        let workspace_snapshot_id = arguments.get("workspace_snapshot_id").cloned();
 
         // Build structured input for the agent. When a result_schema is
         // provided, it is passed as `_result_schema` so the AgentPool can
         // set `response_format` on the agent's run config, enabling
         // API-level structured output enforcement for providers that
         // support it (OpenAI, Anthropic).
-        let input = if let Some(ref schema) = result_schema {
-            serde_json::json!({
-                "task": prompt,
-                "mode": mode,
-                "_result_schema": schema,
-            })
-        } else {
-            serde_json::json!({
-                "task": prompt,
-                "mode": mode,
-            })
-        };
+        let mut input = serde_json::json!({
+            "task": prompt,
+            "mode": mode,
+        });
+        if let Some(schema) = result_schema.as_ref() {
+            input["_result_schema"] = schema.clone();
+        }
+        if let Some(isolation) = workspace_isolation {
+            input["_workspace_isolation"] = isolation;
+        }
+        if let Some(snapshot_id) = workspace_snapshot_id {
+            input["_workspace_snapshot_id"] = snapshot_id;
+        }
 
         let result = delegator
             .delegate(&effective_agent, input, context_strategy, session_id)
@@ -227,10 +230,19 @@ impl TaskDelegationOrchestrator {
                 },
             })?;
 
+        let workspace_isolation = result.workspace_isolation.clone();
+        let workspace_isolation_summary = workspace_isolation.as_ref().map(|metadata| {
+            let mut summary = serde_json::to_value(metadata).unwrap_or(serde_json::Value::Null);
+            if let Some(object) = summary.as_object_mut() {
+                object.remove("patch");
+            }
+            summary
+        });
+
         // When a result_schema was requested, validate the agent's output
         // as JSON against the schema. This lets the parent agent consume
         // typed JSON directly instead of parsing prose.
-        let content = if let Some(ref schema) = result_schema {
+        let mut content = if let Some(ref schema) = result_schema {
             let validated = validate_and_extract_json(&result.text, schema);
             if let Some(warning) = validated.warning {
                 warnings.push(warning);
@@ -251,6 +263,18 @@ impl TaskDelegationOrchestrator {
                 "output": result.text,
             })
         };
+        if let Some(metadata) = workspace_isolation {
+            let Some(content_object) = content.as_object_mut() else {
+                return Err(ToolError::RuntimeError {
+                    name: effective_agent,
+                    message: "delegation result content was not an object".to_string(),
+                });
+            };
+            content_object.insert(
+                "workspace_isolation".to_string(),
+                serde_json::to_value(metadata).unwrap_or(serde_json::Value::Null),
+            );
+        }
 
         Ok(ToolOutput {
             success: true,
@@ -263,6 +287,7 @@ impl TaskDelegationOrchestrator {
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
                 "duration_ms": result.duration_ms,
+                "workspace_isolation": workspace_isolation_summary,
             }),
         })
     }
@@ -272,7 +297,11 @@ impl TaskDelegationOrchestrator {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use y_core::agent::{AgentDelegator, ContextStrategyHint, DelegationError, DelegationOutput};
+    use y_core::agent::{
+        AgentDelegator, ContextStrategyHint, DelegationError, DelegationOutput,
+        WorkspaceCleanupStatus, WorkspaceConflictStatus, WorkspaceIsolationMetadata,
+        WorkspaceIsolationMode, WorkspaceIsolationPreference,
+    };
 
     /// Registry seeded with the built-in agents (includes `agent-architect`,
     /// `tool-engineer`, and the `general-purpose` fallback).
@@ -308,6 +337,7 @@ mod tests {
                     output_tokens: 40,
                     model_used: "test-model".to_string(),
                     duration_ms: 500,
+                    workspace_isolation: None,
                 })
             } else {
                 Err(DelegationError::AgentNotFound {
@@ -320,6 +350,43 @@ mod tests {
     /// Mock delegator that always fails with `DelegationFailed`.
     #[derive(Debug)]
     struct FailingDelegator;
+
+    #[derive(Debug)]
+    struct IsolationMockDelegator;
+
+    #[async_trait]
+    impl AgentDelegator for IsolationMockDelegator {
+        async fn delegate(
+            &self,
+            _agent_name: &str,
+            _input: serde_json::Value,
+            _context_strategy: ContextStrategyHint,
+            _session_id: Option<uuid::Uuid>,
+        ) -> Result<DelegationOutput, DelegationError> {
+            Ok(DelegationOutput {
+                text: "isolated result".to_string(),
+                tokens_used: 10,
+                input_tokens: 6,
+                output_tokens: 4,
+                model_used: "test-model".to_string(),
+                duration_ms: 25,
+                workspace_isolation: Some(WorkspaceIsolationMetadata {
+                    preference: WorkspaceIsolationPreference::Auto,
+                    mode: WorkspaceIsolationMode::Worktree,
+                    worktree_id: Some("delegation-test".to_string()),
+                    snapshot_id: Some("snapshot-test".to_string()),
+                    workspace_path: Some("/tmp/worktree".to_string()),
+                    base_revision: Some("abc123".to_string()),
+                    changed_files: vec!["result.txt".to_string()],
+                    patch: Some("diff --git a/result.txt b/result.txt".to_string()),
+                    evidence_error: None,
+                    cleanup_status: WorkspaceCleanupStatus::Cleaned,
+                    cleanup_error: None,
+                    conflict_status: WorkspaceConflictStatus::NotChecked,
+                }),
+            })
+        }
+    }
 
     #[async_trait]
     impl AgentDelegator for FailingDelegator {
@@ -404,6 +471,38 @@ mod tests {
         assert_eq!(result.metadata["input_tokens"], 60);
         assert_eq!(result.metadata["output_tokens"], 40);
         assert_eq!(result.metadata["duration_ms"], 500);
+    }
+
+    #[tokio::test]
+    async fn delegated_workspace_evidence_is_visible_to_parent_and_diagnostics() {
+        let args = serde_json::json!({
+            "agent_name": "agent-architect",
+            "prompt": "write a result"
+        });
+
+        let output = TaskDelegationOrchestrator::handle(
+            &args,
+            &IsolationMockDelegator,
+            &test_registry(),
+            None,
+        )
+        .await
+        .expect("delegation should succeed");
+
+        assert_eq!(
+            output.content["workspace_isolation"]["changed_files"],
+            serde_json::json!(["result.txt"])
+        );
+        assert!(output.content["workspace_isolation"]["patch"]
+            .as_str()
+            .is_some_and(|patch| patch.contains("result.txt")));
+        assert_eq!(
+            output.metadata["workspace_isolation"]["cleanup_status"],
+            "cleaned"
+        );
+        assert!(output.metadata["workspace_isolation"]
+            .get("patch")
+            .is_none());
     }
 
     #[tokio::test]
@@ -821,6 +920,7 @@ mod tests {
                 output_tokens: 5,
                 model_used: "test-model".to_string(),
                 duration_ms: 1,
+                workspace_isolation: None,
             })
         }
     }

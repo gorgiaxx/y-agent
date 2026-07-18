@@ -869,7 +869,7 @@ async fn execute_http(
 /// Per design §Prompt Hook Fields:
 /// 1. Replace $ARGUMENTS in prompt template with hook input JSON.
 /// 2. Send single-turn completion request via `HookLlmRunner`.
-/// 3. Parse response as PromptAgentDecision.
+/// 3. Parse response as `PromptAgentDecision`.
 /// 4. On error → default allow.
 #[cfg(feature = "llm_hooks")]
 async fn execute_prompt(
@@ -886,15 +886,12 @@ async fn execute_prompt(
 
     let user_message = prompt_template.replace("$ARGUMENTS", &input_json);
 
-    let runner = match llm_runner {
-        Some(r) => r,
-        None => {
-            warn!("prompt hook: no HookLlmRunner injected, returning default allow");
-            return Ok(PromptAgentDecision {
-                ok: true,
-                reason: None,
-            });
-        }
+    let Some(runner) = llm_runner else {
+        warn!("prompt hook: no HookLlmRunner injected, returning default allow");
+        return Ok(PromptAgentDecision {
+            ok: true,
+            reason: None,
+        });
     };
 
     let system_prompt = concat!(
@@ -939,7 +936,7 @@ async fn execute_prompt(
 /// 1. Replace $ARGUMENTS in task prompt.
 /// 2. Spawn subagent with Read/Grep/Glob tools only via `HookAgentRunner`.
 /// 3. Max 50 turns.
-/// 4. Parse final response as PromptAgentDecision.
+/// 4. Parse final response as `PromptAgentDecision`.
 /// 5. On timeout/max turns → default allow.
 #[cfg(feature = "llm_hooks")]
 async fn execute_agent(
@@ -949,6 +946,8 @@ async fn execute_agent(
     input: &HookInput,
     timeout: Duration,
 ) -> Result<PromptAgentDecision, HookError> {
+    const MAX_TURNS: u32 = 50;
+
     let input_json = serde_json::to_string(input).map_err(|e| HookError::HookHandlerError {
         handler_type: "agent".into(),
         message: format!("failed to serialize input: {e}"),
@@ -956,18 +955,13 @@ async fn execute_agent(
 
     let task_prompt = prompt_template.replace("$ARGUMENTS", &input_json);
 
-    let runner = match agent_runner {
-        Some(r) => r,
-        None => {
-            warn!("agent hook: no HookAgentRunner injected, returning default allow");
-            return Ok(PromptAgentDecision {
-                ok: true,
-                reason: None,
-            });
-        }
+    let Some(runner) = agent_runner else {
+        warn!("agent hook: no HookAgentRunner injected, returning default allow");
+        return Ok(PromptAgentDecision {
+            ok: true,
+            reason: None,
+        });
     };
-
-    const MAX_TURNS: u32 = 50;
 
     let response_text = runner
         .run_agent(&task_prompt, model, MAX_TURNS, timeout)
@@ -1555,7 +1549,6 @@ mod tests {
     #[cfg(feature = "llm_hooks")]
     mod llm_runner_tests {
         use super::super::*;
-        use std::sync::Arc;
         use y_core::hook::{HookAgentRunner, HookLlmRunner};
 
         struct MockLlmRunner {
