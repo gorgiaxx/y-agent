@@ -2,8 +2,14 @@
 
 use std::sync::Arc;
 
+use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
-use y_core::permission_types::PermissionMode;
+use y_core::file_mutation::{
+    content_ref, ContentHasher, FileMutationCapability, FileMutationEvent, FileMutationOperation,
+};
+use y_core::permission_types::{
+    PermissionBehavior, PermissionMode, PermissionReason, PermissionResult,
+};
 use y_core::runtime::CommandRunner;
 use y_core::tool::ToolInput;
 use y_core::trust::TrustTier;
@@ -14,6 +20,153 @@ use crate::container::ServiceContainer;
 use super::{AgentExecutionConfig, ToolCallRecord, ToolExecContext, TurnEvent, TurnEventSender};
 use crate::chat_types::OperationMode;
 use crate::user_interaction_orchestrator::INTERACTION_TIMEOUT;
+
+async fn evaluate_registered_tool_permission(
+    container: &ServiceContainer,
+    config: &AgentExecutionConfig,
+    tc: &ToolCallRequest,
+    session_id: &SessionId,
+    working_dir: Option<&str>,
+    additional_read_dirs: &[String],
+) -> PermissionResult {
+    let tool_name = ToolName::from_string(&tc.name);
+    let definition = container.tool_registry.get_definition(&tool_name).await;
+    let session_mode = session_permission_mode(container, session_id).await;
+    let operation_mode = session_operation_mode(container, session_id).await;
+    let permission_context = container.guardrail_manager.permission_context(session_mode);
+    let builtin_auto_allow = config.trust_tier == Some(TrustTier::BuiltIn)
+        && config
+            .agent_allowed_tools
+            .iter()
+            .any(|tool| tool == &tc.name);
+
+    let mut tool_result = if let Some(tool) = container.tool_registry.get_tool(&tool_name).await {
+        let input = ToolInput {
+            call_id: tc.id.clone(),
+            name: tool_name,
+            arguments: tc.arguments.clone(),
+            session_id: session_id.clone(),
+            working_dir: working_dir.map(ToOwned::to_owned),
+            additional_read_dirs: additional_read_dirs.to_vec(),
+            command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
+        };
+        tool.check_permissions(&input, &permission_context)
+    } else {
+        PermissionResult::passthrough()
+    };
+
+    if builtin_auto_allow
+        && matches!(
+            tool_result.behavior,
+            PermissionBehavior::Ask | PermissionBehavior::Passthrough
+        )
+    {
+        tracing::debug!(
+            tool = %tc.name,
+            agent = %config.agent_name,
+            "built-in agent declared tool supplied an allow signal"
+        );
+        tool_result = PermissionResult {
+            behavior: PermissionBehavior::Allow,
+            reason: PermissionReason::ToolCheck {
+                detail: format!("built-in agent '{}' declared tool", config.agent_name),
+            },
+            message: None,
+            updated_input: tool_result.updated_input,
+        };
+    }
+
+    let input_content = permission_rule_content(tc);
+    let mut request = y_guardrails::ToolPermissionRequest::new(
+        &tc.name,
+        definition.is_some_and(|value| value.is_dangerous),
+        &tool_result,
+    )
+    .with_input_content(input_content)
+    .with_exec_policy(container.exec_policy_manager.as_deref());
+    if let Some(mode) = session_mode {
+        request = request.with_mode(mode);
+    }
+    let result = container
+        .guardrail_manager
+        .evaluate_tool_permission(request);
+    resolve_permission_result_for_operation_mode(result, operation_mode)
+}
+
+pub(crate) fn resolve_permission_result_for_operation_mode(
+    result: PermissionResult,
+    operation_mode: Option<OperationMode>,
+) -> PermissionResult {
+    if operation_mode == Some(OperationMode::FullAccess)
+        && matches!(
+            result.behavior,
+            PermissionBehavior::Ask | PermissionBehavior::Passthrough
+        )
+    {
+        return PermissionResult {
+            behavior: PermissionBehavior::Allow,
+            reason: PermissionReason::Mode {
+                mode: "full_access".to_string(),
+            },
+            message: None,
+            updated_input: result.updated_input,
+        };
+    }
+    result
+}
+
+fn permission_rule_content(tc: &ToolCallRequest) -> Option<&str> {
+    tc.arguments
+        .get("command")
+        .or_else(|| tc.arguments.get("path"))
+        .or_else(|| tc.arguments.get("file_path"))
+        .or_else(|| tc.arguments.get("url"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn permission_updated_tool_call(
+    tc: &ToolCallRequest,
+    updated_input: Option<&serde_json::Value>,
+) -> Option<ToolCallRequest> {
+    updated_input.map(|arguments| ToolCallRequest {
+        id: tc.id.clone(),
+        name: tc.name.clone(),
+        arguments: arguments.clone(),
+    })
+}
+
+fn permission_reason_text(reason: &PermissionReason) -> String {
+    match reason {
+        PermissionReason::Rule { rule_display } => rule_display.clone(),
+        PermissionReason::ToolCheck { detail } => detail.clone(),
+        PermissionReason::Mode { mode } => format!("permission mode: {mode}"),
+        PermissionReason::DangerousAutoAsk { tool_name } => {
+            format!("{tool_name} is marked dangerous")
+        }
+        PermissionReason::SafetyCheck { reason } => reason.clone(),
+        PermissionReason::GlobalDefault => "global default policy".to_string(),
+    }
+}
+
+async fn await_permission_response(
+    pending_permissions: &crate::chat::PendingPermissions,
+    request_id: &str,
+    response_rx: tokio::sync::oneshot::Receiver<crate::chat::PermissionPromptResponse>,
+    wait_timeout: std::time::Duration,
+    cancel_token: Option<&CancellationToken>,
+) -> Option<crate::chat::PermissionPromptResponse> {
+    let wait = tokio::time::timeout(wait_timeout, response_rx);
+    let response = if let Some(token) = cancel_token {
+        tokio::select! {
+            result = wait => result.ok().and_then(Result::ok),
+            () = token.cancelled() => None,
+        }
+    } else {
+        wait.await.ok().and_then(Result::ok)
+    };
+    pending_permissions.lock().await.remove(request_id);
+    response
+}
 
 /// Execute a single tool call, record it, and emit progress events.
 ///
@@ -83,69 +236,25 @@ pub(crate) async fn execute_and_record_tool(
     // executing the tool. Reads `default_permission`, per-tool overrides,
     // and `dangerous_auto_ask` from the hot-reloadable GuardrailConfig.
     // ---------------------------------------------------------------
-    let guardrail_config = container.guardrail_manager.config();
-    let is_dangerous = {
-        let tool_name_key = ToolName::from_string(&tc.name);
-        container
-            .tool_registry
-            .get_definition(&tool_name_key)
-            .await
-            .is_some_and(|def| def.is_dangerous)
-    };
+    let decision = evaluate_registered_tool_permission(
+        container,
+        config,
+        tc,
+        &ctx.session_id,
+        ctx.working_directory.as_deref(),
+        &ctx.additional_read_dirs,
+    )
+    .await;
+    let effective_tool_call = permission_updated_tool_call(tc, decision.updated_input.as_ref());
+    let tc = effective_tool_call.as_ref().unwrap_or(tc);
+    let decision_reason = permission_reason_text(&decision.reason);
 
-    let permission_model = y_guardrails::PermissionModel::new(guardrail_config);
-    let session_mode = session_permission_mode(container, &ctx.session_id).await;
-    let operation_mode = session_operation_mode(container, &ctx.session_id).await;
-
-    // Extract shell command content for exec_policy evaluation.
-    let shell_command_content: Option<&str> = if tc.name == "ShellExec" {
-        tc.arguments.get("command").and_then(|v| v.as_str())
-    } else {
-        None
-    };
-
-    // Built-in agents auto-allow their declared tools without consulting
-    // global permission policy. This prevents background subagents from
-    // being blocked when the user sets a global "ask" mode.
-    let builtin_auto_allow = config.trust_tier == Some(TrustTier::BuiltIn)
-        && config.agent_allowed_tools.iter().any(|t| t == &tc.name);
-
-    let decision = if builtin_auto_allow {
-        tracing::debug!(
-            tool = %tc.name,
-            agent = %config.agent_name,
-            "auto-allowed: built-in agent declared tool"
-        );
-        y_guardrails::PermissionDecision {
-            action: y_guardrails::PermissionAction::Allow,
-            reason: format!("built-in agent '{}' declared tool", config.agent_name),
-        }
-    } else {
-        // Stage 0: Exec policy (Starlark DSL for shell commands).
-        // If a rule matches, its decision takes precedence.
-        let ep_decision = evaluate_exec_policy(
-            container.exec_policy_manager.as_ref(),
-            shell_command_content,
-        );
-
-        if let Some(ep_decision) = ep_decision {
-            resolve_permission_decision_for_session(ep_decision, session_mode, operation_mode)
-        } else {
-            // No exec policy match — fall through to generic permission model.
-            resolve_permission_decision_for_session(
-                permission_model.evaluate(&tc.name, is_dangerous),
-                session_mode,
-                operation_mode,
-            )
-        }
-    };
-
-    match decision.action {
-        y_guardrails::PermissionAction::Deny => {
+    match decision.behavior {
+        PermissionBehavior::Deny => {
             // Denied by policy -- do NOT execute the tool.
             tracing::warn!(
                 tool = %tc.name,
-                reason = %decision.reason,
+                reason = %decision_reason,
                 "tool execution denied by permission policy"
             );
             let error_content = system_tool_error_content(
@@ -153,7 +262,7 @@ pub(crate) async fn execute_and_record_tool(
                     "Tool '{}' is blocked by security policy ({}). \
                  Do NOT ask the user for permission or retry this tool. \
                  Use an alternative approach or skip this action.",
-                    tc.name, decision.reason
+                    tc.name, decision_reason
                 ),
                 false,
             );
@@ -172,7 +281,7 @@ pub(crate) async fn execute_and_record_tool(
 
             return (false, error_content, serde_json::Value::Null);
         }
-        y_guardrails::PermissionAction::Ask => {
+        PermissionBehavior::Ask | PermissionBehavior::Passthrough => {
             // Pause and ask the user for approval via HITL.
             let request_id = uuid::Uuid::new_v4().to_string();
 
@@ -184,7 +293,7 @@ pub(crate) async fn execute_and_record_tool(
             tracing::info!(
                 tool = %tc.name,
                 request_id = %request_id,
-                reason = %decision.reason,
+                reason = %decision_reason,
                 "permission escalation: asking user for approval"
             );
 
@@ -205,21 +314,24 @@ pub(crate) async fn execute_and_record_tool(
                     request_id: request_id.clone(),
                     tool_name: tc.name.clone(),
                     action_description: action_desc,
-                    reason: decision.reason.clone(),
+                    reason: decision_reason.clone(),
                     content_preview,
                 });
             }
 
-            // Block until the user responds, the channel is dropped,
-            // or the run is cancelled via the Stop button.
-            let user_response = if let Some(ref tok) = ctx.cancel_token {
-                tokio::select! {
-                    resp = resp_rx => resp.ok(),
-                    () = tok.cancelled() => None,
-                }
-            } else {
-                resp_rx.await.ok()
-            };
+            // Block until the user responds, the configured HITL timeout
+            // expires, the response channel drops, or the run is cancelled.
+            let hitl_timeout = std::time::Duration::from_millis(
+                container.guardrail_manager.config().hitl.timeout_ms,
+            );
+            let user_response = await_permission_response(
+                &ctx.pending_permissions,
+                &request_id,
+                resp_rx,
+                hitl_timeout,
+                ctx.cancel_token.as_ref(),
+            )
+            .await;
             match user_response {
                 Some(crate::chat::PermissionPromptResponse::Approve) => {
                     tracing::info!(
@@ -280,20 +392,33 @@ pub(crate) async fn execute_and_record_tool(
                 }
             }
         }
-        y_guardrails::PermissionAction::Allow => {
+        PermissionBehavior::Allow => {
             // Permission granted -- proceed to execute.
         }
-        y_guardrails::PermissionAction::Notify => {
+        PermissionBehavior::Notify => {
             // Execute, but log for auditing.
             tracing::info!(
                 tool = %tc.name,
-                reason = %decision.reason,
+                reason = %decision_reason,
                 "tool execution allowed with notification (notify mode)"
             );
         }
     }
 
-    track_file_history(container, tc, &ctx.session_id).await;
+    let mut pending_file_mutation = match prepare_file_mutation(
+        container,
+        tc,
+        &ctx.session_id,
+        ctx.working_directory.as_deref(),
+    )
+    .await
+    {
+        Ok(pending) => pending,
+        Err(error) => {
+            let elapsed_ms = u64::try_from(tool_start.elapsed().as_millis()).unwrap_or(0);
+            return record_tool_error(ctx, tc, config, progress, &error, elapsed_ms);
+        }
+    };
 
     // ---------------------------------------------------------------
     // Actual tool execution
@@ -318,7 +443,20 @@ pub(crate) async fn execute_and_record_tool(
     )
     .await
     {
-        Ok(output) => {
+        Ok(mut output) => {
+            if output.success {
+                if let Some(pending) = pending_file_mutation.take() {
+                    attach_file_mutation_metadata(
+                        container,
+                        tc,
+                        config,
+                        &ctx.session_id,
+                        pending,
+                        &mut output,
+                    )
+                    .await;
+                }
+            }
             let success = output.success;
             let content = normalize_tool_output_content(output.success, output.content);
             let full = serde_json::to_string(&content).unwrap_or_default();
@@ -348,6 +486,16 @@ pub(crate) async fn execute_and_record_tool(
 
     // Extract URL metadata from the full (unstripped) result before storing.
     let url_meta = extract_url_meta(&tc.name, &full_result);
+
+    record_tool_diagnostics(
+        container,
+        tc,
+        &full_result,
+        tool_metadata.as_ref(),
+        tool_elapsed_ms,
+        tool_success,
+    )
+    .await;
 
     record_tool_call(
         ctx,
@@ -388,6 +536,112 @@ pub(crate) async fn execute_and_record_tool(
     }
 
     (tool_success, result_content, final_meta)
+}
+
+fn record_tool_error(
+    ctx: &mut ToolExecContext,
+    tc: &ToolCallRequest,
+    config: &AgentExecutionConfig,
+    progress: Option<&TurnEventSender>,
+    error: &y_core::tool::ToolError,
+    elapsed_ms: u64,
+) -> (bool, String, serde_json::Value) {
+    let content = tool_error_content(error);
+    let error_content = serde_json::to_string(&content)
+        .unwrap_or_else(|_| serde_json::json!({ "error": error.to_string() }).to_string());
+    record_tool_call(
+        ctx,
+        tc,
+        false,
+        elapsed_ms,
+        error_content.clone(),
+        None,
+        None,
+    );
+    emit_tool_result(
+        progress,
+        tc,
+        config,
+        false,
+        elapsed_ms,
+        error_content.clone(),
+        None,
+        None,
+    );
+    (false, error_content, serde_json::Value::Null)
+}
+
+async fn attach_file_mutation_metadata(
+    container: &ServiceContainer,
+    tc: &ToolCallRequest,
+    config: &AgentExecutionConfig,
+    session_id: &SessionId,
+    pending: PendingFileMutation,
+    output: &mut y_core::tool::ToolOutput,
+) {
+    match pending
+        .finish(&tc.id, session_id.clone(), &config.agent_name)
+        .await
+    {
+        Ok(event) => {
+            let journal_result = container.file_mutation_journal.append(&event).await;
+            let persisted = journal_result.is_ok();
+            let journal_error = journal_result.err().map(|error| error.to_string());
+            if let Some(error) = journal_error.as_deref() {
+                tracing::error!(
+                    tool = %tc.name,
+                    tool_call_id = %tc.id,
+                    %error,
+                    "file mutation completed but audit journal persistence degraded"
+                );
+                output.warnings.push(format!(
+                    "File mutation succeeded, but its audit journal entry could not be persisted: {error}"
+                ));
+            }
+            ensure_metadata_object(&mut output.metadata);
+            output.metadata["file_mutation"] = serde_json::to_value(&event).unwrap_or_default();
+            output.metadata["file_mutation_journal"] = serde_json::json!({
+                "persisted": persisted,
+                "error": journal_error,
+            });
+        }
+        Err(error) => {
+            tracing::error!(
+                tool = %tc.name,
+                tool_call_id = %tc.id,
+                error = %error,
+                "file mutation completed but post-state capture failed"
+            );
+            output.warnings.push(format!(
+                "File mutation succeeded, but post-state capture failed: {error}"
+            ));
+            ensure_metadata_object(&mut output.metadata);
+            output.metadata["file_mutation_capture"] = serde_json::json!({
+                "status": "degraded",
+                "error": error.to_string(),
+            });
+        }
+    }
+}
+
+async fn record_tool_diagnostics(
+    container: &ServiceContainer,
+    tc: &ToolCallRequest,
+    full_result: &str,
+    metadata: Option<&serde_json::Value>,
+    duration_ms: u64,
+    success: bool,
+) {
+    let content = serde_json::from_str::<serde_json::Value>(full_result)
+        .unwrap_or_else(|_| serde_json::Value::String(full_result.to_string()));
+    let output = metadata.map_or_else(
+        || content.clone(),
+        |metadata| serde_json::json!({ "content": content, "metadata": metadata }),
+    );
+    container
+        .tool_gateway
+        .record(&tc.name, tc.arguments.clone(), output, duration_ms, success)
+        .await;
 }
 
 /// Build tool message metadata with a correlation ID for related tool calls.
@@ -461,6 +715,12 @@ fn normalize_tool_output_content(success: bool, content: serde_json::Value) -> s
     }
 }
 
+fn ensure_metadata_object(metadata: &mut serde_json::Value) {
+    if !metadata.is_object() {
+        *metadata = serde_json::json!({});
+    }
+}
+
 fn system_tool_error_content(message: impl AsRef<str>, retryable: bool) -> String {
     serde_json::json!({
         "error": message.as_ref(),
@@ -472,6 +732,8 @@ fn system_tool_error_content(message: impl AsRef<str>, retryable: bool) -> Strin
 fn tool_error_content(error: &y_core::tool::ToolError) -> serde_json::Value {
     serde_json::json!({
         "error": error.to_string(),
+        "code": error.code(),
+        "details": error.details(),
         "retryable": error.is_retryable(),
     })
 }
@@ -524,6 +786,7 @@ fn permission_prompt_content_preview(arguments: &serde_json::Value) -> Option<St
     arguments
         .get("command")
         .or_else(|| arguments.get("path"))
+        .or_else(|| arguments.get("file_path"))
         .or_else(|| arguments.get("url"))
         .and_then(|v| v.as_str())
         .map(String::from)
@@ -624,34 +887,6 @@ async fn intercept_ask_user(
     Some(answer_content)
 }
 
-/// Resolve permission decision applying session-level overrides.
-pub(crate) fn resolve_permission_decision_for_session(
-    decision: y_guardrails::PermissionDecision,
-    session_mode: Option<PermissionMode>,
-    operation_mode: Option<OperationMode>,
-) -> y_guardrails::PermissionDecision {
-    match session_mode {
-        _ if operation_mode == Some(OperationMode::FullAccess) => {
-            y_guardrails::PermissionDecision {
-                action: y_guardrails::PermissionAction::Allow,
-                reason: "session operation mode (full_access)".to_string(),
-            }
-        }
-        Some(PermissionMode::BypassPermissions)
-            if decision.action != y_guardrails::PermissionAction::Deny =>
-        {
-            y_guardrails::PermissionDecision {
-                action: y_guardrails::PermissionAction::Allow,
-                reason: format!(
-                    "session permission override ({})",
-                    PermissionMode::BypassPermissions
-                ),
-            }
-        }
-        _ => decision,
-    }
-}
-
 /// Tokenize a shell command for exec policy matching.
 ///
 /// Returns `None` for commands with shell metacharacters (pipes, redirects,
@@ -705,30 +940,6 @@ fn tokenize_shell_command_for_exec_policy(command: &str) -> Option<Vec<String>> 
     } else {
         Some(tokens)
     }
-}
-
-/// Evaluate a shell command against the exec policy if configured.
-fn evaluate_exec_policy(
-    manager: Option<&Arc<y_guardrails::ExecPolicyManager>>,
-    shell_command: Option<&str>,
-) -> Option<y_guardrails::PermissionDecision> {
-    let mgr = manager?;
-    let cmd = shell_command?;
-    let tokens = tokenize_shell_command_for_exec_policy(cmd)?;
-    let eval = mgr.evaluate(&tokens)?;
-    let action = match eval.decision {
-        y_guardrails::ExecDecision::Allow => y_guardrails::PermissionAction::Allow,
-        y_guardrails::ExecDecision::Ask => y_guardrails::PermissionAction::Ask,
-        y_guardrails::ExecDecision::Deny => y_guardrails::PermissionAction::Deny,
-    };
-    let justification = eval
-        .determining_justification()
-        .unwrap_or("exec policy rule")
-        .to_string();
-    Some(y_guardrails::PermissionDecision {
-        action,
-        reason: format!("exec_policy: {justification}"),
-    })
 }
 
 pub(crate) async fn session_permission_mode(
@@ -806,26 +1017,291 @@ async fn resolve_root_session_for_history(
     }
 }
 
-/// Capture file state before mutating tools so rewind can restore it.
-async fn track_file_history(
+#[derive(Debug)]
+struct CapturedFileState {
+    exists: bool,
+    hash: Option<String>,
+}
+
+impl CapturedFileState {
+    fn content_ref(&self) -> Option<String> {
+        self.hash.as_deref().map(content_ref)
+    }
+}
+
+#[derive(Debug)]
+struct PendingFileMutation {
+    capability: FileMutationCapability,
+    absolute_path: std::path::PathBuf,
+    destination_path: Option<std::path::PathBuf>,
+    before: CapturedFileState,
+    destination_before: Option<CapturedFileState>,
+}
+
+impl PendingFileMutation {
+    async fn capture(
+        capability: &FileMutationCapability,
+        arguments: &serde_json::Value,
+        working_dir: Option<&str>,
+    ) -> Result<Self, y_core::tool::ToolError> {
+        let absolute_path =
+            declared_mutation_path(arguments, &capability.path_argument, working_dir)?;
+        let destination_path = capability
+            .destination_path_argument
+            .as_deref()
+            .map(|argument| declared_mutation_path(arguments, argument, working_dir))
+            .transpose()?;
+        let before = capture_file_state(&absolute_path).await?;
+        let destination_before = if let Some(path) = destination_path.as_deref() {
+            Some(capture_file_state(path).await?)
+        } else {
+            None
+        };
+        Ok(Self {
+            capability: capability.clone(),
+            absolute_path,
+            destination_path,
+            before,
+            destination_before,
+        })
+    }
+
+    async fn finish(
+        self,
+        tool_call_id: &str,
+        session_id: SessionId,
+        agent_id: &str,
+    ) -> Result<FileMutationEvent, y_core::tool::ToolError> {
+        let source_after = capture_file_state(&self.absolute_path).await?;
+        let destination_after = if let Some(path) = self.destination_path.as_deref() {
+            Some(capture_file_state(path).await?)
+        } else {
+            None
+        };
+        let after = destination_after.as_ref().unwrap_or(&source_after);
+        let before = &self.before;
+        let operation = actual_mutation_operation(
+            self.capability.operation,
+            &self.before,
+            &source_after,
+            self.destination_path.is_some(),
+        );
+
+        Ok(FileMutationEvent {
+            tool_call_id: tool_call_id.to_string(),
+            session_id,
+            agent_id: agent_id.to_string(),
+            operation,
+            absolute_path: self.absolute_path.display().to_string(),
+            destination_path: self.destination_path.map(|path| path.display().to_string()),
+            before_hash: before.hash.clone(),
+            after_hash: after.hash.clone(),
+            previous_content_ref: before.content_ref(),
+            new_content_ref: after.content_ref(),
+            is_new_file: self
+                .destination_before
+                .as_ref()
+                .map_or(!before.exists, |state| !state.exists)
+                && after.exists,
+        })
+    }
+}
+
+fn actual_mutation_operation(
+    declared: FileMutationOperation,
+    before: &CapturedFileState,
+    after: &CapturedFileState,
+    has_destination: bool,
+) -> FileMutationOperation {
+    if declared == FileMutationOperation::Move || has_destination {
+        FileMutationOperation::Move
+    } else if !before.exists && after.exists {
+        FileMutationOperation::Create
+    } else if before.exists && !after.exists {
+        FileMutationOperation::Delete
+    } else {
+        FileMutationOperation::Modify
+    }
+}
+
+fn declared_mutation_path(
+    arguments: &serde_json::Value,
+    argument_name: &str,
+    working_dir: Option<&str>,
+) -> Result<std::path::PathBuf, y_core::tool::ToolError> {
+    let raw_path = arguments
+        .get(argument_name)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| y_core::tool::ToolError::ValidationError {
+            message: format!("missing declared file mutation path argument '{argument_name}'"),
+        })?;
+    let requested = std::path::Path::new(raw_path);
+    let joined = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else if let Some(root) = working_dir {
+        std::path::Path::new(root).join(requested)
+    } else {
+        std::env::current_dir()
+            .map_err(|error| y_core::tool::ToolError::Other {
+                message: format!("failed to resolve current directory: {error}"),
+            })?
+            .join(requested)
+    };
+    let absolute = canonicalize_with_missing_tail(&joined)?;
+
+    if let Some(root) = working_dir {
+        let root = canonicalize_with_missing_tail(std::path::Path::new(root))?;
+        if !absolute.starts_with(&root) && !is_system_temp_path(&absolute) {
+            return Err(y_core::tool::ToolError::PermissionDenied {
+                name: "file_mutation_capture".to_string(),
+                reason: format!(
+                    "declared mutation path '{}' is outside workspace '{}'",
+                    absolute.display(),
+                    root.display()
+                ),
+            });
+        }
+    }
+    Ok(absolute)
+}
+
+fn canonicalize_with_missing_tail(
+    path: &std::path::Path,
+) -> Result<std::path::PathBuf, y_core::tool::ToolError> {
+    let mut cursor = path.to_path_buf();
+    let mut missing = Vec::new();
+    while !cursor.exists() {
+        let name = cursor
+            .file_name()
+            .ok_or_else(|| y_core::tool::ToolError::Other {
+                message: format!("cannot resolve mutation path '{}'", path.display()),
+            })?
+            .to_os_string();
+        missing.push(name);
+        cursor = cursor
+            .parent()
+            .ok_or_else(|| y_core::tool::ToolError::Other {
+                message: format!("cannot resolve mutation path '{}'", path.display()),
+            })?
+            .to_path_buf();
+    }
+    let mut resolved = cursor
+        .canonicalize()
+        .map_err(|error| y_core::tool::ToolError::Other {
+            message: format!("cannot resolve mutation path '{}': {error}", path.display()),
+        })?;
+    for component in missing.into_iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+fn is_system_temp_path(path: &std::path::Path) -> bool {
+    let mut roots = vec![std::env::temp_dir()];
+    roots.extend(
+        ["/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"]
+            .into_iter()
+            .map(std::path::PathBuf::from),
+    );
+    roots.into_iter().any(|root| {
+        canonicalize_with_missing_tail(&root)
+            .is_ok_and(|canonical_root| path.starts_with(canonical_root))
+    })
+}
+
+async fn capture_file_state(
+    path: &std::path::Path,
+) -> Result<CapturedFileState, y_core::tool::ToolError> {
+    let metadata = match tokio::fs::metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(CapturedFileState {
+                exists: false,
+                hash: None,
+            });
+        }
+        Err(error) => {
+            return Err(y_core::tool::ToolError::Other {
+                message: format!(
+                    "failed to inspect mutation path '{}': {error}",
+                    path.display()
+                ),
+            });
+        }
+    };
+    if !metadata.is_file() {
+        return Err(y_core::tool::ToolError::ValidationError {
+            message: format!("declared mutation path '{}' is not a file", path.display()),
+        });
+    }
+    let mut file =
+        tokio::fs::File::open(path)
+            .await
+            .map_err(|error| y_core::tool::ToolError::Other {
+                message: format!("failed to open mutation path '{}': {error}", path.display()),
+            })?;
+    let mut hasher = ContentHasher::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let read =
+            file.read(&mut buffer)
+                .await
+                .map_err(|error| y_core::tool::ToolError::Other {
+                    message: format!("failed to hash mutation path '{}': {error}", path.display()),
+                })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(CapturedFileState {
+        exists: true,
+        hash: Some(hasher.finish()),
+    })
+}
+
+/// Capture file state before a capability-declared mutation and register it for rewind.
+async fn prepare_file_mutation(
     container: &ServiceContainer,
     tc: &ToolCallRequest,
     session_id: &SessionId,
-) {
-    let file_path = match tc.name.as_str() {
-        "FileWrite" | "FileCreate" | "FileDelete" | "FileMove" => tc
-            .arguments
-            .get("path")
-            .or_else(|| tc.arguments.get("source"))
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        _ => None,
+    working_dir: Option<&str>,
+) -> Result<Option<PendingFileMutation>, y_core::tool::ToolError> {
+    let definition = container
+        .tool_registry
+        .get_definition(&ToolName::from_string(&tc.name))
+        .await;
+    let Some(capability) = definition
+        .as_ref()
+        .and_then(|definition| definition.capabilities.filesystem.mutation.as_ref())
+    else {
+        return Ok(None);
     };
-    if let Some(ref path) = file_path {
-        let root_id = resolve_root_session_for_history(container, session_id).await;
-        crate::rewind::RewindService::track_edit(&container.file_history_managers, &root_id, path)
-            .await;
+    let pending = PendingFileMutation::capture(capability, &tc.arguments, working_dir).await?;
+    let root_id = resolve_root_session_for_history(container, session_id).await;
+    crate::rewind::RewindService::track_edit(
+        &container.file_history_managers,
+        &root_id,
+        &pending.absolute_path.display().to_string(),
+    )
+    .await
+    .map_err(|message| y_core::tool::ToolError::RuntimeError {
+        name: tc.name.clone(),
+        message,
+    })?;
+    if let Some(destination) = pending.destination_path.as_deref() {
+        crate::rewind::RewindService::track_edit(
+            &container.file_history_managers,
+            &root_id,
+            &destination.display().to_string(),
+        )
+        .await
+        .map_err(|message| y_core::tool::ToolError::RuntimeError {
+            name: tc.name.clone(),
+            message,
+        })?;
     }
+    Ok(Some(pending))
 }
 
 /// Execute a tool call -- delegates to the tool registry.
@@ -858,6 +1334,10 @@ async fn execute_tool_call(
                     name: workflow.name,
                     description: workflow.description,
                     tags: serde_json::from_str(&workflow.tags).unwrap_or_default(),
+                    parameter_names:
+                        crate::tool_search_orchestrator::schema_parameter_names_from_text(
+                            workflow.parameter_schema.as_deref(),
+                        ),
                 },
             )
             .collect::<Vec<_>>();
@@ -877,6 +1357,26 @@ async fn execute_tool_call(
         .await;
 
         return result;
+    }
+
+    #[cfg(feature = "lsp")]
+    if is_lsp_tool(&tc.name) {
+        let manager = container.lsp_manager.as_ref().ok_or_else(|| {
+            y_core::tool::ToolError::RuntimeError {
+                name: tc.name.clone(),
+                message: "LSP support is disabled by service configuration".to_string(),
+            }
+        })?;
+        return manager
+            .execute_with_cancellation(
+                &tc.name,
+                &tc.arguments,
+                session_id,
+                working_dir,
+                additional_read_dirs,
+                cancel,
+            )
+            .await;
     }
 
     if matches!(
@@ -948,6 +1448,7 @@ async fn execute_tool_call(
             session_id: session_id.clone(),
             progress: progress.cloned(),
             cancel: cancel.cloned(),
+            working_directory: working_dir.map(ToOwned::to_owned),
         };
         return super::delegation_ctx::DELEGATION_INTERACTION_CTX
             .scope(
@@ -1057,6 +1558,34 @@ async fn execute_tool_call(
         command_runner: Some(Arc::clone(&container.runtime_manager) as Arc<dyn CommandRunner>),
     };
 
+    let shell_action = if tc.name == "ShellExec" {
+        tc.arguments
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("run")
+    } else {
+        "run"
+    };
+    let shell_process_id = tc
+        .arguments
+        .get("process_id")
+        .or_else(|| tc.arguments.get("session_id"))
+        .and_then(serde_json::Value::as_str);
+    let observes_background_result = matches!(shell_action, "poll" | "write");
+    if observes_background_result {
+        if let Some(process_id) = shell_process_id {
+            container
+                .background_wake_service
+                .begin_observation(session_id, process_id);
+        }
+    } else if shell_action == "kill" {
+        if let Some(process_id) = shell_process_id {
+            container
+                .background_wake_service
+                .mark_killed(session_id, process_id);
+        }
+    }
+
     let result = if let Some(tok) = cancel {
         tokio::select! {
             result = tool.execute(input) => result,
@@ -1065,6 +1594,22 @@ async fn execute_tool_call(
     } else {
         tool.execute(input).await
     };
+    if observes_background_result {
+        if let Some(process_id) = shell_process_id {
+            let consumed = result.as_ref().is_ok_and(|output| {
+                matches!(
+                    output
+                        .content
+                        .get("status")
+                        .and_then(serde_json::Value::as_str),
+                    Some("completed" | "failed")
+                )
+            });
+            container
+                .background_wake_service
+                .finish_observation(session_id, process_id, consumed);
+        }
+    }
     if definition.is_some_and(|definition| definition.tool_type == y_core::tool::ToolType::Dynamic)
     {
         container
@@ -1073,6 +1618,19 @@ async fn execute_tool_call(
             .await;
     }
     result
+}
+
+#[cfg(feature = "lsp")]
+fn is_lsp_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "LspDefinition"
+            | "LspReferences"
+            | "LspHover"
+            | "LspDocumentSymbols"
+            | "LspWorkspaceSymbols"
+            | "LspDiagnostics"
+    )
 }
 
 /// Route a `Task(skill-creator)` call through the skill-creation service so the
@@ -1247,6 +1805,56 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    #[cfg(feature = "lsp")]
+    #[test]
+    fn lsp_tool_names_use_service_dispatch() {
+        for name in [
+            "LspDefinition",
+            "LspReferences",
+            "LspHover",
+            "LspDocumentSymbols",
+            "LspWorkspaceSymbols",
+            "LspDiagnostics",
+        ] {
+            assert!(is_lsp_tool(name));
+        }
+        assert!(!is_lsp_tool("Grep"));
+    }
+
+    struct PermissionDenyTool {
+        definition: y_core::tool::ToolDefinition,
+    }
+
+    #[async_trait::async_trait]
+    impl y_core::tool::Tool for PermissionDenyTool {
+        async fn execute(
+            &self,
+            _input: y_core::tool::ToolInput,
+        ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
+            Ok(y_core::tool::ToolOutput {
+                success: true,
+                content: serde_json::json!({"executed": true}),
+                warnings: Vec::new(),
+                metadata: serde_json::Value::Null,
+            })
+        }
+
+        fn definition(&self) -> &y_core::tool::ToolDefinition {
+            &self.definition
+        }
+
+        fn check_permissions(
+            &self,
+            _input: &y_core::tool::ToolInput,
+            _context: &y_core::permission_types::PermissionContext,
+        ) -> y_core::permission_types::PermissionResult {
+            y_core::permission_types::PermissionResult::deny(
+                "test tool policy",
+                "tool-specific denial",
+            )
+        }
+    }
+
     #[derive(Debug)]
     struct AgentRefinerDelegator;
 
@@ -1276,6 +1884,7 @@ mod tests {
                 output_tokens: 15,
                 model_used: "mock-refiner".to_string(),
                 duration_ms: 5,
+                workspace_isolation: None,
             })
         }
     }
@@ -1306,6 +1915,7 @@ mod tests {
                 output_tokens: 15,
                 model_used: "mock-refiner".to_string(),
                 duration_ms: 5,
+                workspace_isolation: None,
             })
         }
     }
@@ -1352,6 +1962,335 @@ mod tests {
             inherited_constraints: None,
             trace_metadata: serde_json::Value::Null,
         }
+    }
+
+    #[tokio::test]
+    async fn registered_tool_deny_is_not_bypassed_by_full_access() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut service_config = crate::ServiceConfig::default();
+        service_config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: temp.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let container = ServiceContainer::from_config(&service_config)
+            .await
+            .unwrap();
+        let session_id = SessionId::new();
+        container
+            .session_state
+            .session_operation_modes
+            .write()
+            .await
+            .insert(session_id.clone(), OperationMode::FullAccess);
+        let definition = y_core::tool::ToolDefinition {
+            name: ToolName::from_string("PermissionDeny"),
+            description: "Test tool with a tool-specific deny decision".to_string(),
+            help: None,
+            parameters: serde_json::json!({"type": "object"}),
+            result_schema: None,
+            category: y_core::tool::ToolCategory::Custom,
+            tool_type: y_core::tool::ToolType::BuiltIn,
+            capabilities: y_core::runtime::RuntimeCapability::default(),
+            is_dangerous: false,
+        };
+        container
+            .tool_registry
+            .register_tool(
+                Arc::new(PermissionDenyTool {
+                    definition: definition.clone(),
+                }),
+                definition,
+            )
+            .await
+            .unwrap();
+        let mut config = test_execution_config(session_id.clone(), &["PermissionDeny"]);
+        config.trust_tier = Some(TrustTier::BuiltIn);
+        config.agent_allowed_tools = vec!["PermissionDeny".to_string()];
+        let tool_call = ToolCallRequest {
+            id: "permission-deny".to_string(),
+            name: "PermissionDeny".to_string(),
+            arguments: serde_json::json!({}),
+        };
+
+        let result = evaluate_registered_tool_permission(
+            &container,
+            &config,
+            &tool_call,
+            &session_id,
+            None,
+            &[],
+        )
+        .await;
+
+        assert_eq!(
+            result.behavior,
+            y_core::permission_types::PermissionBehavior::Deny
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn permission_hitl_timeout_cleans_pending_entry() {
+        let pending_permissions =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let session_id = SessionId::new();
+        let request_id = "permission-timeout".to_string();
+        let (response_tx, response_rx) =
+            tokio::sync::oneshot::channel::<crate::chat::PermissionPromptResponse>();
+        pending_permissions.lock().await.insert(
+            request_id.clone(),
+            crate::chat_types::PendingPermission::new(session_id, response_tx),
+        );
+
+        let response = await_permission_response(
+            &pending_permissions,
+            &request_id,
+            response_rx,
+            std::time::Duration::from_millis(100),
+            None,
+        )
+        .await;
+
+        assert!(response.is_none());
+        assert!(pending_permissions.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn permission_hitl_cancellation_cleans_pending_entry() {
+        let pending_permissions =
+            std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let session_id = SessionId::new();
+        let request_id = "permission-cancelled".to_string();
+        let (response_tx, response_rx) =
+            tokio::sync::oneshot::channel::<crate::chat::PermissionPromptResponse>();
+        pending_permissions.lock().await.insert(
+            request_id.clone(),
+            crate::chat_types::PendingPermission::new(session_id, response_tx),
+        );
+        let cancel_token = CancellationToken::new();
+        cancel_token.cancel();
+
+        let response = await_permission_response(
+            &pending_permissions,
+            &request_id,
+            response_rx,
+            std::time::Duration::from_secs(60),
+            Some(&cancel_token),
+        )
+        .await;
+
+        assert!(response.is_none());
+        assert!(pending_permissions.lock().await.is_empty());
+    }
+
+    #[test]
+    fn permission_updated_input_rewrites_tool_arguments() {
+        let tool_call = ToolCallRequest {
+            id: "rewrite-input".to_string(),
+            name: "ShellExec".to_string(),
+            arguments: serde_json::json!({"command": "unsafe"}),
+        };
+
+        let rewritten =
+            permission_updated_tool_call(&tool_call, Some(&serde_json::json!({"command": "safe"})))
+                .expect("updated input should create an effective tool call");
+
+        assert_eq!(rewritten.id, tool_call.id);
+        assert_eq!(rewritten.name, tool_call.name);
+        assert_eq!(rewritten.arguments, serde_json::json!({"command": "safe"}));
+    }
+
+    #[tokio::test]
+    async fn declared_file_mutation_builds_hash_only_event_from_actual_state() {
+        let workspace = tempfile::tempdir().unwrap();
+        let file = workspace.path().join("tracked.txt");
+        std::fs::write(&file, "before").unwrap();
+        let capability = y_core::file_mutation::FileMutationCapability::new(
+            y_core::file_mutation::FileMutationOperation::CreateOrModify,
+            "path",
+        );
+        let pending = PendingFileMutation::capture(
+            &capability,
+            &serde_json::json!({"path": "tracked.txt"}),
+            Some(workspace.path().to_str().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        std::fs::write(&file, "after").unwrap();
+        let event = pending
+            .finish("call-1", SessionId("session-1".into()), "test-agent")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            event.operation,
+            y_core::file_mutation::FileMutationOperation::Modify
+        );
+        assert_eq!(
+            event.before_hash,
+            Some(y_core::file_mutation::content_hash(b"before"))
+        );
+        assert_eq!(
+            event.after_hash,
+            Some(y_core::file_mutation::content_hash(b"after"))
+        );
+        assert!(event
+            .previous_content_ref
+            .unwrap()
+            .starts_with("cas:sha256:"));
+        assert!(event.new_content_ref.unwrap().starts_with("cas:sha256:"));
+        assert!(!event.is_new_file);
+    }
+
+    #[tokio::test]
+    async fn declared_move_event_keeps_source_before_hash_and_destination_after_hash() {
+        let workspace = tempfile::tempdir().unwrap();
+        let source = workspace.path().join("source.txt");
+        let destination = workspace.path().join("destination.txt");
+        std::fs::write(&source, "moved content").unwrap();
+        let capability = y_core::file_mutation::FileMutationCapability::new(
+            y_core::file_mutation::FileMutationOperation::Move,
+            "source",
+        )
+        .with_destination_argument("destination");
+        let pending = PendingFileMutation::capture(
+            &capability,
+            &serde_json::json!({
+                "source": "source.txt",
+                "destination": "destination.txt"
+            }),
+            Some(workspace.path().to_str().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        std::fs::rename(&source, &destination).unwrap();
+        let event = pending
+            .finish("move-call", SessionId("session-1".into()), "test-agent")
+            .await
+            .unwrap();
+
+        let expected_hash = y_core::file_mutation::content_hash(b"moved content");
+        assert_eq!(event.before_hash, Some(expected_hash.clone()));
+        assert_eq!(event.after_hash, Some(expected_hash));
+        assert!(event.is_new_file);
+        assert_eq!(
+            event.operation,
+            y_core::file_mutation::FileMutationOperation::Move
+        );
+    }
+
+    #[tokio::test]
+    async fn file_edit_dispatch_persists_event_and_is_rewindable() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let file = workspace.join("tracked.txt");
+        std::fs::write(&file, "before").unwrap();
+        let mut service_config = crate::ServiceConfig::default();
+        service_config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: temp.path().join("state/transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let container = ServiceContainer::from_config(&service_config)
+            .await
+            .unwrap();
+        let session_id = SessionId::new();
+        crate::rewind::RewindService::ensure_manager(
+            &container.file_history_managers,
+            &session_id,
+            &container.data_dir,
+        )
+        .await
+        .unwrap();
+        crate::rewind::RewindService::make_snapshot(
+            &container.file_history_managers,
+            &session_id,
+            "msg-001",
+        )
+        .await;
+        container
+            .session_state
+            .session_operation_modes
+            .write()
+            .await
+            .insert(session_id.clone(), OperationMode::FullAccess);
+
+        let pending_interactions = container.session_state.pending_interactions.clone();
+        let pending_permissions = container.session_state.pending_permissions.clone();
+        let mut ctx = ToolExecContext {
+            iteration: 0,
+            last_gen_id: None,
+            tool_calls_executed: Vec::new(),
+            new_messages: Vec::new(),
+            cumulative_input_tokens: 0,
+            cumulative_output_tokens: 0,
+            cumulative_cost: 0.0,
+            last_input_tokens: 0,
+            last_cache_read_tokens: 0,
+            last_cache_write_tokens: 0,
+            trace_id: None,
+            session_id: session_id.clone(),
+            working_directory: Some(workspace.display().to_string()),
+            additional_read_dirs: Vec::new(),
+            working_history: Vec::new(),
+            accumulated_content: String::new(),
+            iteration_texts: Vec::new(),
+            iteration_reasonings: Vec::new(),
+            iteration_reasoning_durations_ms: Vec::new(),
+            iteration_tool_counts: Vec::new(),
+            dynamic_tool_defs: Vec::new(),
+            pending_interactions,
+            pending_permissions,
+            cancel_token: None,
+            injected_steers: Vec::new(),
+        };
+        let mut config = test_execution_config(session_id.clone(), &["FileEdit"]);
+        config.working_directory = Some(workspace.display().to_string());
+        let tool_call = ToolCallRequest {
+            id: "edit-call".into(),
+            name: "FileEdit".into(),
+            arguments: serde_json::json!({
+                "file_path": "tracked.txt",
+                "old_string": "before",
+                "new_string": "after",
+                "expected_content_hash": y_core::file_mutation::content_hash(b"before")
+            }),
+        };
+
+        let (success, _, metadata) =
+            execute_and_record_tool(&container, &config, &tool_call, None, &mut ctx).await;
+
+        assert!(success);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "after");
+        assert_eq!(
+            metadata["file_mutation"]["operation"],
+            serde_json::json!("modify")
+        );
+        let journal = tokio::fs::read_to_string(container.data_dir.join("file-mutations.jsonl"))
+            .await
+            .unwrap();
+        assert!(journal.contains("edit-call"));
+
+        let report = container
+            .file_history_managers
+            .write()
+            .await
+            .get_mut(&session_id)
+            .unwrap()
+            .rewind_to("msg-001")
+            .unwrap();
+        assert_eq!(
+            report.restored,
+            vec![file.canonicalize().unwrap().display().to_string()]
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "before");
     }
 
     #[tokio::test]
@@ -2151,6 +3090,7 @@ mod tests {
                 output_tokens: 2,
                 model_used: "mock".into(),
                 duration_ms: 1,
+                workspace_isolation: None,
             })
         }
     }

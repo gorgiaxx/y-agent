@@ -8,9 +8,10 @@
 //! 2. Ask rules (tool-level and content-specific)
 //! 3. Tool.check_permissions() (content-specific tool logic)
 //! 4. Mode-based overrides (bypass, plan, accept_edits, etc.)
-//! 5. Allow rules (tool-level and content-specific)
-//! 6. Passthrough-to-Ask conversion
-//! 7. Mode transforms (dont_ask: ask->deny)
+//! 5. Allow/notify rules (tool-level and content-specific)
+//! 6. Configured global default
+//! 7. Passthrough-to-Ask conversion
+//! 8. Mode transforms (dont_ask: ask->deny)
 //! ```
 //!
 //! Architecture reference: `docs/guides/ARCHITECTURE.md`
@@ -26,6 +27,52 @@ use crate::exec_policy::manager::ExecPolicyManager;
 // ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
+
+/// Input for one authoritative tool-permission evaluation.
+#[derive(Clone, Copy)]
+pub struct ToolPermissionRequest<'a> {
+    pub(crate) tool_name: &'a str,
+    pub(crate) input_content: Option<&'a str>,
+    pub(crate) is_dangerous: bool,
+    pub(crate) tool_result: &'a PermissionResult,
+    pub(crate) mode: Option<PermissionMode>,
+    pub(crate) exec_policy: Option<&'a ExecPolicyManager>,
+}
+
+impl<'a> ToolPermissionRequest<'a> {
+    /// Create a request with the required tool facts.
+    pub fn new(tool_name: &'a str, is_dangerous: bool, tool_result: &'a PermissionResult) -> Self {
+        Self {
+            tool_name,
+            input_content: None,
+            is_dangerous,
+            tool_result,
+            mode: None,
+            exec_policy: None,
+        }
+    }
+
+    /// Attach content used by content-specific and exec-policy rules.
+    #[must_use]
+    pub fn with_input_content(mut self, input_content: Option<&'a str>) -> Self {
+        self.input_content = input_content;
+        self
+    }
+
+    /// Override the configured permission mode for this session.
+    #[must_use]
+    pub fn with_mode(mut self, mode: PermissionMode) -> Self {
+        self.mode = Some(mode);
+        self
+    }
+
+    /// Attach the optional shell exec-policy manager.
+    #[must_use]
+    pub fn with_exec_policy(mut self, exec_policy: Option<&'a ExecPolicyManager>) -> Self {
+        self.exec_policy = exec_policy;
+        self
+    }
+}
 
 /// Evaluate the full permission pipeline for a tool invocation.
 ///
@@ -71,9 +118,12 @@ pub fn evaluate_pipeline_with_exec_policy(
     perm_ctx: &PermissionContext,
     exec_policy: Option<&ExecPolicyManager>,
 ) -> PermissionResult {
+    let should_ask_for_danger = is_dangerous && perm_ctx.dangerous_auto_ask;
+
     // Stage 0: Exec policy (Starlark DSL for shell commands).
-    // Only applies to ShellExec tool with content.
-    if let (Some(mgr), Some(content)) = (exec_policy, input_content) {
+    // A deny is immediately final. Allow/Ask remain authoritative only after
+    // generic deny rules and the tool's own safety check have had a chance to deny.
+    let exec_policy_result = if let (Some(mgr), Some(content)) = (exec_policy, input_content) {
         if tool_name == "ShellExec" {
             if let Some(cmd_tokens) = tokenize_shell_command(content) {
                 if let Some(eval) = mgr.evaluate(&cmd_tokens) {
@@ -86,17 +136,32 @@ pub fn evaluate_pipeline_with_exec_policy(
                         .determining_justification()
                         .unwrap_or("exec policy rule")
                         .to_string();
-                    return PermissionResult {
+                    Some(PermissionResult {
                         behavior,
                         reason: PermissionReason::Rule {
                             rule_display: format!("exec_policy: {justification}"),
                         },
                         message: Some(format!("exec policy: {justification}")),
-                        updated_input: None,
-                    };
+                        updated_input: tool_result.updated_input.clone(),
+                    })
+                } else {
+                    None
                 }
+            } else {
+                None
             }
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    if let Some(result) = exec_policy_result
+        .as_ref()
+        .filter(|result| result.behavior == PermissionBehavior::Deny)
+    {
+        return result.clone();
     }
 
     // Stage 1: Deny rules -- highest priority, cannot be overridden.
@@ -123,6 +188,32 @@ pub fn evaluate_pipeline_with_exec_policy(
         input_content,
         PermissionBehavior::Ask,
     );
+    let allow_rule = find_matching_rule(
+        &perm_ctx.rules,
+        tool_name,
+        input_content,
+        PermissionBehavior::Allow,
+    );
+    let notify_rule = find_matching_rule(
+        &perm_ctx.rules,
+        tool_name,
+        input_content,
+        PermissionBehavior::Notify,
+    );
+
+    if perm_ctx.default_behavior == PermissionBehavior::Deny
+        && exec_policy_result.is_none()
+        && ask_rule.is_none()
+        && allow_rule.is_none()
+        && notify_rule.is_none()
+    {
+        return PermissionResult {
+            behavior: PermissionBehavior::Deny,
+            reason: PermissionReason::GlobalDefault,
+            message: Some(format!("{tool_name} denied by global default")),
+            updated_input: None,
+        };
+    }
 
     // Stage 3: Tool's own check_permissions() result.
     // If the tool said Deny, respect it (bypass-immune).
@@ -130,16 +221,21 @@ pub fn evaluate_pipeline_with_exec_policy(
         return tool_result.clone();
     }
 
-    // If the tool said Ask, merge with ask rules.
-    let tool_wants_ask = tool_result.behavior == PermissionBehavior::Ask;
+    let effective_result = exec_policy_result.as_ref().unwrap_or(tool_result);
+
+    // If the effective policy said Ask, merge with ask rules.
+    let tool_wants_ask = effective_result.behavior == PermissionBehavior::Ask;
 
     // Stage 4: Mode-based overrides.
     match perm_ctx.mode {
         PermissionMode::BypassPermissions => {
             // Bypass overrides everything except Deny (already handled above).
             // If tool explicitly asked, we still bypass.
-            if tool_result.behavior == PermissionBehavior::Allow {
-                return tool_result.clone();
+            if matches!(
+                effective_result.behavior,
+                PermissionBehavior::Allow | PermissionBehavior::Notify
+            ) {
+                return effective_result.clone();
             }
             return PermissionResult {
                 behavior: PermissionBehavior::Allow,
@@ -147,14 +243,17 @@ pub fn evaluate_pipeline_with_exec_policy(
                     mode: "bypass_permissions".into(),
                 },
                 message: None,
-                updated_input: tool_result.updated_input.clone(),
+                updated_input: effective_result.updated_input.clone(),
             };
         }
         PermissionMode::Plan => {
             // Plan mode: only read-only tools are allowed without asking.
             // The tool_result already reflects is_read_only() via check_permissions default.
-            if tool_result.behavior == PermissionBehavior::Allow {
-                return tool_result.clone();
+            if matches!(
+                effective_result.behavior,
+                PermissionBehavior::Allow | PermissionBehavior::Notify
+            ) {
+                return effective_result.clone();
             }
             // Everything else must ask.
             return PermissionResult {
@@ -163,13 +262,16 @@ pub fn evaluate_pipeline_with_exec_policy(
                     mode: "plan".into(),
                 },
                 message: Some(format!("{tool_name} requires approval in plan mode")),
-                updated_input: tool_result.updated_input.clone(),
+                updated_input: effective_result.updated_input.clone(),
             };
         }
         PermissionMode::AcceptEdits => {
             // Accept edits: file tools auto-allowed, shell still asks.
-            if tool_result.behavior == PermissionBehavior::Allow {
-                return tool_result.clone();
+            if matches!(
+                effective_result.behavior,
+                PermissionBehavior::Allow | PermissionBehavior::Notify
+            ) {
+                return effective_result.clone();
             }
             // Check if this is a file edit tool (by name convention).
             let is_file_tool = matches!(tool_name, "FileWrite" | "FileEdit");
@@ -180,7 +282,7 @@ pub fn evaluate_pipeline_with_exec_policy(
                         mode: "accept_edits".into(),
                     },
                     message: None,
-                    updated_input: tool_result.updated_input.clone(),
+                    updated_input: effective_result.updated_input.clone(),
                 };
             }
             // Non-file tools with side effects still ask.
@@ -190,13 +292,22 @@ pub fn evaluate_pipeline_with_exec_policy(
         }
     }
 
-    // Stage 5: Allow rules -- check if an explicit allow rule matches.
-    if let Some(rule) = find_matching_rule(
-        &perm_ctx.rules,
-        tool_name,
-        input_content,
-        PermissionBehavior::Allow,
-    ) {
+    if let Some(result) = &exec_policy_result {
+        if result.behavior == PermissionBehavior::Ask && perm_ctx.mode == PermissionMode::DontAsk {
+            return PermissionResult {
+                behavior: PermissionBehavior::Deny,
+                reason: PermissionReason::Mode {
+                    mode: "dont_ask".into(),
+                },
+                message: Some(format!("{tool_name} denied -- dont_ask mode active")),
+                updated_input: None,
+            };
+        }
+        return result.clone();
+    }
+
+    // Stage 5: Allow/notify rules.
+    if let Some(rule) = allow_rule {
         // Allow rule found.
         // If an ask rule also exists, the more specific one wins.
         if let Some(ask) = &ask_rule {
@@ -223,13 +334,61 @@ pub fn evaluate_pipeline_with_exec_policy(
         }
     }
 
-    // If the tool already said Allow (read-only tools), respect it
-    // unless an Ask rule overrides.
-    if tool_result.behavior == PermissionBehavior::Allow && ask_rule.is_none() {
-        return tool_result.clone();
+    if let Some(rule) = notify_rule {
+        if ask_rule.is_none_or(|ask| rule_is_more_specific(rule, ask)) {
+            return PermissionResult {
+                behavior: PermissionBehavior::Notify,
+                reason: PermissionReason::Rule {
+                    rule_display: rule.to_string(),
+                },
+                message: None,
+                updated_input: tool_result.updated_input.clone(),
+            };
+        }
     }
 
-    // Stage 6: Passthrough-to-Ask conversion.
+    // If the tool already said Allow (read-only tools), respect it
+    // unless an Ask rule overrides.
+    if matches!(
+        effective_result.behavior,
+        PermissionBehavior::Allow | PermissionBehavior::Notify
+    ) && ask_rule.is_none()
+    {
+        return effective_result.clone();
+    }
+
+    // Stage 6: Configured global default.
+    if !tool_wants_ask && ask_rule.is_none() && !should_ask_for_danger {
+        match perm_ctx.default_behavior {
+            PermissionBehavior::Allow => {
+                return PermissionResult {
+                    behavior: PermissionBehavior::Allow,
+                    reason: PermissionReason::GlobalDefault,
+                    message: None,
+                    updated_input: tool_result.updated_input.clone(),
+                };
+            }
+            PermissionBehavior::Deny => {
+                return PermissionResult {
+                    behavior: PermissionBehavior::Deny,
+                    reason: PermissionReason::GlobalDefault,
+                    message: Some(format!("{tool_name} denied by global default")),
+                    updated_input: None,
+                };
+            }
+            PermissionBehavior::Notify => {
+                return PermissionResult {
+                    behavior: PermissionBehavior::Notify,
+                    reason: PermissionReason::GlobalDefault,
+                    message: None,
+                    updated_input: tool_result.updated_input.clone(),
+                };
+            }
+            PermissionBehavior::Ask | PermissionBehavior::Passthrough => {}
+        }
+    }
+
+    // Stage 7: Passthrough-to-Ask conversion.
     // If we get here, the tool said Passthrough or Ask (or Allow overridden by ask rule).
     let ask_reason = if tool_wants_ask {
         tool_result
@@ -238,13 +397,13 @@ pub fn evaluate_pipeline_with_exec_policy(
             .unwrap_or_else(|| format!("{tool_name} requires approval"))
     } else if let Some(ask) = &ask_rule {
         format!("ask rule: {ask}")
-    } else if is_dangerous {
+    } else if should_ask_for_danger {
         format!("{tool_name} is dangerous -- requires approval")
     } else {
         format!("{tool_name} requires approval")
     };
 
-    // Stage 7: Mode transforms.
+    // Stage 8: Mode transforms.
     if perm_ctx.mode == PermissionMode::DontAsk {
         // Auto-deny all asks in headless/background mode.
         PermissionResult {
@@ -261,7 +420,7 @@ pub fn evaluate_pipeline_with_exec_policy(
             PermissionReason::Rule {
                 rule_display: ask.to_string(),
             }
-        } else if is_dangerous {
+        } else if should_ask_for_danger {
             PermissionReason::DangerousAutoAsk {
                 tool_name: tool_name.to_string(),
             }
@@ -411,6 +570,7 @@ mod tests {
             mode,
             rules,
             additional_directories: vec![],
+            ..PermissionContext::default()
         }
     }
 
@@ -652,6 +812,28 @@ mod tests {
     }
 
     #[test]
+    fn exec_policy_allow_does_not_override_tool_deny() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["cargo", "test"], decision = "allow")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::deny("tool safety check", "blocked by tool");
+        let context = ctx(PermissionMode::BypassPermissions, vec![]);
+
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("cargo test"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+
+        assert_eq!(result.behavior, PermissionBehavior::Deny);
+    }
+
+    #[test]
     fn exec_policy_deny_blocks_command() {
         let mgr = ExecPolicyManager::from_str(
             "test",
@@ -689,6 +871,50 @@ mod tests {
             Some(&mgr),
         );
         assert_eq!(result.behavior, PermissionBehavior::Ask);
+    }
+
+    #[test]
+    fn exec_policy_ask_obeys_bypass_mode() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["git", "push"], decision = "ask")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::BypassPermissions, vec![]);
+
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("git push origin main"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+
+        assert_eq!(result.behavior, PermissionBehavior::Allow);
+    }
+
+    #[test]
+    fn exec_policy_ask_obeys_dont_ask_mode() {
+        let mgr = ExecPolicyManager::from_str(
+            "test",
+            r#"prefix_rule(pattern = ["git", "push"], decision = "ask")"#,
+        )
+        .unwrap();
+        let tool_result = PermissionResult::passthrough();
+        let context = ctx(PermissionMode::DontAsk, vec![]);
+
+        let result = evaluate_pipeline_with_exec_policy(
+            "ShellExec",
+            Some("git push origin main"),
+            true,
+            &tool_result,
+            &context,
+            Some(&mgr),
+        );
+
+        assert_eq!(result.behavior, PermissionBehavior::Deny);
     }
 
     #[test]

@@ -16,12 +16,14 @@ use serde::{Deserialize, Serialize};
 /// The behavior a permission check can return.
 ///
 /// Ordered from most permissive to most restrictive:
-/// `Allow` > `Passthrough` > `Ask` > `Deny`
+/// `Allow` > `Notify` > `Passthrough` > `Ask` > `Deny`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionBehavior {
     /// Execute immediately, no restrictions.
     Allow,
+    /// Execute and emit an audit notification.
+    Notify,
     /// Tool has no opinion -- defer to the general permission system.
     /// Converted to `Ask` at the end of the pipeline if no rule allows it.
     Passthrough,
@@ -338,6 +340,18 @@ impl PermissionResult {
         }
     }
 
+    /// Create a Notify result from a policy check.
+    pub fn notify(detail: impl Into<String>) -> Self {
+        Self {
+            behavior: PermissionBehavior::Notify,
+            reason: PermissionReason::ToolCheck {
+                detail: detail.into(),
+            },
+            message: None,
+            updated_input: None,
+        }
+    }
+
     /// Create a `Deny` result from a tool check.
     pub fn deny(detail: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
@@ -372,7 +386,7 @@ impl PermissionResult {
 /// Assembled by the permission pipeline from all rule sources and the
 /// current mode. Individual tools receive this to make content-aware
 /// permission decisions.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PermissionContext {
     /// Current permission mode.
     pub mode: PermissionMode,
@@ -380,6 +394,22 @@ pub struct PermissionContext {
     pub rules: Vec<PermissionRule>,
     /// Additional allowed working directories.
     pub additional_directories: Vec<String>,
+    /// Configured fallback when no rule or tool-specific decision resolves the request.
+    pub default_behavior: PermissionBehavior,
+    /// Whether dangerous tools without a more specific rule escalate to Ask.
+    pub dangerous_auto_ask: bool,
+}
+
+impl Default for PermissionContext {
+    fn default() -> Self {
+        Self {
+            mode: PermissionMode::Default,
+            rules: Vec::new(),
+            additional_directories: Vec::new(),
+            default_behavior: PermissionBehavior::Passthrough,
+            dangerous_auto_ask: true,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +540,12 @@ mod tests {
     fn test_result_allow() {
         let r = PermissionResult::allow("read-only tool");
         assert_eq!(r.behavior, PermissionBehavior::Allow);
+    }
+
+    #[test]
+    fn test_result_notify() {
+        let r = PermissionResult::notify("audit-only tool");
+        assert_eq!(r.behavior, PermissionBehavior::Notify);
     }
 
     #[test]

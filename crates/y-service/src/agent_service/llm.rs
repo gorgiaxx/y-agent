@@ -125,6 +125,44 @@ pub(crate) fn build_route_requests(config: &AgentExecutionConfig) -> Vec<RouteRe
     routes
 }
 
+/// Resolve a conservative context window across every provider a route may
+/// select. Explicit provider IDs are exact; tag-routed requests use the
+/// smallest matching window so failover cannot invalidate preflight.
+pub(crate) fn resolve_preflight_context_window(
+    metadata: &[y_core::provider::ProviderMetadata],
+    routes: &[RouteRequest],
+) -> usize {
+    routes
+        .iter()
+        .filter_map(|route| {
+            if let Some(provider_id) = route.preferred_provider_id.as_ref() {
+                return metadata
+                    .iter()
+                    .find(|candidate| candidate.id == *provider_id)
+                    .filter(|candidate| {
+                        route
+                            .required_tags
+                            .iter()
+                            .all(|tag| candidate.tags.contains(tag))
+                    })
+                    .map(|candidate| candidate.context_window);
+            }
+            metadata
+                .iter()
+                .filter(|candidate| {
+                    route
+                        .required_tags
+                        .iter()
+                        .all(|tag| candidate.tags.contains(tag))
+                })
+                .map(|candidate| candidate.context_window)
+                .min()
+        })
+        .filter(|window| *window > 0)
+        .min()
+        .unwrap_or(0)
+}
+
 pub(crate) fn build_iteration_data(
     response: &y_core::provider::ChatResponse,
     fallback: &str,
@@ -596,14 +634,53 @@ mod tests {
     use y_core::types::ToolCallRequest;
 
     use super::{
-        build_route_requests, build_streaming_raw_response, call_llm, PartialStreamingContent,
-        TurnEvent,
+        build_route_requests, build_streaming_raw_response, call_llm,
+        resolve_preflight_context_window, PartialStreamingContent, TurnEvent,
     };
     use crate::agent_service::AgentExecutionConfig;
 
     struct MockStreamingPool {
         provider_id: ProviderId,
         metadata: ProviderMetadata,
+    }
+
+    #[test]
+    fn preflight_context_window_uses_smallest_tag_routed_candidate() {
+        let metadata = [
+            ProviderMetadata {
+                id: ProviderId::from_string("large"),
+                provider_type: ProviderType::OpenAi,
+                model: "large-model".to_string(),
+                tags: vec!["general".to_string()],
+                capabilities: vec![ProviderCapability::Text],
+                max_concurrency: 1,
+                context_window: 128_000,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                tool_calling_mode: ToolCallingMode::Native,
+                tool_dialect: y_core::provider::ToolDialect::default(),
+            },
+            ProviderMetadata {
+                id: ProviderId::from_string("small"),
+                provider_type: ProviderType::OpenAi,
+                model: "small-model".to_string(),
+                tags: vec!["general".to_string()],
+                capabilities: vec![ProviderCapability::Text],
+                max_concurrency: 1,
+                context_window: 32_000,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                tool_calling_mode: ToolCallingMode::Native,
+                tool_dialect: y_core::provider::ToolDialect::default(),
+            },
+        ];
+        let routes = [RouteRequest {
+            preferred_model: Some("large-model".to_string()),
+            required_tags: vec!["general".to_string()],
+            ..RouteRequest::default()
+        }];
+
+        assert_eq!(resolve_preflight_context_window(&metadata, &routes), 32_000);
     }
 
     impl MockStreamingPool {

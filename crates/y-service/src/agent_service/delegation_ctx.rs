@@ -30,6 +30,8 @@ pub(crate) struct DelegationInteractionCtx {
     pub progress: Option<TurnEventSender>,
     /// Cancellation token of the parent turn's execution subtree.
     pub cancel: Option<CancellationToken>,
+    /// Parent turn workspace used as the base for delegated isolation.
+    pub working_directory: Option<String>,
 }
 
 tokio::task_local! {
@@ -46,6 +48,7 @@ mod tests {
             session_id: SessionId("sess-1".into()),
             progress: None,
             cancel: Some(CancellationToken::new()),
+            working_directory: Some("/workspace".into()),
         };
 
         DELEGATION_INTERACTION_CTX

@@ -569,9 +569,8 @@ pub(crate) fn strip_think_tags(content: &str) -> String {
 mod tests {
     use super::*;
     use y_context::{ContextCategory, ContextItem};
-    use y_core::permission_types::PermissionMode;
+    use y_core::permission_types::{PermissionBehavior, PermissionReason, PermissionResult};
     use y_core::types::Role;
-    use y_guardrails::{PermissionAction, PermissionDecision};
 
     #[test]
     fn test_build_chat_messages_prepends_system() {
@@ -794,54 +793,35 @@ mod tests {
     }
 
     #[test]
-    fn test_session_allow_all_converts_ask_to_allow() {
-        let decision = PermissionDecision {
-            action: PermissionAction::Ask,
-            reason: "global default policy".to_string(),
-        };
+    fn test_full_access_operation_mode_converts_ask_to_allow() {
+        let result = PermissionResult::ask("global policy", "approval required");
 
-        let resolved = tool_dispatch::resolve_permission_decision_for_session(
-            decision,
-            Some(PermissionMode::BypassPermissions),
-            None,
-        );
-
-        assert_eq!(resolved.action, PermissionAction::Allow);
-        assert!(resolved.reason.contains("session"));
-    }
-
-    #[test]
-    fn test_session_allow_all_does_not_override_deny() {
-        let decision = PermissionDecision {
-            action: PermissionAction::Deny,
-            reason: "per-tool override for `ShellExec`".to_string(),
-        };
-
-        let resolved = tool_dispatch::resolve_permission_decision_for_session(
-            decision.clone(),
-            Some(PermissionMode::BypassPermissions),
-            None,
-        );
-
-        assert_eq!(resolved.action, PermissionAction::Deny);
-        assert_eq!(resolved.reason, decision.reason);
-    }
-
-    #[test]
-    fn test_full_access_operation_mode_overrides_deny() {
-        let decision = PermissionDecision {
-            action: PermissionAction::Deny,
-            reason: "per-tool override for `ShellExec`".to_string(),
-        };
-
-        let resolved = tool_dispatch::resolve_permission_decision_for_session(
-            decision,
-            None,
+        let resolved = tool_dispatch::resolve_permission_result_for_operation_mode(
+            result,
             Some(crate::chat_types::OperationMode::FullAccess),
         );
 
-        assert_eq!(resolved.action, PermissionAction::Allow);
-        assert!(resolved.reason.contains("full_access"));
+        assert_eq!(resolved.behavior, PermissionBehavior::Allow);
+        assert!(matches!(
+            resolved.reason,
+            PermissionReason::Mode { ref mode } if mode == "full_access"
+        ));
+    }
+
+    #[test]
+    fn test_full_access_operation_mode_does_not_override_deny() {
+        let result = PermissionResult::deny("tool policy", "blocked");
+
+        let resolved = tool_dispatch::resolve_permission_result_for_operation_mode(
+            result,
+            Some(crate::chat_types::OperationMode::FullAccess),
+        );
+
+        assert_eq!(resolved.behavior, PermissionBehavior::Deny);
+        assert!(matches!(
+            resolved.reason,
+            PermissionReason::ToolCheck { ref detail } if detail == "tool policy"
+        ));
     }
 
     // -----------------------------------------------------------------------

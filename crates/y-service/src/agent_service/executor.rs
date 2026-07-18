@@ -17,6 +17,7 @@ use y_diagnostics::TraceStore;
 use y_tools::{parse_tool_calls, strip_tool_call_blocks};
 
 use crate::container::ServiceContainer;
+use crate::context_optimization::{ContextOptimizationService, WorkingHistoryOptimization};
 
 use super::{
     llm, pruning, result, tool_handling, AgentExecutionConfig, AgentExecutionError,
@@ -336,6 +337,136 @@ fn materialize_partial_streaming(
     }
 }
 
+struct LlmCallAttempt {
+    result: Result<(y_core::provider::ChatResponse, Option<u64>), y_core::provider::ProviderError>,
+    fallback: String,
+    partial_streaming: llm::PartialStreamingContent,
+    started_at: Instant,
+}
+
+fn should_attempt_context_overflow_recovery(
+    error: &y_core::provider::ProviderError,
+    partial_streaming: &llm::PartialStreamingContent,
+    cancel: Option<&CancellationToken>,
+) -> bool {
+    y_provider::classify_provider_error(error) == y_provider::StandardError::ContextWindowExceeded
+        && partial_streaming.content.is_empty()
+        && partial_streaming.reasoning.is_empty()
+        && !cancel.is_some_and(CancellationToken::is_cancelled)
+}
+
+async fn call_llm_with_context_recovery(
+    container: &ServiceContainer,
+    config: &AgentExecutionConfig,
+    ctx: &mut ToolExecContext,
+    request_prefix_len: usize,
+    pool: &dyn ProviderPool,
+    routes: &[y_core::provider::RouteRequest],
+    context_window: usize,
+    progress: Option<&TurnEventSender>,
+    cancel: Option<&CancellationToken>,
+) -> LlmCallAttempt {
+    let initial_request = llm::build_chat_request(config, ctx);
+    if let Err(error) = ContextOptimizationService::optimize_working_history_before_sampling(
+        container,
+        &ctx.session_id,
+        &mut ctx.working_history,
+        request_prefix_len,
+        &initial_request,
+        context_window,
+        false,
+    )
+    .await
+    {
+        tracing::warn!(
+            agent = %config.agent_name,
+            %error,
+            "sampling preflight compaction failed; sending unchanged history"
+        );
+    }
+
+    let mut request = llm::build_chat_request(config, ctx);
+    let mut fallback = serde_json::to_string(&request.messages).unwrap_or_default();
+    let mut partial_streaming = llm::PartialStreamingContent::default();
+    let mut started_at = Instant::now();
+    let mut result = llm::call_llm(
+        pool,
+        &request,
+        routes,
+        progress,
+        cancel,
+        &config.agent_name,
+        &mut partial_streaming,
+    )
+    .await;
+
+    let overflow_without_output = result.as_ref().is_err_and(|error| {
+        should_attempt_context_overflow_recovery(error, &partial_streaming, cancel)
+    });
+
+    if overflow_without_output {
+        match ContextOptimizationService::optimize_working_history_before_sampling(
+            container,
+            &ctx.session_id,
+            &mut ctx.working_history,
+            request_prefix_len,
+            &request,
+            context_window,
+            true,
+        )
+        .await
+        {
+            Ok(WorkingHistoryOptimization::Applied) => {
+                tracing::info!(
+                    agent = %config.agent_name,
+                    "context overflow recovered by emergency in-memory compaction; retrying once"
+                );
+                request = llm::build_chat_request(config, ctx);
+                fallback = serde_json::to_string(&request.messages).unwrap_or_default();
+                partial_streaming = llm::PartialStreamingContent::default();
+                started_at = Instant::now();
+                result = llm::call_llm(
+                    pool,
+                    &request,
+                    routes,
+                    progress,
+                    cancel,
+                    &config.agent_name,
+                    &mut partial_streaming,
+                )
+                .await;
+            }
+            Ok(WorkingHistoryOptimization::NotNeeded) => {
+                tracing::warn!(
+                    agent = %config.agent_name,
+                    "context overflow recovery skipped because no safe compaction was available"
+                );
+            }
+            #[cfg(feature = "compaction_prefire")]
+            Ok(WorkingHistoryOptimization::Suppressed) => {
+                tracing::warn!(
+                    agent = %config.agent_name,
+                    "context overflow recovery suppressed for unchanged compaction input"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    agent = %config.agent_name,
+                    %error,
+                    "context overflow recovery failed"
+                );
+            }
+        }
+    }
+
+    LlmCallAttempt {
+        result,
+        fallback,
+        partial_streaming,
+        started_at,
+    }
+}
+
 /// Inner execution loop, optionally running inside a `DIAGNOSTICS_CTX` scope.
 pub(crate) async fn execute_inner(
     container: &ServiceContainer,
@@ -352,6 +483,7 @@ pub(crate) async fn execute_inner(
     } else {
         config.messages.clone()
     };
+    let request_prefix_len = working_history.len().saturating_sub(config.messages.len());
 
     let session_id = config
         .session_id
@@ -486,12 +618,10 @@ pub(crate) async fn execute_inner(
             return Err(AgentExecutionError::ToolLoopLimitExceeded { max_iterations });
         }
 
-        let request = llm::build_chat_request(config, &ctx);
         let routes = llm::build_route_requests(config);
-        let fallback = serde_json::to_string(&request.messages).unwrap_or_default();
-
-        let llm_start = std::time::Instant::now();
         let raw_pool = container.provider_pool().await;
+        let preflight_context_window =
+            llm::resolve_preflight_context_window(&raw_pool.list_metadata(), &routes);
 
         // Wrap the pool with the diagnostics gateway so non-streaming
         // LLM calls are automatically recorded. Streaming calls pass
@@ -502,17 +632,24 @@ pub(crate) async fn execute_inner(
             container.diagnostics_broadcast.clone(),
         );
 
-        let mut partial_streaming = llm::PartialStreamingContent::default();
-        let llm_result = llm::call_llm(
+        let attempt = call_llm_with_context_recovery(
+            container,
+            config,
+            &mut ctx,
+            request_prefix_len,
             &diag_pool,
-            &request,
             &routes,
+            preflight_context_window,
             progress.as_ref(),
             cancel.as_ref(),
-            &config.agent_name,
-            &mut partial_streaming,
         )
         .await;
+        let LlmCallAttempt {
+            result: llm_result,
+            fallback,
+            mut partial_streaming,
+            started_at: llm_start,
+        } = attempt;
 
         match llm_result {
             Ok((response, iter_reasoning_duration_ms)) => {
@@ -657,7 +794,7 @@ pub(crate) async fn execute_inner(
                     elapsed_ms,
                     &model_name,
                     &fallback,
-                    0, // context_window unknown -- LLM call failed
+                    preflight_context_window,
                     progress.as_ref(),
                     container,
                     owns_trace,
@@ -916,21 +1053,113 @@ async fn inject_next_run_input(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    use async_trait::async_trait;
     use tempfile::TempDir;
+    use y_context::{CompactionConfig, CompactionEngine, CompactionLlm, CompactionLlmError};
+    use y_core::provider::{
+        ChatRequest, ChatResponse, ChatStreamResponse, FinishReason, ProviderError, ProviderPool,
+        ProviderStatus, RouteRequest,
+    };
+    use y_core::types::ProviderId;
 
     use super::*;
     use crate::agent_service::AgentExecutionConfig;
     use crate::config::ServiceConfig;
 
+    struct SuccessfulCompactionLlm;
+
+    #[async_trait]
+    impl CompactionLlm for SuccessfulCompactionLlm {
+        async fn summarize(&self, _prompt: &str) -> Result<String, CompactionLlmError> {
+            Ok("emergency summary".to_string())
+        }
+    }
+
+    struct OverflowThenSuccessPool {
+        calls: AtomicUsize,
+        request_message_counts: StdMutex<Vec<usize>>,
+        succeed_on_retry: bool,
+    }
+
+    impl OverflowThenSuccessPool {
+        fn new(succeed_on_retry: bool) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                request_message_counts: StdMutex::new(Vec::new()),
+                succeed_on_retry,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProviderPool for OverflowThenSuccessPool {
+        async fn chat_completion(
+            &self,
+            request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            self.request_message_counts
+                .lock()
+                .expect("request counts lock")
+                .push(request.messages.len());
+            let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call_index == 0 || !self.succeed_on_retry {
+                return Err(ProviderError::Other {
+                    message: "maximum context length exceeded".to_string(),
+                });
+            }
+            Ok(ChatResponse {
+                id: "response-1".to_string(),
+                model: "test-model".to_string(),
+                content: Some("recovered".to_string()),
+                reasoning_content: None,
+                tool_calls: Vec::new(),
+                usage: y_core::types::TokenUsage::default(),
+                finish_reason: FinishReason::Stop,
+                raw_request: None,
+                raw_response: None,
+                provider_id: None,
+                generated_images: Vec::new(),
+            })
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            Err(ProviderError::Other {
+                message: "streaming is not used by this test".to_string(),
+            })
+        }
+
+        fn report_error(&self, _provider_id: &ProviderId, _error: &ProviderError) {}
+
+        async fn provider_statuses(&self) -> Vec<ProviderStatus> {
+            Vec::new()
+        }
+
+        async fn freeze(&self, _provider_id: &ProviderId, _reason: String) {}
+
+        async fn thaw(&self, _provider_id: &ProviderId) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
     async fn make_test_container() -> (ServiceContainer, TempDir) {
         let tmpdir = tempfile::TempDir::new().expect("tempdir");
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: tmpdir.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: tmpdir.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..ServiceConfig::default()
         };
         let container = ServiceContainer::from_config(&config)
             .await
@@ -970,6 +1199,155 @@ mod tests {
             cancel_token: None,
             injected_steers: Vec::new(),
         }
+    }
+
+    fn message(role: Role, content: &str) -> y_core::types::Message {
+        y_core::types::Message {
+            message_id: y_core::types::generate_message_id(),
+            role,
+            content: content.to_string(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+            timestamp: y_core::types::now(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    fn test_execution_config(messages: Vec<y_core::types::Message>) -> AgentExecutionConfig {
+        AgentExecutionConfig {
+            agent_name: "test-agent".to_string(),
+            system_prompt: String::new(),
+            max_iterations: 1,
+            max_tool_calls: usize::MAX,
+            tool_definitions: Vec::new(),
+            tool_calling_mode: ToolCallingMode::Native,
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            messages,
+            provider_id: None,
+            preferred_models: Vec::new(),
+            provider_tags: Vec::new(),
+            fallback_provider_tags: Vec::new(),
+            request_mode: y_core::provider::RequestMode::TextChat,
+            working_directory: None,
+            additional_read_dirs: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            thinking: None,
+            session_id: Some(SessionId("sampling-recovery".to_string())),
+            session_uuid: Uuid::new_v4(),
+            knowledge_collections: Vec::new(),
+            use_context_pipeline: false,
+            user_query: "recover from overflow".to_string(),
+            external_trace_id: None,
+            trust_tier: None,
+            agent_allowed_tools: Vec::new(),
+            prune_tool_history: false,
+            response_format: None,
+            image_generation_options: None,
+            inherited_constraints: None,
+            trace_metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn context_overflow_compacts_and_retries_exactly_once() {
+        let (mut container, _tmpdir) = make_test_container().await;
+        container.compaction_engine = CompactionEngine::with_llm(
+            CompactionConfig::default(),
+            Box::new(SuccessfulCompactionLlm),
+        );
+        let history = vec![
+            message(Role::User, "old request one"),
+            message(Role::Assistant, "old response one"),
+            message(Role::User, "old request two"),
+            message(Role::Assistant, "old response two"),
+            message(Role::User, "recent request"),
+            message(Role::Assistant, "recent response"),
+        ];
+        let config = test_execution_config(history.clone());
+        let mut ctx = make_test_ctx(SessionId("sampling-recovery".to_string()), Vec::new());
+        ctx.working_history = history;
+        let pool = Arc::new(OverflowThenSuccessPool::new(true));
+        let routes = llm::build_route_requests(&config);
+
+        let attempt = call_llm_with_context_recovery(
+            &container,
+            &config,
+            &mut ctx,
+            0,
+            pool.as_ref(),
+            &routes,
+            128_000,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(attempt.result.is_ok());
+        assert_eq!(pool.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *pool
+                .request_message_counts
+                .lock()
+                .expect("request counts lock"),
+            vec![6, 3]
+        );
+        assert_eq!(ctx.working_history.len(), 3);
+        assert_eq!(ctx.working_history[0].role, Role::System);
+        assert_eq!(ctx.working_history[0].content, "emergency summary");
+    }
+
+    #[tokio::test]
+    async fn second_context_overflow_is_returned_without_a_third_attempt() {
+        let (mut container, _tmpdir) = make_test_container().await;
+        container.compaction_engine = CompactionEngine::with_llm(
+            CompactionConfig::default(),
+            Box::new(SuccessfulCompactionLlm),
+        );
+        let history = vec![
+            message(Role::User, "old request one"),
+            message(Role::Assistant, "old response one"),
+            message(Role::User, "old request two"),
+            message(Role::Assistant, "old response two"),
+            message(Role::User, "recent request"),
+            message(Role::Assistant, "recent response"),
+        ];
+        let config = test_execution_config(history.clone());
+        let mut ctx = make_test_ctx(SessionId("sampling-recovery".to_string()), Vec::new());
+        ctx.working_history = history;
+        let pool = Arc::new(OverflowThenSuccessPool::new(false));
+        let routes = llm::build_route_requests(&config);
+
+        let attempt = call_llm_with_context_recovery(
+            &container,
+            &config,
+            &mut ctx,
+            0,
+            pool.as_ref(),
+            &routes,
+            128_000,
+            None,
+            None,
+        )
+        .await;
+
+        assert!(attempt.result.is_err());
+        assert_eq!(pool.calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn context_overflow_with_partial_output_is_not_recoverable() {
+        let error = ProviderError::Other {
+            message: "maximum context length exceeded".to_string(),
+        };
+        let partial = llm::PartialStreamingContent {
+            content: "already streamed".to_string(),
+            reasoning: String::new(),
+        };
+
+        assert!(!should_attempt_context_overflow_recovery(
+            &error, &partial, None
+        ));
     }
 
     #[test]

@@ -37,6 +37,10 @@ pub struct PermissionSettings {
     #[serde(default)]
     pub allow: Vec<String>,
 
+    /// Rules that allow tools and emit an audit notification.
+    #[serde(default)]
+    pub notify: Vec<String>,
+
     /// Rules that deny specific tools or tool+content patterns.
     #[serde(default)]
     pub deny: Vec<String>,
@@ -95,6 +99,11 @@ fn settings_to_rules(
     rules.extend(parse_rules(
         &settings.allow,
         PermissionBehavior::Allow,
+        source,
+    ));
+    rules.extend(parse_rules(
+        &settings.notify,
+        PermissionBehavior::Notify,
         source,
     ));
     rules.extend(parse_rules(
@@ -384,6 +393,7 @@ impl PermissionRuleStore {
             mode: mode_override.unwrap_or(self.default_mode),
             rules: self.merged_rules(),
             additional_directories: self.additional_directories.clone(),
+            ..PermissionContext::default()
         }
     }
 
@@ -447,6 +457,11 @@ fn add_to_settings(settings: &mut PermissionSettings, rule: &PermissionRule) {
                 settings.allow.push(s);
             }
         }
+        PermissionBehavior::Notify => {
+            if !settings.notify.contains(&s) {
+                settings.notify.push(s);
+            }
+        }
         PermissionBehavior::Deny => {
             if !settings.deny.contains(&s) {
                 settings.deny.push(s);
@@ -467,6 +482,7 @@ fn remove_from_settings(settings: &mut PermissionSettings, rule: &PermissionRule
     let s = rule_to_string(&rule.target);
     match rule.behavior {
         PermissionBehavior::Allow => settings.allow.retain(|x| x != &s),
+        PermissionBehavior::Notify => settings.notify.retain(|x| x != &s),
         PermissionBehavior::Deny => settings.deny.retain(|x| x != &s),
         PermissionBehavior::Ask => settings.ask.retain(|x| x != &s),
         PermissionBehavior::Passthrough => {}
@@ -597,6 +613,7 @@ mod tests {
         let mut settings = PermissionSettings::default();
         settings.allow.push("FileRead".to_string());
         settings.allow.push("Glob".to_string());
+        settings.notify.push("WebFetch".to_string());
         settings.deny.push("ShellExec(rm -rf:*)".to_string());
         settings.ask.push("FileWrite".to_string());
         settings.default_mode = Some("default".to_string());
@@ -605,6 +622,7 @@ mod tests {
         let loaded = load_settings_from_file(&path).unwrap();
 
         assert_eq!(loaded.allow, settings.allow);
+        assert_eq!(loaded.notify, settings.notify);
         assert_eq!(loaded.deny, settings.deny);
         assert_eq!(loaded.ask, settings.ask);
         assert_eq!(loaded.default_mode, settings.default_mode);
@@ -635,6 +653,7 @@ mod tests {
         let global_toml = r#"
 [permissions]
 allow = ["FileRead", "Glob"]
+notify = ["WebFetch"]
 deny = ["ShellExec(rm -rf:*)"]
 "#;
         std::fs::write(&global_path, global_toml).unwrap();
@@ -650,8 +669,11 @@ ask = ["FileWrite"]
         let store = PermissionRuleStore::load(&global_path, Some(&project_path));
 
         let merged = store.merged_rules();
-        // project allow (1) + project ask (1) + global allow (2) + global deny (1) = 5
-        assert_eq!(merged.len(), 5);
+        // project allow (1) + project ask (1) + global allow (2) + notify (1) + deny (1) = 6
+        assert_eq!(merged.len(), 6);
+        assert!(merged.iter().any(|rule| {
+            rule.target.tool_name == "WebFetch" && rule.behavior == PermissionBehavior::Notify
+        }));
 
         // Check precedence: project rules come before global rules.
         let sources: Vec<_> = merged.iter().map(|r| &r.source).collect();

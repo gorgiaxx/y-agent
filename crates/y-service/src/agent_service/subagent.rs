@@ -14,6 +14,7 @@ use y_core::template::RuntimeTemplateVars;
 use y_core::types::{Message, Role};
 
 use crate::container::ServiceContainer;
+use crate::workspace_isolation::{tools_are_write_capable, DelegatedWorkspace};
 
 use super::{AgentExecutionConfig, AgentExecutionError, AgentService};
 
@@ -92,6 +93,7 @@ impl AgentRunner for ServiceAgentRunner {
         // multiple iterations (e.g. skill-ingestion reading companion files).
         let filtered_defs =
             AgentService::filter_tool_definitions(&self.container, &config.allowed_tools).await;
+        let write_capable = tools_are_write_capable(&filtered_defs);
 
         // Convert filtered definitions to OpenAI function-calling JSON.
         let tool_definitions: Vec<serde_json::Value> = filtered_defs
@@ -123,49 +125,10 @@ impl AgentRunner for ServiceAgentRunner {
             ToolCallingMode::Native
         };
 
-        // Augment the system prompt with tool protocol and available-tools
-        // summary when the agent has tools. In Native mode the XML tool
-        // protocol is omitted (~800 tokens saved).
-        let runtime_backend = self.container.runtime_manager.backend();
-        let workspace = {
-            let pc = self.container.prompt_context.read().await;
-            pc.working_directory.clone()
-        };
-        let template_vars = RuntimeTemplateVars::from_runtime(workspace.as_deref());
-        let system_prompt = build_subagent_system_prompt(
-            &config.system_prompt,
-            &filtered_defs,
-            tool_calling_mode,
-            y_core::provider::ToolDialect::default(),
-            runtime_backend,
-            &template_vars,
-        );
-
-        // Build messages: system_prompt + input as user message.
-        let mut messages = Vec::with_capacity(2);
-        messages.push(Message {
-            message_id: y_core::types::generate_message_id(),
-            role: Role::System,
-            content: system_prompt.clone(),
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: serde_json::Value::Null,
-        });
-
         let user_content = match &config.input {
             serde_json::Value::String(s) => s.clone(),
             other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
         };
-        messages.push(Message {
-            message_id: y_core::types::generate_message_id(),
-            role: Role::User,
-            content: user_content.clone(),
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: serde_json::Value::Null,
-        });
 
         // Pick up a pre-created trace_id from the diagnostics context
         // (set via DIAGNOSTICS_CTX task-local by DiagnosticsAgentDelegator).
@@ -183,6 +146,16 @@ impl AgentRunner for ServiceAgentRunner {
         let interaction = crate::agent_service::delegation_ctx::DELEGATION_INTERACTION_CTX
             .try_with(Clone::clone)
             .ok();
+        let interactive = interaction.is_some();
+        let parent_workspace = if let Some(working_directory) = interaction
+            .as_ref()
+            .and_then(|context| context.working_directory.clone())
+        {
+            Some(working_directory)
+        } else {
+            let prompt_context = self.container.prompt_context.read().await;
+            prompt_context.working_directory.clone()
+        };
 
         // Resolve the child session for this delegation. When an interaction
         // context is present (Task tool), create a SubAgent child session
@@ -231,6 +204,50 @@ impl AgentRunner for ServiceAgentRunner {
             }
             None => (None, Uuid::nil(), None, None, None),
         };
+
+        let delegated_workspace = DelegatedWorkspace::prepare(
+            &self.container,
+            parent_workspace,
+            config.workspace_isolation,
+            config.workspace_snapshot_id.clone(),
+            write_capable,
+            interactive,
+        )
+        .await?;
+        let workspace = delegated_workspace.working_directory();
+
+        // Build the prompt only after isolation is provisioned so template
+        // expansion and every delegated tool see the effective worktree path.
+        let runtime_backend = self.container.runtime_manager.backend();
+        let template_vars = RuntimeTemplateVars::from_runtime(workspace.as_deref());
+        let system_prompt = build_subagent_system_prompt(
+            &config.system_prompt,
+            &filtered_defs,
+            tool_calling_mode,
+            y_core::provider::ToolDialect::default(),
+            runtime_backend,
+            &template_vars,
+        );
+        let messages = vec![
+            Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::System,
+                content: system_prompt.clone(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            },
+            Message {
+                message_id: y_core::types::generate_message_id(),
+                role: Role::User,
+                content: user_content.clone(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::Value::Null,
+            },
+        ];
 
         let exec_config = AgentExecutionConfig {
             agent_name: config.agent_name.clone(),
@@ -307,6 +324,8 @@ impl AgentRunner for ServiceAgentRunner {
             }
         }
 
+        let workspace_isolation = delegated_workspace.finalize(&self.container).await;
+
         let result = result.map_err(|e| DelegationError::DelegationFailed {
             message: format!(
                 "AgentService execution failed for agent '{}': {e}",
@@ -329,6 +348,7 @@ impl AgentRunner for ServiceAgentRunner {
             output_tokens: result.output_tokens,
             model_used: result.model,
             duration_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(0),
+            workspace_isolation,
         })
     }
 }
@@ -488,6 +508,8 @@ mod tests {
             trace_id: None,
             prune_tool_history: false,
             response_format: None,
+            workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
+            workspace_snapshot_id: None,
         }
     }
 
@@ -518,6 +540,7 @@ mod tests {
             session_id: parent.id.clone(),
             progress: None,
             cancel: None,
+            working_directory: None,
         };
         // The run fails (no provider configured), but the child session must
         // still be created and persisted.
@@ -587,6 +610,7 @@ mod tests {
             session_id: parent.id.clone(),
             progress: None,
             cancel: None,
+            working_directory: None,
         };
         let _ = DELEGATION_INTERACTION_CTX
             .scope(ctx, runner.run(config))
