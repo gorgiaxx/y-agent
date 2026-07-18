@@ -60,6 +60,8 @@ tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard", "pull
 hook_handlers = ["y-service/hook_handlers"]
 llm_hooks = ["y-service/llm_hooks"]
 langfuse = ["y-service/langfuse"]
+background_auto_wake = ["y-service/background_auto_wake", "y-web/background_auto_wake"]
+lsp = ["y-service/lsp", "y-web/lsp"]
 
 [dev-dependencies]
 y-test-utils = { workspace = true }

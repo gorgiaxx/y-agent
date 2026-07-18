@@ -102,6 +102,7 @@ async fn e2e_tool_with_mock_runtime() {
         env: HashMap::new(),
         stdin: None,
         owner_session_id: None,
+        event_tool_name: None,
         capabilities: RuntimeCapability::default(),
         image: None,
     };

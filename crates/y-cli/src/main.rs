@@ -111,7 +111,9 @@ async fn main() -> Result<()> {
     if let Some(dir) = &user_config_dir {
         loader = loader.with_user_config_dir(Some(dir.clone()));
     }
-    let config = loader.load()?;
+    let loaded_config = loader.load_with_provenance()?;
+    let config = loaded_config.config;
+    let project_config_sources = loaded_config.project_sources;
     config::validate_config(&config)?;
 
     // Determine if we are entering TUI mode.
@@ -179,6 +181,30 @@ async fn main() -> Result<()> {
     } else {
         // Non-TUI: file layer + stderr.
         registry.with(tracing_subscriber::fmt::layer()).init();
+    }
+
+    for source in project_config_sources
+        .iter()
+        .filter(|source| !source.applied)
+    {
+        tracing::warn!(
+            source = %source.source_path.display(),
+            workspace = %source.workspace_path.display(),
+            trust = ?source.trust,
+            reason = source.blocked_reason.as_deref().unwrap_or("workspace is not trusted"),
+            hint = "run `y-agent workspace trust --path <workspace>` to activate project config",
+            "project configuration source blocked by workspace trust policy"
+        );
+    }
+    for source in project_config_sources
+        .iter()
+        .filter(|source| source.applied)
+    {
+        tracing::info!(
+            source = %source.source_path.display(),
+            workspace = %source.workspace_path.display(),
+            "trusted project configuration source activated"
+        );
     }
 
     let mode = OutputMode::from_str_or_default(&config.output_format);
@@ -320,7 +346,7 @@ async fn main() -> Result<()> {
             print_exit_summary(&exit_info);
         }
         Some(Commands::Workspace { action }) => {
-            commands::workspace::run(action, mode)?;
+            commands::workspace::run(action, mode, user_config_dir.as_deref())?;
         }
         Some(Commands::Provider { action }) => {
             let services = wire::wire(&config).await?;

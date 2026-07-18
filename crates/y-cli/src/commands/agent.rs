@@ -118,6 +118,7 @@ pub async fn run(action: &AgentAction, services: &AppServices, mode: OutputMode)
                 capabilities: vec![],
                 icon: None,
                 working_directory: None,
+                workspace_isolation: y_core::agent::WorkspaceIsolationPreference::default(),
                 toolcall_enabled: None,
                 skills_enabled: None,
                 knowledge_enabled: None,
