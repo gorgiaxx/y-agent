@@ -61,6 +61,7 @@ hook_handlers = ["y-service/hook_handlers"]
 llm_hooks = ["y-service/llm_hooks"]
 langfuse = ["y-service/langfuse"]
 background_auto_wake = ["y-service/background_auto_wake", "y-web/background_auto_wake"]
+capability_packs = ["y-service/capability_packs", "y-web/capability_packs"]
 lsp = ["y-service/lsp", "y-web/lsp"]
 
 [dev-dependencies]

@@ -21,8 +21,7 @@ use crate::event_sink::EventSink;
 const WAKE_EVENT_CHANNEL_CAPACITY: usize = 256;
 const OBSERVATION_WAIT_TIMEOUT: StdDuration = StdDuration::from_secs(3);
 const OBSERVATION_RECHECK_INTERVAL: StdDuration = StdDuration::from_millis(10);
-const COMPLETION_PROMPT_TEMPLATE: &str =
-    include_str!("../../../config/prompts/background-task-completion.md");
+const COMPLETION_PROMPT_TEMPLATE: &str = include_str!("prompts/background-task-completion.md");
 
 /// Configuration for automatic turns triggered by background-task completion.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

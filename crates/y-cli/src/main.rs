@@ -66,7 +66,7 @@ struct Cli {
 async fn main() -> Result<()> {
     // Bare-prompt resolution: `y-agent "do X"` forwards to `chat -- "do X"`.
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
-    let resolved_args = bare_prompt::resolve(&raw_args);
+    let resolved_args = bare_prompt::resolve_for_clap(&raw_args);
     let cli = Cli::parse_from(resolved_args);
 
     // Handle init command early -- it runs before config exists.

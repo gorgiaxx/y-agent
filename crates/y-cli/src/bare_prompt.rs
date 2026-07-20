@@ -59,6 +59,16 @@ pub fn resolve(raw: &[String]) -> Vec<String> {
     result
 }
 
+/// Resolve user arguments and restore the program-name element expected by
+/// `clap::Parser::parse_from`.
+pub fn resolve_for_clap(raw: &[String]) -> Vec<String> {
+    let resolved = resolve(raw);
+    let mut args = Vec::with_capacity(resolved.len() + 1);
+    args.push("y-agent".to_string());
+    args.extend(resolved);
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,5 +150,19 @@ mod tests {
             vec!["print".to_string(), "hi".to_string()]
         );
         assert_eq!(resolve(&vec!["rpc".to_string()]), vec!["rpc".to_string()]);
+    }
+
+    #[test]
+    fn clap_args_restore_program_name_before_the_resolved_command() {
+        let raw = vec![
+            "serve".to_string(),
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+        ];
+
+        assert_eq!(
+            resolve_for_clap(&raw),
+            vec!["y-agent", "serve", "--host", "127.0.0.1"]
+        );
     }
 }

@@ -4,6 +4,8 @@ pub mod agents;
 pub mod attachments;
 pub mod background_tasks;
 pub mod bots;
+#[cfg(feature = "capability_packs")]
+pub mod capability_packs;
 pub mod chat;
 pub mod config;
 pub mod diagnostics;
@@ -47,11 +49,15 @@ pub fn create_router(state: &AppState) -> Router {
         .merge(observability::router())
         .merge(rewind::router())
         .merge(background_tasks::router())
-        .merge(attachments::router())
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ));
+        .merge(attachments::router());
+
+    #[cfg(feature = "capability_packs")]
+    let protected = protected.merge(capability_packs::router());
+
+    let protected = protected.layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        auth_middleware,
+    ));
 
     let mut app = Router::new()
         .merge(health::router())

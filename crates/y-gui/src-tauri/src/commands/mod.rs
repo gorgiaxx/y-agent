@@ -4,6 +4,8 @@ pub mod agents;
 pub mod attachments;
 pub mod automation;
 pub mod background_tasks;
+#[cfg(feature = "capability_packs")]
+pub mod capability_packs;
 pub mod chat;
 pub mod config;
 pub mod diagnostics;

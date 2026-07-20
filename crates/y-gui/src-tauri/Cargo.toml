@@ -62,8 +62,9 @@ reqwest = { workspace = true }
 base64 = { workspace = true }
 
 [features]
-default = []
+default = ["background_auto_wake", "capability_packs", "lsp"]
 background_auto_wake = ["y-service/background_auto_wake"]
+capability_packs = ["y-service/capability_packs"]
 lsp = ["y-service/lsp"]
 
 [lints]
