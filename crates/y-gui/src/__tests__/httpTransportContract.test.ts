@@ -243,6 +243,24 @@ describe('HttpTransport contract mapping', () => {
     });
   });
 
+  it('maps runtime capability negotiation to the shared y-web contract', async () => {
+    const payload = {
+      background_auto_wake: { available: true, restart_required: true },
+      lsp: { available: false, restart_required: true },
+      capability_packs: { available: true, restart_required: false },
+      hook_handlers: { available: false, restart_required: false },
+      llm_hooks: { available: false, restart_required: false },
+      compaction_prefire: { available: true, restart_required: false },
+    };
+    const { calls } = installFetchMock(payload);
+    const transport = new HttpTransport('http://localhost:3000');
+
+    const capabilities = await transport.invoke('runtime_capabilities');
+
+    expect(calls[0].url).toBe('http://localhost:3000/api/v1/runtime-capabilities');
+    expect(capabilities).toEqual(payload);
+  });
+
   it('unwraps content payloads for string-returning command parity', async () => {
     installFetchMock({ content: 'raw toml content' });
     const transport = new HttpTransport('http://localhost:3000');
@@ -387,6 +405,57 @@ describe('HttpTransport contract mapping', () => {
       { path: '/srv/project' },
       { path: '/srv/project' },
     ]);
+  });
+
+  it('maps Capability Pack lifecycle commands to equivalent y-web contracts', async () => {
+    const { calls } = installFetchMock({ ok: true });
+    const transport = new HttpTransport('http://localhost:3000');
+
+    await transport.invoke('capability_pack_list');
+    await transport.invoke('capability_pack_inspect', { path: '/srv/packs/rust' });
+    await transport.invoke('capability_pack_install', {
+      path: '/srv/packs/rust',
+      allowReplacements: true,
+    });
+    await transport.invoke('capability_pack_activate', {
+      packId: 'rust-team',
+      workspacePath: '/srv/project',
+      sessionId: 'session-1',
+      operationId: 'operation-1',
+    });
+    await transport.invoke('capability_pack_activate_granted', {
+      packId: 'rust-team',
+      workspacePath: '/srv/project',
+    });
+    await transport.invoke('capability_pack_revoke', {
+      packId: 'rust-team',
+      workspacePath: '/srv/project',
+    });
+    await transport.invoke('capability_pack_rollback', { packId: 'rust-team' });
+    await transport.invoke('capability_pack_remove', { packId: 'rust-team' });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://localhost:3000/api/v1/capability-packs',
+      'http://localhost:3000/api/v1/capability-packs/inspect',
+      'http://localhost:3000/api/v1/capability-packs/install',
+      'http://localhost:3000/api/v1/capability-packs/rust-team/activate',
+      'http://localhost:3000/api/v1/capability-packs/rust-team/activate-granted',
+      'http://localhost:3000/api/v1/capability-packs/rust-team/revoke',
+      'http://localhost:3000/api/v1/capability-packs/rust-team/rollback',
+      'http://localhost:3000/api/v1/capability-packs/rust-team',
+    ]);
+    expect(JSON.parse(String(calls[2].init.body))).toEqual({
+      path: '/srv/packs/rust',
+      allow_replacements: true,
+    });
+    expect(JSON.parse(String(calls[3].init.body))).toEqual({
+      workspace_path: '/srv/project',
+      session_id: 'session-1',
+      operation_id: 'operation-1',
+    });
+    expect(JSON.parse(String(calls[4].init.body))).toEqual({
+      workspace_path: '/srv/project',
+    });
   });
 
   it('unwraps session context reset and custom prompt responses', async () => {
