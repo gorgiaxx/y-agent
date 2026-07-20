@@ -322,6 +322,10 @@ The shared frontend baseline is:
 5. y-web `/health` exposes `api_schema_version`, `app_version`, and `features`.
 6. y-web exposes `/api/v1/memory-stats` for observability parity with the Tauri
    command.
+7. Tauri and y-web expose one service-owned runtime capability contract so
+   optional settings are disabled with a reason instead of silently no-oping.
+8. Workspace trust and Capability Pack lifecycle controls are implemented once
+   in the shared React UI and use equivalent desktop/Web transport commands.
 
 No mandatory frontend fork or root-level package move is required for the
 current architecture.

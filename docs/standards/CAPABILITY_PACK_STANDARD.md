@@ -236,9 +236,11 @@ retained indefinitely. Automatic garbage collection is disabled until an audit
 and retention-age policy is standardized. This uses more disk but guarantees
 that lifecycle recovery never depends on an already-pruned snapshot.
 
-The service lifecycle API does not imply presentation activation. CLI, web, and
-GUI install/activation commands remain absent until a separate presentation
-contract exposes preview, HITL progress, cancellation, and lifecycle receipts.
+The service lifecycle API does not imply presentation activation. The shared
+GUI and y-web contract exposes preview, HITL progress, cancellation, and typed
+lifecycle receipts. CLI lifecycle commands remain absent. Presentation
+adapters delegate every mutation to `y-service` and use the existing pending
+permission channel for executable activation.
 
 ## 8. Validation Result
 
@@ -249,6 +251,9 @@ the affected resource identity and path when available.
 
 ## 9. Feature Flag
 
-Capability Pack support is compiled behind the `capability_packs` feature. The
-feature remains disabled by default while lifecycle commands are absent from
-the presentation layers.
+Capability Pack support is compiled behind the `capability_packs` feature.
+`y-service` keeps the subsystem opt-in as a library feature, while the desktop
+and y-web product binaries enable it by default now that equivalent lifecycle
+adapters and shared UI management are available. Installation remains inert
+until an explicit operation; executable declarations additionally require
+workspace trust and HITL activation.

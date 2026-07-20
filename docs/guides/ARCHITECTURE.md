@@ -278,8 +278,10 @@ operations hold a short observation claim so a racing terminal event is
 suppressed only when the caller actually consumes the terminal result. Kill
 intent permanently suppresses the task.
 
-The synthetic input comes from `config/prompts/background-task-completion.md`
-and carries `background_auto_wake` metadata. Execution uses
+The synthetic input is a compiled internal service asset at
+`crates/y-service/src/prompts/background-task-completion.md` and carries
+`background_auto_wake` metadata. It is not presented as a hot-reloadable user
+prompt. Execution uses
 `ChatService::prepare_turn` and the shared chat worker, preserving provider
 selection, permission middleware, HITL requests, cancellation, diagnostics,
 and durable event replay. The persisted and live `ChatStarted.kind` is
@@ -399,8 +401,10 @@ the same declarative identity set. Rollback unwinds one committed version;
 remove repeatedly unwinds the version stack to the pre-pack state. Interrupted
 rollback resumes from the durable transaction state, and ownership is repaired
 after restoration. Snapshot payloads are conservatively retained without
-automatic GC. Presentation commands remain unavailable until executable
-activation has an equivalent trust and HITL contract.
+automatic GC. The shared desktop/Web presentation contract exposes validation,
+preview, installation, listing, activation retry, revocation, rollback, and
+removal. Executable activation uses the existing session-scoped HITL transport
+and cancellation; presentation code cannot synthesize grants.
 
 Executable declarations have an inactive staging phase. Capability Pack install
 may persist validated MCP, hook, and LSP files under service-owned data, but it
