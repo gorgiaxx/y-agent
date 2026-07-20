@@ -18,6 +18,43 @@ interface McpStatusEntry {
   connected: boolean;
 }
 
+interface McpSidebarActionsProps {
+  statusLoading: boolean;
+  onAdd: () => void;
+  onRefresh: () => void;
+}
+
+export function McpSidebarActions({
+  statusLoading,
+  onAdd,
+  onRefresh,
+}: McpSidebarActionsProps) {
+  return (
+    <div className="sub-list-actions">
+      <button
+        type="button"
+        className="sub-list-item sub-list-item-add"
+        onClick={onAdd}
+        title="Add MCP server"
+      >
+        <Plus size={13} />
+        <span>Add</span>
+      </button>
+      <Button
+        type="button"
+        variant="icon"
+        size="sm"
+        onClick={onRefresh}
+        disabled={statusLoading}
+        title="Refresh connection status"
+        aria-label="Refresh connection status"
+      >
+        <RefreshCw size={13} className={statusLoading ? 'spin' : ''} />
+      </Button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // McpServerTabPanel -- form for a single MCP server (shown in tab view)
 // ---------------------------------------------------------------------------
@@ -351,6 +388,11 @@ export function McpTab({
     <SubListLayout
       sidebar={
         <>
+          <McpSidebarActions
+            statusLoading={statusLoading}
+            onAdd={handleMcpServerAdd}
+            onRefresh={() => { void refreshStatus(); }}
+          />
           <div className="sub-list-items">
             {mcpServersList.map((s, i) => {
               const status = mcpStatuses[s.name];
@@ -386,24 +428,6 @@ export function McpTab({
               );
             })}
           </div>
-          <button
-            className="sub-list-item sub-list-item-add"
-            onClick={handleMcpServerAdd}
-            title="Add MCP server"
-          >
-            <Plus size={13} />
-            <span>Add</span>
-          </button>
-          <button
-            className="sub-list-item sub-list-item-refresh"
-            onClick={refreshStatus}
-            disabled={statusLoading}
-            title="Refresh connection status"
-            style={{ opacity: statusLoading ? 0.5 : 1 }}
-          >
-            <RefreshCw size={13} className={statusLoading ? 'spin' : ''} />
-            <span>Refresh Status</span>
-          </button>
         </>
       }
     >
