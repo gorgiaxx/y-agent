@@ -36,5 +36,8 @@ describe('advanced hook settings', () => {
     expect(html).toContain('Allowed Hook Directories');
     expect(html).toContain('Prompt and agent handlers require LLM hooks');
     expect(html).toContain('Handler groups remain editable in RAW TOML mode');
+    expect(html).toContain('settings-group-body settings-group-body--plain');
+    expect(html).toContain('hooks-handler-stack');
+    expect(html).toContain('settings-group-body hooks-handler-controls');
   });
 });
