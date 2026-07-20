@@ -8,6 +8,7 @@ import {
   Button,
   Input,
 } from '../ui';
+import { WorkspaceTrustControl } from './WorkspaceTrustControl';
 
 interface WorkspaceDialogProps {
   onConfirm: (name: string, path: string) => void;
@@ -115,6 +116,8 @@ export function WorkspaceDialog({
               )}
             </div>
           </div>
+
+          <WorkspaceTrustControl path={path} />
 
           <div className="flex gap-2 justify-end mt-1">
             <Button type="button" variant="ghost" onClick={onClose}>
