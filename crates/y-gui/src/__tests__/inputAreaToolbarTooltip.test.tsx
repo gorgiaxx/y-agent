@@ -52,12 +52,46 @@ vi.mock('../components/chat-panel/input-area/ContentEditableInput', () => ({
 }));
 
 let InputArea: typeof import('../components/chat-panel/input-area/InputArea').InputArea;
+let ProviderModelMenu: typeof import('../components/chat-panel/input-area/InputArea').ProviderModelMenu;
 
 beforeAll(async () => {
-  ({ InputArea } = await import('../components/chat-panel/input-area/InputArea'));
+  ({ InputArea, ProviderModelMenu } = await import('../components/chat-panel/input-area/InputArea'));
 });
 
 describe('InputArea toolbar tooltips', () => {
+  it('filters a large model menu by model, provider id, and provider type', () => {
+    const providers = Array.from({ length: 35 }, (_, index) => ({
+      id: `provider-${index}`,
+      model: `model-${index}`,
+      provider_type: 'openai_compatible',
+      capabilities: ['text'],
+      context_window: 128000,
+    }));
+    providers.push({
+      id: 'anthropic-main',
+      model: 'claude-sonnet-4.6',
+      provider_type: 'anthropic',
+      capabilities: ['text'],
+      context_window: 200000,
+    });
+
+    const html = renderToStaticMarkup(
+      <ProviderModelMenu
+        providers={providers}
+        selectedProviderId="auto"
+        query="sonnet"
+        onQueryChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(html).toContain('Search models...');
+    expect(html).toContain('claude-sonnet-4.6');
+    expect(html).toContain('anthropic-main');
+    expect(html).not.toContain('model-12');
+    expect(html).not.toContain('>Auto<');
+  });
+
   it('does not rely on CSS-only data-tooltip attributes for toolbar actions', () => {
     const html = renderToStaticMarkup(
       <TooltipProvider>

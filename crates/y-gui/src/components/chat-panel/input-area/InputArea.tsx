@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Clock3, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock, Settings } from 'lucide-react';
+import { Square, X, AtSign, Maximize2, Minimize2, Paintbrush, Eraser, BookOpen, Bot, Lightbulb, Paperclip, Zap, ScanSearch, ClipboardList, RefreshCw, ScrollText, Languages, Clock3, Cpu, Image as ImageIcon, SlidersHorizontal, Shield, ShieldCheck, Unlock, Settings, Search } from 'lucide-react';
 
 import { usePromptTemplates } from '../../../hooks/usePromptTemplates';
 import { useTranslate } from '../../../hooks/useTranslate';
@@ -54,6 +54,85 @@ export interface InputProviderProps {
   onSelectProvider: (id: string) => void;
   /** Map from provider ID to icon identifier. */
   providerIcons?: Record<string, string>;
+}
+
+interface ProviderModelMenuProps extends Pick<
+  InputProviderProps,
+  'providers' | 'selectedProviderId' | 'providerIcons'
+> {
+  query: string;
+  onQueryChange: (query: string) => void;
+  onSelect: (id: string) => void;
+}
+
+export function ProviderModelMenu({
+  providers,
+  selectedProviderId,
+  providerIcons,
+  query,
+  onQueryChange,
+  onSelect,
+}: ProviderModelMenuProps) {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const autoMatches = !normalizedQuery
+    || 'auto automatic routing'.includes(normalizedQuery);
+  const filteredProviders = providers.filter((provider) => [
+    provider.model,
+    provider.id,
+    provider.provider_type,
+  ].some((value) => value.toLocaleLowerCase().includes(normalizedQuery)));
+
+  return (
+    <div className="toolbar-provider-dropdown">
+      <div className="toolbar-provider-search">
+        <Search size={13} aria-hidden="true" />
+        <input
+          type="search"
+          autoFocus
+          value={query}
+          placeholder="Search models..."
+          aria-label="Search models"
+          onChange={(event) => onQueryChange(event.target.value)}
+        />
+      </div>
+      <div className="toolbar-provider-list">
+        {autoMatches && (
+          <button
+            type="button"
+            className={`toolbar-provider-item ${selectedProviderId === 'auto' ? 'selected' : ''}`}
+            onClick={() => onSelect('auto')}
+          >
+            <Bot size={14} className="toolbar-provider-icon toolbar-provider-icon--default" />
+            <span className="toolbar-provider-copy">
+              <span className="toolbar-provider-model">Auto</span>
+              <span className="toolbar-provider-id">Automatic routing</span>
+            </span>
+          </button>
+        )}
+        {filteredProviders.map((provider) => (
+          <button
+            key={provider.id}
+            type="button"
+            className={`toolbar-provider-item ${selectedProviderId === provider.id ? 'selected' : ''}`}
+            onClick={() => onSelect(provider.id)}
+          >
+            {providerIcons?.[provider.id] ? (
+              <ProviderIconImg iconId={providerIcons[provider.id]} size={14} className="toolbar-provider-icon" />
+            ) : (
+              <Bot size={14} className="toolbar-provider-icon toolbar-provider-icon--default" />
+            )}
+            <span className="toolbar-provider-copy">
+              <span className="toolbar-provider-model">{provider.model}</span>
+              <span className="toolbar-provider-id">{provider.id}</span>
+            </span>
+          </button>
+        ))}
+        {!autoMatches && filteredProviders.length === 0 && (
+          <div className="toolbar-provider-empty">No matching models</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export interface InputMcpProps {
@@ -211,6 +290,7 @@ export function InputArea(props: InputAreaProps) {
 
   const [commandMode, setCommandMode] = useState(false);
   const [providerDropdownOpen, setProviderDropdownOpen] = useState(false);
+  const [providerFilter, setProviderFilter] = useState('');
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [selectedKbCollections, setSelectedKbCollections] = useState<string[]>([]);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
@@ -770,7 +850,11 @@ export function InputArea(props: InputAreaProps) {
           <div className="toolbar-btn-group" ref={providerDropdownRef}>
             <ToolbarTooltipButton
               className="toolbar-btn"
-              onClick={() => setProviderDropdownOpen(!providerDropdownOpen)}
+              onClick={() => {
+                const nextOpen = !providerDropdownOpen;
+                if (nextOpen) setProviderFilter('');
+                setProviderDropdownOpen(nextOpen);
+              }}
               tooltip="Select model"
               disabled={disabled}
             >
@@ -778,28 +862,17 @@ export function InputArea(props: InputAreaProps) {
               <span className="toolbar-btn-label">{selectedProviderLabel}</span>
             </ToolbarTooltipButton>
             {providerDropdownOpen && (
-              <div className="toolbar-provider-dropdown">
-                <button
-                  className={`toolbar-provider-item ${selectedProviderId === 'auto' ? 'selected' : ''}`}
-                  onClick={() => { onSelectProvider('auto'); setProviderDropdownOpen(false); }}
-                >
-                  Auto
-                </button>
-                {providers.map((p) => (
-                  <button
-                    key={p.id}
-                    className={`toolbar-provider-item ${selectedProviderId === p.id ? 'selected' : ''}`}
-                    onClick={() => { onSelectProvider(p.id); setProviderDropdownOpen(false); }}
-                  >
-                    {providerIcons?.[p.id] ? (
-                      <ProviderIconImg iconId={providerIcons[p.id]} size={14} className="toolbar-provider-icon" />
-                    ) : (
-                      <Bot size={14} className="toolbar-provider-icon toolbar-provider-icon--default" />
-                    )}
-                    {p.id} ({p.model})
-                  </button>
-                ))}
-              </div>
+              <ProviderModelMenu
+                providers={providers}
+                selectedProviderId={selectedProviderId}
+                providerIcons={providerIcons}
+                query={providerFilter}
+                onQueryChange={setProviderFilter}
+                onSelect={(providerId) => {
+                  onSelectProvider(providerId);
+                  setProviderDropdownOpen(false);
+                }}
+              />
             )}
           </div>
 
