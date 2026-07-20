@@ -10,3 +10,28 @@ event_channel_capacity = 1024
 
 # Maximum number of event subscribers.
 max_subscribers = 64
+
+# Global enable/disable for configuration-driven command, HTTP, prompt, and
+# agent handlers. Handler execution also requires the corresponding compiled
+# feature reported by the runtime-capabilities endpoint.
+handlers_enabled = true
+
+# Restrict command hook scripts to these absolute directories. Empty permits
+# any absolute directory; production installations should prefer an allowlist.
+allowed_hook_dirs = []
+
+# Handler payload content: "minimal", "standard", or "full".
+verbosity = "standard"
+
+# Handler groups are keyed by hook point and remain easiest to author in RAW
+# TOML mode because each group can contain typed command, HTTP, prompt, or agent
+# handlers with distinct payloads.
+#
+# [[hook_handlers.pre_tool_execute]]
+# matcher = "ShellExec"
+# timeout_ms = 5000
+#
+# [[hook_handlers.pre_tool_execute.handlers]]
+# type = "command"
+# command = "/opt/y-agent/hooks/review-shell.sh"
+# async = false
