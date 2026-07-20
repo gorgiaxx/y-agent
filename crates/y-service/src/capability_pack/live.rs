@@ -10,6 +10,20 @@ use crate::mcp_service::McpService;
 pub(crate) struct CapabilityPackLiveOwners;
 
 impl CapabilityPackLiveOwners {
+    pub(crate) async fn active_resources(
+        container: &ServiceContainer,
+        resource_keys: &[String],
+    ) -> Result<Vec<String>, String> {
+        let mut active = Vec::new();
+        for key in resource_keys {
+            if is_active(container, key).await? {
+                active.push(key.clone());
+            }
+        }
+        active.sort();
+        Ok(active)
+    }
+
     pub(crate) async fn activate(
         container: &Arc<ServiceContainer>,
         resource_keys: &[String],
@@ -26,34 +40,7 @@ impl CapabilityPackLiveOwners {
         let mut activated = Vec::new();
         let mut newly_activated: Vec<String> = Vec::new();
         for key in keys {
-            let was_active = if let Some(id) = key.strip_prefix("mcp:") {
-                container
-                    .active_capability_pack_mcp
-                    .read()
-                    .await
-                    .contains_key(id)
-            } else if let Some(id) = key.strip_prefix("hook:") {
-                container
-                    .active_capability_pack_hooks
-                    .read()
-                    .map_err(|_| "active capability-pack hook lock is poisoned".to_string())?
-                    .contains_key(id)
-            } else if let Some(id) = key.strip_prefix("lsp:") {
-                #[cfg(feature = "lsp")]
-                {
-                    container
-                        .lsp_manager
-                        .as_ref()
-                        .is_some_and(|manager| manager.has_dynamic_server(id))
-                }
-                #[cfg(not(feature = "lsp"))]
-                {
-                    let _ = id;
-                    false
-                }
-            } else {
-                continue;
-            };
+            let was_active = is_active(container, &key).await?;
             if let Err(error) = activate_one(container, &key).await {
                 for activated_key in newly_activated.into_iter().rev() {
                     let _ = deactivate_one(container, &activated_key).await;
@@ -82,6 +69,38 @@ impl CapabilityPackLiveOwners {
         }
         Ok(deactivated)
     }
+}
+
+async fn is_active(container: &ServiceContainer, key: &str) -> Result<bool, String> {
+    if let Some(id) = key.strip_prefix("mcp:") {
+        return Ok(container
+            .active_capability_pack_mcp
+            .read()
+            .await
+            .contains_key(id));
+    }
+    if let Some(id) = key.strip_prefix("hook:") {
+        return container
+            .active_capability_pack_hooks
+            .read()
+            .map(|active| active.contains_key(id))
+            .map_err(|_| "active capability-pack hook lock is poisoned".to_string());
+    }
+    if let Some(id) = key.strip_prefix("lsp:") {
+        #[cfg(feature = "lsp")]
+        {
+            return Ok(container
+                .lsp_manager
+                .as_ref()
+                .is_some_and(|manager| manager.has_dynamic_server(id)));
+        }
+        #[cfg(not(feature = "lsp"))]
+        {
+            let _ = id;
+            return Ok(false);
+        }
+    }
+    Ok(false)
 }
 
 async fn activate_one(container: &Arc<ServiceContainer>, key: &str) -> Result<(), String> {

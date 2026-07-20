@@ -26,7 +26,8 @@ pub use manifest::{
     CapabilityResourceKind,
 };
 pub use service::{
-    CapabilityPackRemoveReceipt, CapabilityPackRollbackReceipt, CapabilityPackService,
+    CapabilityPackInspection, CapabilityPackRemoveReceipt, CapabilityPackRollbackReceipt,
+    CapabilityPackService, InstalledCapabilityPackSummary,
 };
 pub use transaction::{
     CapabilityPackChange, CapabilityPackChangeKind, CapabilityPackInstallError,

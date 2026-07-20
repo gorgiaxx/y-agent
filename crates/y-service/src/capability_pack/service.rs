@@ -14,8 +14,11 @@ use super::ownership::{CapabilityPackInstallIntent, CapabilityPackOwnershipStore
 use super::transaction::{
     change_label, CapabilityPackChangeKind, CapabilityPackInstallError,
     CapabilityPackInstallOptions, CapabilityPackInstallReceipt, CapabilityPackInstaller,
+    CapabilityPackPreview,
 };
-use super::validator::ValidatedCapabilityPack;
+use super::validator::{
+    CapabilityPackValidationReport, CapabilityPackValidator, ValidatedCapabilityPack,
+};
 use crate::container::ServiceContainer;
 use crate::workspace::{WorkspaceService, WorkspaceTrustStatus};
 use crate::{PermissionPromptResponse, TurnEvent, TurnEventSender};
@@ -26,20 +29,137 @@ use y_guardrails::permission_pipeline::ToolPermissionRequest;
 
 pub struct CapabilityPackService;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CapabilityPackRollbackReceipt {
     pub pack_id: String,
     pub removed_version: String,
     pub restored_version: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct CapabilityPackRemoveReceipt {
     pub pack_id: String,
     pub removed_versions: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct CapabilityPackInspection {
+    pub validation: CapabilityPackValidationReport,
+    pub preview: Option<CapabilityPackPreview>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct InstalledCapabilityPackSummary {
+    pub pack_id: String,
+    pub current_version: String,
+    pub current_transaction_id: String,
+    pub installed_versions: Vec<String>,
+    pub resources: Vec<String>,
+    pub executable_resources: Vec<String>,
+    pub activation_grants: Vec<CapabilityPackActivationGrant>,
+    pub live_resources: Vec<String>,
+}
+
 impl CapabilityPackService {
+    pub async fn inspect_local(
+        container: &ServiceContainer,
+        pack_root: &Path,
+    ) -> Result<CapabilityPackInspection, CapabilityPackInstallError> {
+        let validation = CapabilityPackValidator::validate(pack_root);
+        let Some(pack) = validation.pack.as_ref().filter(|_| validation.valid) else {
+            return Ok(CapabilityPackInspection {
+                validation,
+                preview: None,
+            });
+        };
+        let _guard = container.capability_pack_lifecycle_lock.lock().await;
+        let backend = CapabilityPackOwnerBackend::new(container);
+        let preview = CapabilityPackInstaller::preview(&backend, pack).await?;
+        Ok(CapabilityPackInspection {
+            validation,
+            preview: Some(preview),
+        })
+    }
+
+    pub async fn install_local(
+        container: &ServiceContainer,
+        pack_root: &Path,
+        options: CapabilityPackInstallOptions,
+    ) -> Result<CapabilityPackInstallReceipt, CapabilityPackInstallError> {
+        let validation = CapabilityPackValidator::validate(pack_root);
+        let Some(pack) = validation.pack.filter(|_| validation.valid) else {
+            let message = validation
+                .issues
+                .iter()
+                .map(|issue| format!("{:?}: {}", issue.code, issue.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(CapabilityPackInstallError::ResourceValidationFailed {
+                resource: "capability-pack".to_string(),
+                message,
+            });
+        };
+        Self::install(container, &pack, options).await
+    }
+
+    pub async fn list_installed(
+        container: &ServiceContainer,
+    ) -> Result<Vec<InstalledCapabilityPackSummary>, CapabilityPackInstallError> {
+        let _guard = container.capability_pack_lifecycle_lock.lock().await;
+        let ownership = CapabilityPackOwnershipStore::new(
+            container.data_dir.join("capability-packs/ownership.json"),
+        );
+        let index = ownership.load().map_err(|error| ownership_error(&error))?;
+        let grants = activation_store(container)
+            .grants()
+            .map_err(activation_error)?;
+        let mut summaries = Vec::with_capacity(index.packs.len());
+        for (pack_id, installed) in index.packs {
+            let resources = installed
+                .versions
+                .last()
+                .into_iter()
+                .flat_map(|version| &version.resources)
+                .map(|resource| resource.key.clone())
+                .collect::<Vec<_>>();
+            let executable_resources = resources
+                .iter()
+                .filter(|key| {
+                    key.starts_with("mcp:") || key.starts_with("hook:") || key.starts_with("lsp:")
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let activation_grants = grants
+                .iter()
+                .filter(|grant| {
+                    grant.pack_id == pack_id
+                        && grant.pack_version == installed.current_version
+                        && grant.transaction_id == installed.current_transaction_id
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let live_resources =
+                CapabilityPackLiveOwners::active_resources(container, &executable_resources)
+                    .await
+                    .map_err(activation_error)?;
+            summaries.push(InstalledCapabilityPackSummary {
+                pack_id,
+                current_version: installed.current_version,
+                current_transaction_id: installed.current_transaction_id,
+                installed_versions: installed
+                    .versions
+                    .iter()
+                    .map(|version| version.version.clone())
+                    .collect(),
+                resources,
+                executable_resources,
+                activation_grants,
+                live_resources,
+            });
+        }
+        Ok(summaries)
+    }
+
     pub async fn grant_activation(
         container: &ServiceContainer,
         workspace_service: &WorkspaceService,
@@ -708,6 +828,71 @@ root_content = "{content}"
         )
         .expect("skill manifest");
         std::fs::write(path.join("root.md"), content).expect("skill root");
+    }
+
+    fn write_local_pack(root: &Path, pack_id: &str, version: &str, skill_id: &str) {
+        let skill_path = root.join("skills").join(skill_id);
+        write_skill(&skill_path, skill_id, "# Local capability pack skill");
+        let resource_hash = hash_entry(&skill_path).expect("resource hash");
+        std::fs::write(
+            root.join("capability-pack.toml"),
+            format!(
+                r#"[pack]
+schema_version = 1
+id = "{pack_id}"
+version = "{version}"
+description = "Presentation lifecycle test"
+
+[[resources]]
+kind = "skill"
+id = "{skill_id}"
+path = "skills/{skill_id}"
+sha256 = "{resource_hash}"
+"#,
+            ),
+        )
+        .expect("pack manifest");
+    }
+
+    #[tokio::test]
+    async fn presentation_inspection_validates_and_previews_a_local_pack() {
+        let (temp, _config, container) = setup().await;
+        let pack_root = temp.path().join("local-pack");
+        std::fs::create_dir_all(&pack_root).expect("pack root");
+        write_local_pack(&pack_root, "local-pack", "1.0.0", "review-rust");
+
+        let inspection = CapabilityPackService::inspect_local(&container, &pack_root)
+            .await
+            .expect("inspect pack");
+
+        assert!(inspection.validation.valid);
+        assert_eq!(inspection.preview.expect("preview").pack_id, "local-pack");
+    }
+
+    #[tokio::test]
+    async fn presentation_install_and_list_report_installed_without_implying_activation() {
+        let (temp, _config, container) = setup().await;
+        let pack_root = temp.path().join("local-pack");
+        std::fs::create_dir_all(&pack_root).expect("pack root");
+        write_local_pack(&pack_root, "local-pack", "1.0.0", "review-rust");
+
+        CapabilityPackService::install_local(
+            &container,
+            &pack_root,
+            CapabilityPackInstallOptions::default(),
+        )
+        .await
+        .expect("install pack");
+        let installed = CapabilityPackService::list_installed(&container)
+            .await
+            .expect("list packs");
+
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].pack_id, "local-pack");
+        assert_eq!(installed[0].current_version, "1.0.0");
+        assert_eq!(installed[0].installed_versions, vec!["1.0.0"]);
+        assert!(installed[0].activation_grants.is_empty());
+        assert!(installed[0].live_resources.is_empty());
     }
 
     fn pack(id: &str, version: &str, root: PathBuf) -> ValidatedCapabilityPack {

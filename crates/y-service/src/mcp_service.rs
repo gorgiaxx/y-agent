@@ -166,14 +166,16 @@ impl McpService {
             .find(|config| config.name == server_name)
             .cloned();
         #[cfg(feature = "capability_packs")]
-        if selected_config.is_none() {
-            selected_config = container
+        let selected_config = if selected_config.is_some() {
+            selected_config
+        } else {
+            container
                 .active_capability_pack_mcp
                 .read()
                 .await
                 .get(server_name)
-                .cloned();
-        }
+                .cloned()
+        };
         let mut registered_names = Vec::new();
 
         for (sname, tool_info) in &server_tools {

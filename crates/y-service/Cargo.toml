@@ -56,7 +56,7 @@ hex = { workspace = true, optional = true }
 semver = { version = "1", optional = true }
 
 [features]
-default = ["compaction_prefire", "worktree_isolation"]
+default = ["compaction_prefire", "hook_handlers", "worktree_isolation"]
 background_auto_wake = []
 compaction_prefire = []
 capability_packs = ["dep:hex", "dep:semver", "dep:sha2"]
