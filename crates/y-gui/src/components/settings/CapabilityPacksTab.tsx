@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FolderOpen, RefreshCw, ShieldCheck, Trash2, Undo2 } from 'lucide-react';
+import { ChevronsUpDown, FolderOpen, RefreshCw, ShieldCheck, Trash2, Undo2 } from 'lucide-react';
 
 import { getWorkspaceTrust } from '../../hooks/useWorkspaces';
 import { useSessionInteractions } from '../../hooks/useSessionInteractions';
@@ -13,8 +13,10 @@ import type {
   WorkspaceTrustDecision,
 } from '../../types';
 import { PermissionDialog } from '../chat-panel/input-area/PermissionDialog';
+import { SearchableSelect } from '../common/SearchableSelect';
 import { Button, Checkbox, Input, SettingsGroup, SettingsItem } from '../ui';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/Select';
+import { buildApprovalSessionOptions } from './capabilityPackViewModel';
 import { FeatureAvailabilityNotice } from './FeatureAvailabilityNotice';
 
 interface CapabilityPackInspectionPanelProps {
@@ -209,6 +211,13 @@ export function CapabilityPacksTab({
   const selectedWorkspacePath = workspaceTrust?.status === 'trusted'
     ? workspaceTrust.canonical_path
     : null;
+  const approvalSessionOptions = useMemo(
+    () => buildApprovalSessionOptions(sessions),
+    [sessions],
+  );
+  const selectedApprovalSession = approvalSessionOptions.find(
+    (option) => option.value === selectedSessionId,
+  );
 
   const refreshInstalled = useCallback(async () => {
     if (!available) return;
@@ -415,14 +424,25 @@ export function CapabilityPacksTab({
             </span>
           </SettingsItem>
           <SettingsItem title="Approval Session">
-            <Select value={selectedSessionId} onValueChange={setSelectedSessionId}>
-              <SelectTrigger className="w-[260px]"><SelectValue placeholder="Select session" /></SelectTrigger>
-              <SelectContent>
-                {sessions.map((session) => (
-                  <SelectItem key={session.id} value={session.id}>{session.title ?? session.id}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              options={approvalSessionOptions}
+              value={selectedSessionId}
+              onValueChange={setSelectedSessionId}
+              searchPlaceholder="Search approval sessions..."
+              emptyMessage="No matching sessions"
+            >
+              <Button
+                type="button"
+                variant="outline"
+                className="w-[260px] min-w-0 justify-between"
+                aria-label="Choose approval session"
+              >
+                <span className="truncate">
+                  {selectedApprovalSession?.label ?? 'Select session'}
+                </span>
+                <ChevronsUpDown size={13} className="shrink-0" />
+              </Button>
+            </SearchableSelect>
           </SettingsItem>
         </SettingsGroup>
 

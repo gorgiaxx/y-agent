@@ -5,9 +5,13 @@ import {
   CapabilityPackInspectionPanel,
   InstalledCapabilityPackCard,
 } from '../components/settings/CapabilityPacksTab';
+import { SearchableOptionList } from '../components/common/SearchableSelect';
+import { filterSearchableOptions } from '../components/common/searchableSelectUtils';
+import { buildApprovalSessionOptions } from '../components/settings/capabilityPackViewModel';
 import type {
   CapabilityPackInspection,
   InstalledCapabilityPackSummary,
+  SessionInfo,
 } from '../types';
 
 const inspection: CapabilityPackInspection = {
@@ -65,6 +69,39 @@ const installed: InstalledCapabilityPackSummary = {
 };
 
 describe('Capability Pack management', () => {
+  it('supports searchable approval sessions without a long select menu', () => {
+    const sessions: SessionInfo[] = Array.from({ length: 40 }, (_, index) => ({
+      id: `session-${index}`,
+      agent_id: index === 27 ? 'release-agent' : 'default',
+      title: index === 27 ? 'Needle deployment review' : `Session ${index}`,
+      manual_title: null,
+      created_at: '2026-07-20T00:00:00Z',
+      updated_at: '2026-07-20T00:00:00Z',
+      message_count: index,
+    }));
+    const options = buildApprovalSessionOptions(sessions);
+
+    expect(filterSearchableOptions(options, 'needle')).toHaveLength(1);
+    expect(filterSearchableOptions(options, 'release-agent')[0]?.value).toBe('session-27');
+    expect(filterSearchableOptions(options, 'session-27')[0]?.label).toBe('Needle deployment review');
+
+    const html = renderToStaticMarkup(
+      <SearchableOptionList
+        options={options}
+        query="needle"
+        searchPlaceholder="Search approval sessions..."
+        emptyMessage="No matching sessions"
+        selectedValue="session-27"
+        onQueryChange={() => {}}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(html).toContain('Search approval sessions...');
+    expect(html).toContain('Needle deployment review');
+    expect(html).not.toContain('Session 12');
+  });
+
   it('keeps declarative installation separate from executable activation', () => {
     const html = renderToStaticMarkup(
       <CapabilityPackInspectionPanel
