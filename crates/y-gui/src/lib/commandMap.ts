@@ -263,11 +263,20 @@ function rewindTargetBody(a: Record<string, unknown>) {
   };
 }
 
+function capabilityPackActivateBody(a: Record<string, unknown>) {
+  return {
+    workspace_path: arg(a, 'workspacePath', 'workspace_path'),
+    session_id: arg(a, 'sessionId', 'session_id'),
+    operation_id: arg(a, 'operationId', 'operation_id'),
+  };
+}
+
 // prettier-ignore
 export const COMMAND_MAP: Record<string, EndpointDef> = {
   // -- System / Health --
   health_check:        { method: 'GET',  path: '/health' },
   system_status:       { method: 'GET',  path: '/api/v1/status', response: systemStatusResponse },
+  runtime_capabilities: { method: 'GET', path: '/api/v1/runtime-capabilities' },
   provider_list:       { method: 'GET',  path: '/api/v1/providers' },
   provider_thaw_all:   { method: 'POST', path: '/api/v1/providers/thaw' },
   app_paths:           { method: 'GET',  path: '/api/v1/app-paths' },
@@ -442,6 +451,19 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
                          query: (a) => ({ path: String(a.path) }) },
   workspace_trust:     { method: 'POST', path: '/api/v1/workspaces/trust', body: id },
   workspace_untrust:   { method: 'POST', path: '/api/v1/workspaces/untrust', body: id },
+
+  // -- Capability Packs --
+  capability_pack_list: { method: 'GET', path: '/api/v1/capability-packs' },
+  capability_pack_inspect: { method: 'POST', path: '/api/v1/capability-packs/inspect', body: id },
+  capability_pack_install: { method: 'POST', path: '/api/v1/capability-packs/install',
+                         body: (a) => ({ path: a.path, allow_replacements: arg(a, 'allowReplacements', 'allow_replacements') }) },
+  capability_pack_activate: { method: 'POST', path: pathWithArg('/api/v1/capability-packs/{packId}/activate', 'packId', 'packId', 'pack_id'), body: capabilityPackActivateBody },
+  capability_pack_activate_granted: { method: 'POST', path: pathWithArg('/api/v1/capability-packs/{packId}/activate-granted', 'packId', 'packId', 'pack_id'),
+                         body: (a) => ({ workspace_path: arg(a, 'workspacePath', 'workspace_path') }) },
+  capability_pack_revoke: { method: 'POST', path: pathWithArg('/api/v1/capability-packs/{packId}/revoke', 'packId', 'packId', 'pack_id'),
+                         body: (a) => ({ workspace_path: arg(a, 'workspacePath', 'workspace_path') }) },
+  capability_pack_rollback: { method: 'POST', path: pathWithArg('/api/v1/capability-packs/{packId}/rollback', 'packId', 'packId', 'pack_id') },
+  capability_pack_remove: { method: 'DELETE', path: pathWithArg('/api/v1/capability-packs/{packId}', 'packId', 'packId', 'pack_id') },
 
   // -- Diagnostics --
   diagnostics_get_by_session: { method: 'GET', path: pathWith('/api/v1/diagnostics/sessions/{sessionId}', 'sessionId'),

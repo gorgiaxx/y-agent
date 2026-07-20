@@ -3,12 +3,108 @@
 // ---------------------------------------------------------------------------
 
 import type { SessionFormData, RetryFormData } from './settingsTypes';
+import type { RuntimeFeatureAvailability } from '../../types';
 import { jsonToSession, jsonToRetry } from './settingsTypes';
 import { SESSION_SCHEMA } from '../../utils/settingsSchemas';
 import { SettingsTabShell } from './SettingsTabShell';
 import { useSettingsTab } from './useSettingsTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
 import { Checkbox, Input, Switch, SettingsGroup, SettingsItem } from '../ui';
+import { FeatureAvailabilityNotice } from './FeatureAvailabilityNotice';
+
+interface SessionAdvancedFieldsProps {
+  form: SessionFormData;
+  prefireAvailability: RuntimeFeatureAvailability | null | undefined;
+  prefireAvailabilityError?: string | null;
+  onUpdate: (patch: Partial<SessionFormData>) => void;
+}
+
+export function SessionAdvancedFields({
+  form,
+  prefireAvailability,
+  prefireAvailabilityError,
+  onUpdate,
+}: SessionAdvancedFieldsProps) {
+  const prefireDisabled = !prefireAvailability?.available;
+
+  return (
+    <>
+      <SettingsGroup
+        title="Compaction Prefire"
+        description="Prepare a fingerprint-bound compaction result before the hard threshold is reached."
+      >
+        <FeatureAvailabilityNotice
+          featureName="Compaction prefire"
+          availability={prefireAvailability}
+          error={prefireAvailabilityError}
+        />
+        <SettingsItem
+          title="Compaction Prefire Threshold (%)"
+          description="Must remain below the hard compaction threshold."
+        >
+          <Input
+            numeric
+            type="number"
+            min={1}
+            max={99}
+            className="w-[100px]"
+            disabled={prefireDisabled}
+            value={form.compaction_prefire_threshold_pct}
+            onChange={(event) => {
+              onUpdate({
+                compaction_prefire_threshold_pct: Math.min(
+                  99,
+                  Math.max(1, Number(event.target.value) || 75),
+                ),
+              });
+            }}
+          />
+        </SettingsItem>
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Intra-turn Pruning"
+        description="Remove failed tool-call branches from in-memory history between model iterations."
+      >
+        <SettingsItem title="Enable Intra-turn Pruning">
+          <Checkbox
+            checked={form.pruning_intra_turn_enabled}
+            onCheckedChange={(checked) => {
+              onUpdate({ pruning_intra_turn_enabled: checked === true });
+            }}
+          />
+        </SettingsItem>
+        <SettingsItem title="Minimum Iteration" description="First tool-loop iteration eligible for pruning.">
+          <Input
+            numeric
+            type="number"
+            min={1}
+            className="w-[100px]"
+            disabled={!form.pruning_intra_turn_enabled}
+            value={form.pruning_intra_turn_min_iteration}
+            onChange={(event) => {
+              onUpdate({ pruning_intra_turn_min_iteration: Math.max(1, Number(event.target.value) || 3) });
+            }}
+          />
+        </SettingsItem>
+        <SettingsItem title="Token Threshold" description="Minimum removable token estimate before pruning runs.">
+          <Input
+            numeric
+            type="number"
+            min={1}
+            step={100}
+            className="w-[100px]"
+            disabled={!form.pruning_intra_turn_enabled}
+            value={form.pruning_intra_turn_token_threshold}
+            onChange={(event) => {
+              onUpdate({ pruning_intra_turn_token_threshold: Math.max(1, Number(event.target.value) || 1000) });
+            }}
+          />
+        </SettingsItem>
+      </SettingsGroup>
+    </>
+  );
+}
 
 interface SessionTabProps {
   loadSection: (section: string) => Promise<string>;
@@ -19,6 +115,8 @@ interface SessionTabProps {
   retryForm: RetryFormData;
   setRetryForm: React.Dispatch<React.SetStateAction<RetryFormData>>;
   setDirtyProviders: React.Dispatch<React.SetStateAction<boolean>>;
+  compactionPrefireAvailability?: RuntimeFeatureAvailability | null;
+  compactionPrefireAvailabilityError?: string | null;
 }
 
 export function SessionTab({
@@ -30,6 +128,8 @@ export function SessionTab({
   retryForm,
   setRetryForm,
   setDirtyProviders,
+  compactionPrefireAvailability,
+  compactionPrefireAvailabilityError,
 }: SessionTabProps) {
   const { loading, rawMode, rawContent, handleToggleRaw, handleRawChange, update } = useSettingsTab({
     section: 'session',
@@ -101,6 +201,13 @@ export function SessionTab({
               />
             </SettingsItem>
           </SettingsGroup>
+
+          <SessionAdvancedFields
+            form={sessionForm}
+            prefireAvailability={compactionPrefireAvailability}
+            prefireAvailabilityError={compactionPrefireAvailabilityError}
+            onUpdate={update}
+          />
 
           <SettingsGroup title="Context Pruning">
             <SettingsItem title="Enable Pruning">

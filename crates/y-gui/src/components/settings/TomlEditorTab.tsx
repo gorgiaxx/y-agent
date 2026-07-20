@@ -22,9 +22,10 @@ interface RawTomlEditorProps {
   content: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  readOnly?: boolean;
 }
 
-export function RawTomlEditor({ content, onChange, placeholder }: RawTomlEditorProps) {
+export function RawTomlEditor({ content, onChange, placeholder, readOnly = false }: RawTomlEditorProps) {
   return (
     <div className="toml-editor-wrap">
       <MonacoEditor
@@ -32,6 +33,7 @@ export function RawTomlEditor({ content, onChange, placeholder }: RawTomlEditorP
         value={content}
         onChange={onChange}
         language="toml"
+        readOnly={readOnly}
         placeholder={placeholder ?? 'No content. Will be created on save.'}
       />
     </div>
@@ -45,15 +47,17 @@ export function RawTomlEditor({ content, onChange, placeholder }: RawTomlEditorP
 interface RawModeToggleProps {
   rawMode: boolean;
   onToggle: (next: boolean) => void;
+  disabled?: boolean;
 }
 
-export function RawModeToggle({ rawMode, onToggle }: RawModeToggleProps) {
+export function RawModeToggle({ rawMode, onToggle, disabled = false }: RawModeToggleProps) {
   return (
     <label className="raw-mode-switch" title={rawMode ? 'Switch to Form view' : 'Switch to Raw TOML view'}>
       <span className={`raw-mode-switch-label ${rawMode ? '' : 'raw-mode-switch-label--active'}`}>Form</span>
       <Switch
         checked={rawMode}
         onCheckedChange={onToggle}
+        disabled={disabled}
       />
       <span className={`raw-mode-switch-label ${rawMode ? 'raw-mode-switch-label--active' : ''}`}>RAW</span>
     </label>

@@ -15,6 +15,7 @@ export const SESSION_SCHEMA: FieldDef[] = [
   { formKey: 'max_depth', tomlKey: 'max_depth', type: 'number', defaultValue: 16 },
   { formKey: 'max_active_per_root', tomlKey: 'max_active_per_root', type: 'number', defaultValue: 8 },
   { formKey: 'compaction_threshold_pct', tomlKey: 'compaction_threshold_pct', type: 'number', defaultValue: 85 },
+  { formKey: 'compaction_prefire_threshold_pct', tomlKey: 'compaction_prefire_threshold_pct', type: 'number', defaultValue: 75 },
   { formKey: 'auto_archive_merged', tomlKey: 'auto_archive_merged', type: 'boolean', defaultValue: true },
 
   // [pruning]
@@ -25,6 +26,45 @@ export const SESSION_SCHEMA: FieldDef[] = [
   // [pruning.progressive]
   { formKey: 'pruning_progressive_max_retries', tomlKey: 'max_retries', section: 'pruning.progressive', type: 'number', defaultValue: 2 },
   { formKey: 'pruning_progressive_preserve_identifiers', tomlKey: 'preserve_identifiers', section: 'pruning.progressive', type: 'boolean', defaultValue: true },
+
+  // [pruning.intra_turn]
+  { formKey: 'pruning_intra_turn_enabled', tomlKey: 'enabled', section: 'pruning.intra_turn', type: 'boolean', defaultValue: true },
+  { formKey: 'pruning_intra_turn_min_iteration', tomlKey: 'min_iteration', section: 'pruning.intra_turn', type: 'number', defaultValue: 3 },
+  { formKey: 'pruning_intra_turn_token_threshold', tomlKey: 'token_threshold', section: 'pruning.intra_turn', type: 'number', defaultValue: 1000 },
+];
+
+// ---------------------------------------------------------------------------
+// Background auto-wake schema  (background_auto_wake.toml)
+// ---------------------------------------------------------------------------
+
+export const BACKGROUND_WAKE_SCHEMA: FieldDef[] = [
+  { formKey: 'enabled', tomlKey: 'enabled', type: 'boolean', defaultValue: false },
+  { formKey: 'max_wakes_per_hour', tomlKey: 'max_wakes_per_hour', type: 'number', defaultValue: 2 },
+  { formKey: 'cooldown_secs', tomlKey: 'cooldown_secs', type: 'number', defaultValue: 300 },
+  { formKey: 'allow_during_orchestration', tomlKey: 'allow_during_orchestration', type: 'boolean', defaultValue: false },
+];
+
+// ---------------------------------------------------------------------------
+// LSP schema  (lsp.toml)
+// ---------------------------------------------------------------------------
+
+const LSP_SERVER_SCHEMA: FieldDef[] = [
+  { formKey: 'id', tomlKey: 'id', type: 'string', defaultValue: '' },
+  { formKey: 'command', tomlKey: 'command', type: 'string', defaultValue: '' },
+  { formKey: 'args', tomlKey: 'args', type: 'string[]', defaultValue: [] },
+  { formKey: 'language_id', tomlKey: 'language_id', type: 'string', defaultValue: '' },
+  { formKey: 'extensions', tomlKey: 'extensions', type: 'string[]', defaultValue: [] },
+  { formKey: 'root_markers', tomlKey: 'root_markers', type: 'string[]', defaultValue: [] },
+  { formKey: 'initialization_options', tomlKey: 'initialization_options', type: 'json', defaultValue: null, optional: true },
+];
+
+export const LSP_SCHEMA: FieldDef[] = [
+  { formKey: 'enabled', tomlKey: 'enabled', type: 'boolean', defaultValue: false },
+  { formKey: 'request_timeout_ms', tomlKey: 'request_timeout_ms', type: 'number', defaultValue: 15000 },
+  { formKey: 'max_message_bytes', tomlKey: 'max_message_bytes', type: 'number', defaultValue: 8388608 },
+  { formKey: 'max_restarts', tomlKey: 'max_restarts', type: 'number', defaultValue: 3 },
+  { formKey: 'restart_base_delay_ms', tomlKey: 'restart_base_delay_ms', type: 'number', defaultValue: 250 },
+  { formKey: 'servers', tomlKey: 'servers', type: 'table[]', defaultValue: [], subSchema: LSP_SERVER_SCHEMA },
 ];
 
 // ---------------------------------------------------------------------------
@@ -146,6 +186,9 @@ export const HOOKS_SCHEMA: FieldDef[] = [
   { formKey: 'middleware_timeout_ms', tomlKey: 'middleware_timeout_ms', type: 'number', defaultValue: 30000 },
   { formKey: 'event_channel_capacity', tomlKey: 'event_channel_capacity', type: 'number', defaultValue: 1024 },
   { formKey: 'max_subscribers', tomlKey: 'max_subscribers', type: 'number', defaultValue: 64 },
+  { formKey: 'handlers_enabled', tomlKey: 'handlers_enabled', type: 'boolean', defaultValue: true },
+  { formKey: 'allowed_hook_dirs', tomlKey: 'allowed_hook_dirs', type: 'string[]', defaultValue: [] },
+  { formKey: 'verbosity', tomlKey: 'verbosity', type: 'string', defaultValue: 'standard' },
 ];
 
 // ---------------------------------------------------------------------------

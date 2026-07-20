@@ -8,6 +8,7 @@ import type { AppConfigResponse, GuiConfig } from '../../types';
 import { mergeIntoRawToml } from '../../utils/tomlUtils';
 import {
   SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA,
+  BACKGROUND_WAKE_SCHEMA, LSP_SCHEMA,
   STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
   LANGFUSE_SCHEMA,
 } from '../../utils/settingsSchemas';
@@ -15,6 +16,8 @@ import {
 import type {
   ProviderFormData,
   SessionFormData,
+  BackgroundWakeFormData,
+  LspFormData,
   RuntimeFormData,
   BrowserFormData,
   McpServerFormData,
@@ -27,6 +30,8 @@ import type {
 } from './settingsTypes';
 import {
   DEFAULT_SESSION_FORM,
+  DEFAULT_BACKGROUND_WAKE_FORM,
+  DEFAULT_LSP_FORM,
   DEFAULT_RUNTIME_FORM,
   DEFAULT_BROWSER_FORM,
   DEFAULT_STORAGE_FORM,
@@ -48,7 +53,10 @@ import {
 import { GeneralTab } from './GeneralTab';
 import { ProvidersTab } from './ProvidersTab';
 import { SessionTab } from './SessionTab';
+import { BackgroundWakeTab } from './BackgroundWakeTab';
 import { RuntimeTab } from './RuntimeTab';
+import { LspTab } from './LspTab';
+import { CapabilityPacksTab } from './CapabilityPacksTab';
 import { BrowserTab } from './BrowserTab';
 import { McpTab } from './McpTab';
 import { StorageTab } from './StorageTab';
@@ -65,6 +73,7 @@ import { Button, Tabs, TabsContent, WindowControls } from '../ui';
 
 import './SettingsPanel.css';
 import './SettingsForm.css';
+import { useRuntimeCapabilities } from '../../hooks/useRuntimeCapabilities';
 
 type PromptTemplateSaveHandler = () => Promise<void>;
 
@@ -78,7 +87,7 @@ interface SettingsPanelProps {
   onRunWizard?: () => void;
 }
 
-export type SettingsTab = 'general' | 'providers' | 'session' | 'runtime' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'langfuse' | 'promptTemplates' | 'prompts' | 'about';
+export type SettingsTab = 'general' | 'providers' | 'session' | 'backgroundWake' | 'runtime' | 'lsp' | 'capabilityPacks' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'langfuse' | 'promptTemplates' | 'prompts' | 'about';
 
 export function SettingsPanel({
   config,
@@ -91,6 +100,10 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   const [localConfig, setLocalConfig] = useState<GuiConfig>({ ...config });
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const {
+    capabilities: runtimeCapabilities,
+    error: runtimeCapabilitiesError,
+  } = useRuntimeCapabilities();
 
   // ---------------------------------------------------------------------------
   // Lifted state for structured-form sections (needed by unified save).
@@ -108,10 +121,23 @@ export function SettingsPanel({
   const [dirtySession, setDirtySession] = useState(false);
   const [rawSessionToml, setRawSessionToml] = useState<string | undefined>(undefined);
 
+  // Background auto-wake
+  const [backgroundWakeForm, setBackgroundWakeForm] = useState<BackgroundWakeFormData>({ ...DEFAULT_BACKGROUND_WAKE_FORM });
+  const [dirtyBackgroundWake, setDirtyBackgroundWake] = useState(false);
+  const [rawBackgroundWakeToml, setRawBackgroundWakeToml] = useState<string | undefined>(undefined);
+
   // Runtime
   const [runtimeForm, setRuntimeForm] = useState<RuntimeFormData>({ ...DEFAULT_RUNTIME_FORM });
   const [dirtyRuntime, setDirtyRuntime] = useState(false);
   const [rawRuntimeToml, setRawRuntimeToml] = useState<string | undefined>(undefined);
+
+  // Language servers
+  const [lspForm, setLspForm] = useState<LspFormData>({
+    ...DEFAULT_LSP_FORM,
+    servers: DEFAULT_LSP_FORM.servers.map((server) => ({ ...server })),
+  });
+  const [dirtyLsp, setDirtyLsp] = useState(false);
+  const [rawLspToml, setRawLspToml] = useState<string | undefined>(undefined);
 
   // Browser
   const [browserForm, setBrowserForm] = useState<BrowserFormData>({ ...DEFAULT_BROWSER_FORM });
@@ -202,7 +228,9 @@ export function SettingsPanel({
     // Canonical TOML-backed sections: merge form into raw TOML, save, clear dirty.
     const sectionRegistry = [
       { section: 'session', dirty: dirtySession, setDirty: setDirtySession, raw: rawSessionToml, setRaw: setRawSessionToml, form: sessionForm, schema: SESSION_SCHEMA },
+      { section: 'background_auto_wake', dirty: dirtyBackgroundWake, setDirty: setDirtyBackgroundWake, raw: rawBackgroundWakeToml, setRaw: setRawBackgroundWakeToml, form: backgroundWakeForm, schema: BACKGROUND_WAKE_SCHEMA },
       { section: 'runtime', dirty: dirtyRuntime, setDirty: setDirtyRuntime, raw: rawRuntimeToml, setRaw: setRawRuntimeToml, form: runtimeForm, schema: RUNTIME_SCHEMA },
+      { section: 'lsp', dirty: dirtyLsp, setDirty: setDirtyLsp, raw: rawLspToml, setRaw: setRawLspToml, form: lspForm, schema: LSP_SCHEMA },
       { section: 'browser', dirty: dirtyBrowser, setDirty: setDirtyBrowser, raw: rawBrowserToml, setRaw: setRawBrowserToml, form: browserForm, schema: BROWSER_SCHEMA },
       { section: 'storage', dirty: dirtyStorage, setDirty: setDirtyStorage, raw: rawStorageToml, setRaw: setRawStorageToml, form: storageForm, schema: STORAGE_SCHEMA },
       { section: 'hooks', dirty: dirtyHooks, setDirty: setDirtyHooks, raw: rawHooksToml, setRaw: setRawHooksToml, form: hooksForm, schema: HOOKS_SCHEMA },
@@ -269,11 +297,11 @@ export function SettingsPanel({
     onSave(localConfig);
     setToast({ message: 'Settings saved', type: 'success' });
   }, [
-    dirtyProviders, dirtySession, dirtyRuntime, dirtyBrowser, dirtyMcp,
+    dirtyProviders, dirtySession, dirtyBackgroundWake, dirtyRuntime, dirtyLsp, dirtyBrowser, dirtyMcp,
     dirtyStorage, dirtyHooks, dirtyTools, dirtyGuardrails, dirtyKnowledge, dirtyLangfuse,
-    providersList, providersMeta, retryForm, sessionForm, runtimeForm, browserForm, mcpServersList,
+    providersList, providersMeta, retryForm, sessionForm, backgroundWakeForm, runtimeForm, lspForm, browserForm, mcpServersList,
     storageForm, hooksForm, toolsForm, guardrailsForm, knowledgeForm, langfuseForm,
-    rawSessionToml, rawRuntimeToml, rawBrowserToml, rawProvidersToml,
+    rawSessionToml, rawBackgroundWakeToml, rawRuntimeToml, rawLspToml, rawBrowserToml, rawProvidersToml,
     rawStorageToml, rawHooksToml, rawToolsToml, rawGuardrailsToml, rawKnowledgeToml, rawLangfuseToml,
     dirtyPrompts, dirtyPromptTemplates, promptTemplateSaveHandler,
     saveSection, loadSection, reloadConfig, localConfig, onSave,
@@ -339,6 +367,20 @@ export function SettingsPanel({
             retryForm={retryForm}
             setRetryForm={setRetryForm}
             setDirtyProviders={setDirtyProviders}
+            compactionPrefireAvailability={runtimeCapabilities?.compaction_prefire}
+            compactionPrefireAvailabilityError={runtimeCapabilitiesError}
+          />
+        </TabsContent>
+
+        <TabsContent value="backgroundWake" className="settings-section">
+          <BackgroundWakeTab
+            loadSection={loadSection}
+            form={backgroundWakeForm}
+            setForm={setBackgroundWakeForm}
+            setDirty={setDirtyBackgroundWake}
+            setRawToml={setRawBackgroundWakeToml}
+            availability={runtimeCapabilities?.background_auto_wake}
+            availabilityError={runtimeCapabilitiesError}
           />
         </TabsContent>
 
@@ -349,6 +391,25 @@ export function SettingsPanel({
             setRuntimeForm={setRuntimeForm}
             setDirtyRuntime={setDirtyRuntime}
             setRawRuntimeToml={setRawRuntimeToml}
+          />
+        </TabsContent>
+
+        <TabsContent value="lsp" className="settings-section">
+          <LspTab
+            loadSection={loadSection}
+            form={lspForm}
+            setForm={setLspForm}
+            setDirty={setDirtyLsp}
+            setRawToml={setRawLspToml}
+            availability={runtimeCapabilities?.lsp}
+            availabilityError={runtimeCapabilitiesError}
+          />
+        </TabsContent>
+
+        <TabsContent value="capabilityPacks" className="settings-section">
+          <CapabilityPacksTab
+            availability={runtimeCapabilities?.capability_packs}
+            availabilityError={runtimeCapabilitiesError}
           />
         </TabsContent>
 
@@ -387,6 +448,9 @@ export function SettingsPanel({
             setHooksForm={setHooksForm}
             setDirtyHooks={setDirtyHooks}
             setRawHooksToml={setRawHooksToml}
+            handlerAvailability={runtimeCapabilities?.hook_handlers}
+            llmHookAvailability={runtimeCapabilities?.llm_hooks}
+            availabilityError={runtimeCapabilitiesError}
           />
         </TabsContent>
 

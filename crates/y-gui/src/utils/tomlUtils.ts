@@ -18,7 +18,7 @@ export interface FieldDef {
    */
   section?: string;
   /** Value type for serialization. */
-  type: 'string' | 'number' | 'boolean' | 'string[]' | 'record' | 'table[]';
+  type: 'string' | 'number' | 'boolean' | 'string[]' | 'json' | 'record' | 'table[]';
   /** Default value used during deserialization when the field is missing. */
   defaultValue: unknown;
   /**
@@ -146,9 +146,31 @@ function formatValue(key: string, value: unknown, type: FieldDef['type']): strin
       const arr = (value as string[]) ?? [];
       return `${key} = [${arr.map((s) => `"${escapeTomlString(s)}"`).join(', ')}]`;
     }
+    case 'json':
+      return `${key} = ${formatInlineTomlValue(value)}`;
     default:
       return `${key} = "${escapeTomlString(String(value ?? ''))}"`;
   }
+}
+
+function formatInlineTomlKey(key: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : `"${escapeTomlString(key)}"`;
+}
+
+function formatInlineTomlValue(value: unknown): string {
+  if (typeof value === 'string') return `"${escapeTomlString(value)}"`;
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (Array.isArray(value)) {
+    return `[${value.map(formatInlineTomlValue).join(', ')}]`;
+  }
+  if (isRecord(value)) {
+    const fields = Object.entries(value).map(
+      ([key, entry]) => `${formatInlineTomlKey(key)} = ${formatInlineTomlValue(entry)}`,
+    );
+    return `{ ${fields.join(', ')} }`;
+  }
+  return '{}';
 }
 
 // ---------------------------------------------------------------------------

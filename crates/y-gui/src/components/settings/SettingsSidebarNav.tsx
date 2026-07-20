@@ -16,6 +16,9 @@ import {
   Library,
   Info,
   ArrowLeft,
+  BellRing,
+  Code2,
+  PackageOpen,
 } from 'lucide-react';
 import { NavSidebar, NavItem, NavDivider } from '../common/NavSidebar';
 
@@ -31,7 +34,10 @@ const SETTINGS_ICON_MAP: Record<string, (props: { size: number }) => ReactElemen
   general:    (p) => <Settings {...p} />,
   providers:  (p) => <Server {...p} />,
   session:    (p) => <MessageSquare {...p} />,
+  backgroundWake: (p) => <BellRing {...p} />,
   runtime:    (p) => <Terminal {...p} />,
+  lsp:        (p) => <Code2 {...p} />,
+  capabilityPacks: (p) => <PackageOpen {...p} />,
   browser:    (p) => <Globe {...p} />,
   mcp:        (p) => <Cable {...p} />,
   storage:    (p) => <HardDrive {...p} />,
@@ -49,7 +55,10 @@ const SETTINGS_CATEGORIES: { key: string; label: string }[] = [
   { key: 'general', label: 'General' },
   { key: 'providers', label: 'Providers' },
   { key: 'session', label: 'Session' },
+  { key: 'backgroundWake', label: 'Background Wake' },
   { key: 'runtime', label: 'Runtime' },
+  { key: 'lsp', label: 'Language Servers' },
+  { key: 'capabilityPacks', label: 'Capability Packs' },
   { key: 'browser', label: 'Browser' },
   { key: 'mcp', label: 'MCP Servers' },
   { key: 'storage', label: 'Storage' },

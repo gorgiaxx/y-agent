@@ -420,10 +420,104 @@ export interface SystemStatus {
   session_count: number | null;
 }
 
+export interface RuntimeFeatureAvailability {
+  available: boolean;
+  restart_required: boolean;
+}
+
+export interface RuntimeCapabilities {
+  background_auto_wake: RuntimeFeatureAvailability;
+  lsp: RuntimeFeatureAvailability;
+  capability_packs: RuntimeFeatureAvailability;
+  hook_handlers: RuntimeFeatureAvailability;
+  llm_hooks: RuntimeFeatureAvailability;
+  compaction_prefire: RuntimeFeatureAvailability;
+}
+
+export type CapabilityResourceKind = 'skill' | 'agent' | 'workflow' | 'mcp' | 'hook' | 'lsp';
+export type CapabilityPackChangeKind = 'add' | 'replace' | 'unchanged';
+
+export interface CapabilityPackIssue {
+  code: string;
+  message: string;
+  resource_kind?: CapabilityResourceKind;
+  resource_id?: string;
+  path?: string;
+}
+
+export interface ValidatedCapabilityResource {
+  kind: CapabilityResourceKind;
+  id: string;
+  path: string;
+  sha256: string;
+}
+
+export interface ValidatedCapabilityPack {
+  schema_version: number;
+  id: string;
+  version: string;
+  description: string | null;
+  provenance: {
+    source_kind: 'local_directory';
+    pack_root: string;
+    manifest_path: string;
+    manifest_sha256: string;
+  };
+  resources: ValidatedCapabilityResource[];
+}
+
+export interface CapabilityPackValidationReport {
+  valid: boolean;
+  pack: ValidatedCapabilityPack | null;
+  issues: CapabilityPackIssue[];
+}
+
+export interface CapabilityPackChange {
+  resource_kind: CapabilityResourceKind;
+  resource_id: string;
+  change: CapabilityPackChangeKind;
+  requires_activation: boolean;
+  current_sha256: string | null;
+  desired_sha256: string;
+}
+
+export interface CapabilityPackPreview {
+  pack_id: string;
+  pack_version: string;
+  can_apply: boolean;
+  changes: CapabilityPackChange[];
+}
+
+export interface CapabilityPackInspection {
+  validation: CapabilityPackValidationReport;
+  preview: CapabilityPackPreview | null;
+}
+
+export interface CapabilityPackActivationGrant {
+  pack_id: string;
+  pack_version: string;
+  transaction_id: string;
+  canonical_workspace: string;
+  approved_at: string;
+}
+
+export interface InstalledCapabilityPackSummary {
+  pack_id: string;
+  current_version: string;
+  current_transaction_id: string;
+  installed_versions: string[];
+  resources: string[];
+  executable_resources: string[];
+  activation_grants: CapabilityPackActivationGrant[];
+  live_resources: string[];
+}
+
 /** Top-level config returned by `config_get`. Each section key maps to its raw JSON. */
 export interface AppConfigResponse {
   session?: Record<string, unknown>;
+  background_auto_wake?: Record<string, unknown>;
   runtime?: Record<string, unknown>;
+  lsp?: Record<string, unknown>;
   browser?: Record<string, unknown>;
   storage?: Record<string, unknown>;
   hooks?: Record<string, unknown>;

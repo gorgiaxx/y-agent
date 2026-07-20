@@ -5,7 +5,7 @@
 import type { SettingsTab } from './SettingsPanel';
 import { escapeTomlString, deserializeFromJson } from '../../utils/tomlUtils';
 import {
-  SESSION_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA, browserPostProcess,
+  SESSION_SCHEMA, BACKGROUND_WAKE_SCHEMA, LSP_SCHEMA, BROWSER_SCHEMA, RUNTIME_SCHEMA, browserPostProcess,
   STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
   LANGFUSE_SCHEMA,
 } from '../../utils/settingsSchemas';
@@ -72,6 +72,7 @@ export interface SessionFormData {
   max_depth: number;
   max_active_per_root: number;
   compaction_threshold_pct: number;
+  compaction_prefire_threshold_pct: number;
   auto_archive_merged: boolean;
   // Pruning fields (nested [pruning] section in session.toml)
   pruning_enabled: boolean;
@@ -79,6 +80,35 @@ export interface SessionFormData {
   pruning_strategy: string;
   pruning_progressive_max_retries: number;
   pruning_progressive_preserve_identifiers: boolean;
+  pruning_intra_turn_enabled: boolean;
+  pruning_intra_turn_min_iteration: number;
+  pruning_intra_turn_token_threshold: number;
+}
+
+export interface BackgroundWakeFormData {
+  enabled: boolean;
+  max_wakes_per_hour: number;
+  cooldown_secs: number;
+  allow_during_orchestration: boolean;
+}
+
+export interface LspServerFormData {
+  id: string;
+  command: string;
+  args: string[];
+  language_id: string;
+  extensions: string[];
+  root_markers: string[];
+  initialization_options: unknown;
+}
+
+export interface LspFormData {
+  enabled: boolean;
+  request_timeout_ms: number;
+  max_message_bytes: number;
+  max_restarts: number;
+  restart_base_delay_ms: number;
+  servers: LspServerFormData[];
 }
 
 export interface VolumeMappingData {
@@ -152,6 +182,9 @@ export interface HooksFormData {
   middleware_timeout_ms: number;
   event_channel_capacity: number;
   max_subscribers: number;
+  handlers_enabled: boolean;
+  allowed_hook_dirs: string[];
+  verbosity: 'minimal' | 'standard' | 'full';
 }
 
 export interface ToolsFormData {
@@ -286,13 +319,64 @@ export const DEFAULT_SESSION_FORM: SessionFormData = {
   max_depth: 16,
   max_active_per_root: 8,
   compaction_threshold_pct: 85,
+  compaction_prefire_threshold_pct: 75,
   auto_archive_merged: true,
   pruning_enabled: true,
   pruning_token_threshold: 2000,
   pruning_strategy: 'auto',
   pruning_progressive_max_retries: 2,
   pruning_progressive_preserve_identifiers: true,
+  pruning_intra_turn_enabled: true,
+  pruning_intra_turn_min_iteration: 3,
+  pruning_intra_turn_token_threshold: 1000,
 };
+
+export const DEFAULT_BACKGROUND_WAKE_FORM: BackgroundWakeFormData = {
+  enabled: false,
+  max_wakes_per_hour: 2,
+  cooldown_secs: 300,
+  allow_during_orchestration: false,
+};
+
+export const DEFAULT_LSP_FORM: LspFormData = {
+  enabled: false,
+  request_timeout_ms: 15000,
+  max_message_bytes: 8388608,
+  max_restarts: 3,
+  restart_base_delay_ms: 250,
+  servers: [
+    {
+      id: 'rust',
+      command: 'rust-analyzer',
+      args: [],
+      language_id: 'rust',
+      extensions: ['rs'],
+      root_markers: ['Cargo.toml', 'rust-project.json'],
+      initialization_options: null,
+    },
+    {
+      id: 'typescript',
+      command: 'typescript-language-server',
+      args: ['--stdio'],
+      language_id: 'typescript',
+      extensions: ['ts', 'tsx', 'js', 'jsx', 'd.ts'],
+      root_markers: ['tsconfig.json', 'jsconfig.json', 'package.json'],
+      initialization_options: null,
+    },
+  ],
+};
+
+export function emptyLspServer(): LspServerFormData {
+  return {
+    id: '',
+    command: '',
+    args: [],
+    language_id: '',
+    extensions: [],
+    root_markers: [],
+    initialization_options: null,
+  };
+}
 
 export const DEFAULT_RUNTIME_FORM: RuntimeFormData = {
   default_backend: 'native',
@@ -355,6 +439,9 @@ export const DEFAULT_HOOKS_FORM: HooksFormData = {
   middleware_timeout_ms: 30000,
   event_channel_capacity: 1024,
   max_subscribers: 64,
+  handlers_enabled: true,
+  allowed_hook_dirs: [],
+  verbosity: 'standard',
 };
 
 export const DEFAULT_TOOLS_FORM: ToolsFormData = {
@@ -610,6 +697,27 @@ export function jsonToSession(json: unknown): SessionFormData {
   return deserializeFromJson(json, SESSION_SCHEMA) as unknown as SessionFormData;
 }
 
+export function jsonToBackgroundWake(json: unknown): BackgroundWakeFormData {
+  return deserializeFromJson(json, BACKGROUND_WAKE_SCHEMA) as unknown as BackgroundWakeFormData;
+}
+
+export function jsonToLsp(json: unknown): LspFormData {
+  const form = deserializeFromJson(json, LSP_SCHEMA) as unknown as LspFormData;
+  const hasServers = json !== null
+    && typeof json === 'object'
+    && !Array.isArray(json)
+    && Object.prototype.hasOwnProperty.call(json, 'servers');
+  if (!hasServers) {
+    form.servers = DEFAULT_LSP_FORM.servers.map((server) => ({
+      ...server,
+      args: [...server.args],
+      extensions: [...server.extensions],
+      root_markers: [...server.root_markers],
+    }));
+  }
+  return form;
+}
+
 export function jsonToRuntime(json: unknown): RuntimeFormData {
   return deserializeFromJson(json, RUNTIME_SCHEMA) as unknown as RuntimeFormData;
 }
@@ -710,7 +818,10 @@ export const TAB_LABELS: Record<SettingsTab, string> = {
   general: 'General',
   providers: 'Providers',
   session: 'Session',
+  backgroundWake: 'Background Wake',
   runtime: 'Runtime',
+  lsp: 'Language Servers',
+  capabilityPacks: 'Capability Packs',
   browser: 'Browser',
   mcp: 'MCP Servers',
   storage: 'Storage',

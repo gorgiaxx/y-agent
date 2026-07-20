@@ -20,6 +20,8 @@ export interface SettingsTabShellProps {
   rawPlaceholder: string;
   /** The form-mode body (rendered when not in raw mode). */
   form: ReactNode;
+  /** Disable both form controls and RAW editing for an unavailable subsystem. */
+  editingDisabled?: boolean;
 }
 
 export function SettingsTabShell({
@@ -30,6 +32,7 @@ export function SettingsTabShell({
   onRawChange,
   rawPlaceholder,
   form,
+  editingDisabled = false,
 }: SettingsTabShellProps) {
   if (loading) {
     return <div className="section-loading">Loading...</div>;
@@ -39,12 +42,13 @@ export function SettingsTabShell({
     return (
       <>
         <SettingsActionSlot>
-          <RawModeToggle rawMode={rawMode} onToggle={onToggleRaw} />
+          <RawModeToggle rawMode={rawMode} onToggle={onToggleRaw} disabled={editingDisabled} />
         </SettingsActionSlot>
         <RawTomlEditor
           content={rawContent}
           onChange={onRawChange}
           placeholder={rawPlaceholder}
+          readOnly={editingDisabled}
         />
       </>
     );
@@ -53,7 +57,7 @@ export function SettingsTabShell({
   return (
     <>
       <SettingsActionSlot>
-        <RawModeToggle rawMode={rawMode} onToggle={onToggleRaw} />
+        <RawModeToggle rawMode={rawMode} onToggle={onToggleRaw} disabled={editingDisabled} />
       </SettingsActionSlot>
       {form}
     </>
