@@ -142,8 +142,8 @@ pub use skill_ingestion::{
 };
 pub use skill_service::{SkillDetail, SkillInfo, SkillService};
 pub use system::{
-    HealthReport, HttpProtocol, MemoryStats, ProviderInfo, ProviderTestRequest, StatusReport,
-    SystemService,
+    HealthReport, HttpProtocol, MemoryStats, ProviderInfo, ProviderTestRequest,
+    RuntimeCapabilities, RuntimeFeatureAvailability, StatusReport, SystemService,
 };
 pub use tool_runtime_events::{PublishedToolRuntimeEvent, ToolRuntimeEventService};
 pub use workflow_run_service::{WorkflowRunError, WorkflowRunService};

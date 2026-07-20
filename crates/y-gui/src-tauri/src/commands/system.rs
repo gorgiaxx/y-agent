@@ -56,6 +56,12 @@ pub async fn system_status(state: State<'_, AppState>) -> Result<SystemStatus, S
     })
 }
 
+/// Report optional subsystems compiled into the active desktop binary.
+#[tauri::command]
+pub async fn runtime_capabilities() -> Result<y_service::RuntimeCapabilities, String> {
+    Ok(SystemService::runtime_capabilities())
+}
+
 // ---------------------------------------------------------------------------
 // Application paths
 // ---------------------------------------------------------------------------
@@ -650,4 +656,20 @@ pub async fn window_set_theme(window: tauri::WebviewWindow, theme: String) -> Re
     window
         .set_theme(native_theme)
         .map_err(|e| format!("Failed to set window theme: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_runtime_capabilities_delegates_to_service_contract() {
+        let capabilities = runtime_capabilities().await.expect("runtime capabilities");
+
+        assert_eq!(
+            capabilities.background_auto_wake.available,
+            cfg!(feature = "background_auto_wake")
+        );
+        assert_eq!(capabilities.lsp.available, cfg!(feature = "lsp"));
+    }
 }

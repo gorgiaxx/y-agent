@@ -498,6 +498,7 @@ pub fn run() {
             commands::config::mcp_status,
             // System
             commands::system::system_status,
+            commands::system::runtime_capabilities,
             commands::system::health_check,
             commands::system::save_remote_image,
             commands::system::provider_list,
@@ -588,6 +589,22 @@ pub fn run() {
             commands::background_tasks::background_task_poll,
             commands::background_tasks::background_task_write,
             commands::background_tasks::background_task_kill,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_list,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_inspect,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_install,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_activate,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_activate_granted,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_revoke,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_rollback,
+            #[cfg(feature = "capability_packs")]
+            commands::capability_packs::capability_pack_remove,
             // Attachments
             commands::attachments::attachment_read_files,
             // Rewind (File History)

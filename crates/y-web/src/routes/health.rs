@@ -31,6 +31,7 @@ const API_FEATURES: &[&str] = &[
     "provider_test",
     "remote_auth",
     "rewind",
+    "runtime_capabilities",
     "schedules",
     "sse_events",
     "skills",
@@ -39,6 +40,17 @@ const API_FEATURES: &[&str] = &[
     "workflows",
     "workspaces",
 ];
+
+fn api_features() -> Vec<String> {
+    let mut features = API_FEATURES
+        .iter()
+        .map(|feature| (*feature).to_string())
+        .collect::<Vec<_>>();
+    #[cfg(feature = "capability_packs")]
+    features.push("capability_packs".to_string());
+    features.sort();
+    features
+}
 
 // ---------------------------------------------------------------------------
 // Response types
@@ -85,10 +97,7 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
         version: state.version.clone(),
         api_schema_version: API_SCHEMA_VERSION.to_string(),
         app_version: state.version.clone(),
-        features: API_FEATURES
-            .iter()
-            .map(|feature| (*feature).to_string())
-            .collect(),
+        features: api_features(),
     })
 }
 
@@ -96,6 +105,11 @@ async fn health_check(State(state): State<AppState>) -> Json<HealthResponse> {
 async fn system_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     let report = SystemService::health(&state.container, &state.version).await;
     Json(serde_json::to_value(report).unwrap_or_default())
+}
+
+/// `GET /api/v1/runtime-capabilities` -- optional compiled subsystem contract.
+async fn runtime_capabilities() -> Json<y_service::RuntimeCapabilities> {
+    Json(SystemService::runtime_capabilities())
 }
 
 /// `GET /api/v1/providers` -- list all configured providers.
@@ -197,6 +211,7 @@ pub fn router() -> Router<AppState> {
 pub fn protected_router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/status", get(system_status))
+        .route("/api/v1/runtime-capabilities", get(runtime_capabilities))
         .route("/api/v1/providers", get(provider_list))
         .route("/api/v1/providers/thaw", post(provider_thaw_all))
         .route("/api/v1/app-paths", get(app_paths))
@@ -214,10 +229,7 @@ mod tests {
             version: "0.1.0".into(),
             api_schema_version: API_SCHEMA_VERSION.into(),
             app_version: "0.1.0".into(),
-            features: API_FEATURES
-                .iter()
-                .map(|feature| (*feature).to_string())
-                .collect(),
+            features: api_features(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"status\":\"ok\""));
@@ -230,6 +242,12 @@ mod tests {
         assert!(json.contains("\"memory_stats\""));
         assert!(json.contains("\"remote_auth\""));
         assert!(json.contains("\"static_spa\""));
+        assert_eq!(
+            resp.features
+                .iter()
+                .any(|feature| feature == "capability_packs"),
+            cfg!(feature = "capability_packs")
+        );
     }
 
     #[test]
@@ -247,5 +265,16 @@ mod tests {
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("\"pending_runs\":1"));
         assert!(json.contains("\"file_history_total_snapshots\":8"));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_capabilities_uses_service_contract() {
+        let Json(capabilities) = runtime_capabilities().await;
+
+        assert_eq!(
+            capabilities.background_auto_wake.available,
+            cfg!(feature = "background_auto_wake")
+        );
+        assert_eq!(capabilities.lsp.available, cfg!(feature = "lsp"));
     }
 }

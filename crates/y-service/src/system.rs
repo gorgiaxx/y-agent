@@ -34,6 +34,32 @@ pub struct HealthReport {
     pub diagnostics: crate::diagnostics::HealthCheckResult,
 }
 
+/// Compile-time availability and reload semantics for one optional subsystem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct RuntimeFeatureAvailability {
+    /// Whether the active binary was compiled with this subsystem.
+    pub available: bool,
+    /// Whether configuration changes require restarting the active process.
+    pub restart_required: bool,
+}
+
+/// Optional runtime capabilities exposed consistently to presentation layers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct RuntimeCapabilities {
+    /// Automatic model wake-up after background process completion.
+    pub background_auto_wake: RuntimeFeatureAvailability,
+    /// Language-server based code intelligence.
+    pub lsp: RuntimeFeatureAvailability,
+    /// Capability Pack installation and activation lifecycle.
+    pub capability_packs: RuntimeFeatureAvailability,
+    /// Executable hook handler support.
+    pub hook_handlers: RuntimeFeatureAvailability,
+    /// LLM-backed hook handler support.
+    pub llm_hooks: RuntimeFeatureAvailability,
+    /// Sampling preflight background compaction.
+    pub compaction_prefire: RuntimeFeatureAvailability,
+}
+
 /// Summary of a configured provider.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ProviderInfo {
@@ -90,6 +116,36 @@ enum ProbeSuccessKind {
 pub struct SystemService;
 
 impl SystemService {
+    /// Report optional subsystems compiled into the active presentation binary.
+    pub fn runtime_capabilities() -> RuntimeCapabilities {
+        RuntimeCapabilities {
+            background_auto_wake: RuntimeFeatureAvailability {
+                available: cfg!(feature = "background_auto_wake"),
+                restart_required: true,
+            },
+            lsp: RuntimeFeatureAvailability {
+                available: cfg!(feature = "lsp"),
+                restart_required: true,
+            },
+            capability_packs: RuntimeFeatureAvailability {
+                available: cfg!(feature = "capability_packs"),
+                restart_required: false,
+            },
+            hook_handlers: RuntimeFeatureAvailability {
+                available: cfg!(feature = "hook_handlers"),
+                restart_required: false,
+            },
+            llm_hooks: RuntimeFeatureAvailability {
+                available: cfg!(feature = "llm_hooks"),
+                restart_required: false,
+            },
+            compaction_prefire: RuntimeFeatureAvailability {
+                available: cfg!(feature = "compaction_prefire"),
+                restart_required: false,
+            },
+        }
+    }
+
     /// Build a validated header map for provider-facing HTTP requests.
     pub fn provider_custom_header_map<S: std::hash::BuildHasher>(
         headers: &HashMap<String, String, S>,
@@ -687,6 +743,36 @@ mod tests {
     use y_core::provider::ProviderCapability;
 
     use super::*;
+
+    #[test]
+    fn test_runtime_capabilities_report_compiled_feature_contract() {
+        let capabilities = SystemService::runtime_capabilities();
+
+        assert_eq!(
+            capabilities.background_auto_wake.available,
+            cfg!(feature = "background_auto_wake")
+        );
+        assert_eq!(capabilities.lsp.available, cfg!(feature = "lsp"));
+        assert_eq!(
+            capabilities.capability_packs.available,
+            cfg!(feature = "capability_packs")
+        );
+        assert_eq!(
+            capabilities.hook_handlers.available,
+            cfg!(feature = "hook_handlers")
+        );
+        assert_eq!(
+            capabilities.llm_hooks.available,
+            cfg!(feature = "llm_hooks")
+        );
+        assert_eq!(
+            capabilities.compaction_prefire.available,
+            cfg!(feature = "compaction_prefire")
+        );
+        assert!(capabilities.background_auto_wake.restart_required);
+        assert!(capabilities.lsp.restart_required);
+        assert!(!capabilities.capability_packs.restart_required);
+    }
 
     struct SingleResponseServer {
         base_url: String,
