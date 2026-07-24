@@ -2,9 +2,12 @@
 # =============================================================================
 # build-release.sh -- Build y-agent and package into distributable zip archives
 #
-# Produces two zip files per platform:
+# Produces two zip files per platform from one shared Rust compilation:
 #   y-agent-cli-{version}-{platform}.zip   CLI binary + config + skills + README
 #   y-agent-gui-{version}-{platform}.zip   GUI installer bundle + README
+#
+# macOS GUI archives include a .pkg installer that upgrades
+# /Applications/y-agent.app and installs /usr/local/bin/yagent.
 #
 # Usage:
 #   ./scripts/build-release.sh                                  Build CLI + GUI
@@ -38,6 +41,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DIST_DIR="$PROJECT_ROOT/dist"
+
+clean_release_metadata() {
+  local path="$1"
+  find "$path" \( -name '.DS_Store' -o -name '._*' \) -delete
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -cr "$path"
+  fi
+}
 
 # -- Parse arguments -----------------------------------------------------------
 BUILD_CLI=true
@@ -258,32 +269,60 @@ else
   TARGET_RELEASE_DIR="$PROJECT_ROOT/target/release"
 fi
 
-# -- Build CLI -----------------------------------------------------------------
-if [[ "$BUILD_CLI" == true ]]; then
-  echo "[1/2] Building CLI binary..."
+# -- Prepare shared build ------------------------------------------------------
+GUI_DIR="$PROJECT_ROOT/crates/y-gui"
+BUNDLE_DIR="$TARGET_RELEASE_DIR/bundle"
+NEED_CLI_BINARY="$BUILD_CLI"
 
-  # Clean old CLI binary to prevent stale artifacts
-  echo "  Cleaning old CLI binary..."
+# The macOS GUI installer always includes the CLI so `yagent` is available
+# immediately after installation, even in GUI-only release mode.
+if [[ "$BUILD_GUI" == true && "$PLATFORM" == darwin-* ]]; then
+  NEED_CLI_BINARY=true
+fi
+
+if [[ "$BUILD_GUI" == true ]]; then
+  echo "Preparing shared frontend..."
+  rm -rf "$BUNDLE_DIR"
+  (cd "$GUI_DIR" && npm ci)
+  (cd "$GUI_DIR" && npm run build)
+  echo ""
+fi
+
+echo "Building release binaries in one Cargo invocation..."
+if [[ "$NEED_CLI_BINARY" == true ]]; then
   rm -f "$TARGET_RELEASE_DIR/y-agent${BIN_EXT}"
+fi
+if [[ "$BUILD_GUI" == true ]]; then
+  rm -f "$TARGET_RELEASE_DIR/y-gui${BIN_EXT}"
+fi
 
-  CLI_CARGO_ARGS=(build --release --bin y-agent)
-  if [[ -n "$BUILD_TARGET" ]]; then
-    CLI_CARGO_ARGS+=(--target "$BUILD_TARGET")
-  fi
+BUILD_CARGO_ARGS=(build --release)
+if [[ "$NEED_CLI_BINARY" == true && "$BUILD_GUI" == true ]]; then
+  BUILD_CARGO_ARGS+=(--package y-cli --package y-gui --bins)
+elif [[ "$NEED_CLI_BINARY" == true ]]; then
+  BUILD_CARGO_ARGS+=(--package y-cli --bin y-agent)
+else
+  BUILD_CARGO_ARGS+=(--package y-gui --bin y-gui)
+fi
+if [[ "$BUILD_GUI" == true ]]; then
+  # Tauri uses this feature to embed frontendDist instead of loading devUrl.
+  BUILD_CARGO_ARGS+=(--features y-gui/custom-protocol)
+fi
+if [[ -n "$BUILD_TARGET" ]]; then
+  BUILD_CARGO_ARGS+=(--target "$BUILD_TARGET")
+fi
+(cd "$PROJECT_ROOT" && cargo "${BUILD_CARGO_ARGS[@]}")
 
-  (cd "$PROJECT_ROOT" && cargo "${CLI_CARGO_ARGS[@]}")
+CLI_BIN="$TARGET_RELEASE_DIR/y-agent${BIN_EXT}"
+if [[ "$NEED_CLI_BINARY" == true && "${SKIP_STRIP:-0}" != "1" && -f "$CLI_BIN" && -z "$BIN_EXT" ]]; then
+  echo "  Stripping CLI binary..."
+  strip "$CLI_BIN" 2>/dev/null || true
+fi
+echo ""
 
-  # Locate binary
-  CLI_BIN="$TARGET_RELEASE_DIR/y-agent${BIN_EXT}"
-
-  # Strip binary (skip for cross-compiled Windows binaries -- strip does not
-  # understand PE format on macOS/Linux)
-  if [[ "${SKIP_STRIP:-0}" != "1" && -f "$CLI_BIN" && -z "$BIN_EXT" ]]; then
-    echo "  Stripping binary..."
-    strip "$CLI_BIN" 2>/dev/null || true
-  fi
-
-  # Package CLI zip
+# -- Package CLI ---------------------------------------------------------------
+if [[ "$BUILD_CLI" == true ]]; then
+  echo "Packaging CLI archive..."
   CLI_ARCHIVE="y-agent-cli-${VERSION}-${PLATFORM}"
   CLI_STAGING="$DIST_DIR/$CLI_ARCHIVE"
   mkdir -p "$CLI_STAGING"
@@ -293,41 +332,28 @@ if [[ "$BUILD_CLI" == true ]]; then
   cp -r "$PROJECT_ROOT/skills" "$CLI_STAGING/skills"
   cp "$PROJECT_ROOT/README.md" "$CLI_STAGING/"
 
-  (cd "$DIST_DIR" && zip -r "${CLI_ARCHIVE}.zip" "$CLI_ARCHIVE")
+  clean_release_metadata "$CLI_STAGING"
+  (cd "$DIST_DIR" && zip -X -r "${CLI_ARCHIVE}.zip" "$CLI_ARCHIVE")
   rm -rf "$CLI_STAGING"
 
   echo "  -> $DIST_DIR/${CLI_ARCHIVE}.zip ($(du -h "$DIST_DIR/${CLI_ARCHIVE}.zip" | cut -f1))"
   echo ""
 fi
 
-# -- Build GUI -----------------------------------------------------------------
+# -- Bundle GUI ---------------------------------------------------------------
 if [[ "$BUILD_GUI" == true ]]; then
-  if [[ "$BUILD_CLI" == true ]]; then
-    echo "[2/2] Building GUI (Tauri) app..."
-  else
-    echo "[1/1] Building GUI (Tauri) app..."
+  echo "Bundling prebuilt GUI binary..."
+  TAURI_BUNDLE_ARGS=(bundle --ci)
+  if [[ "$PLATFORM" == darwin-* ]]; then
+    # The .pkg is the canonical macOS installer. Bundling only the .app avoids
+    # Finder permission conflicts from drag-and-drop DMG upgrades and keeps
+    # create-dmg failures from blocking the combined release build.
+    TAURI_BUNDLE_ARGS+=(--bundles app)
   fi
-
-  GUI_DIR="$PROJECT_ROOT/crates/y-gui"
-
-  # Clean old bundle artifacts to prevent stale installers from being packaged
-  BUNDLE_DIR="$TARGET_RELEASE_DIR/bundle"
-  if [[ -d "$BUNDLE_DIR" ]]; then
-    echo "  Cleaning old bundle directory..."
-    rm -rf "$BUNDLE_DIR"
-  fi
-
-  echo "  Installing npm dependencies..."
-  (cd "$GUI_DIR" && npm ci)
-
-  echo "  Building Tauri app..."
   if [[ -n "$BUILD_TARGET" ]]; then
-    (cd "$GUI_DIR" && npx @tauri-apps/cli build --target "$BUILD_TARGET")
-  else
-    (cd "$GUI_DIR" && npx @tauri-apps/cli build)
+    TAURI_BUNDLE_ARGS+=(--target "$BUILD_TARGET")
   fi
-
-  # BUNDLE_DIR is already set above from TARGET_RELEASE_DIR
+  (cd "$GUI_DIR" && npx @tauri-apps/cli "${TAURI_BUNDLE_ARGS[@]}")
 
   if [[ "$PLATFORM" == linux-* ]]; then
     if compgen -G "$BUNDLE_DIR/appimage/*.AppImage" > /dev/null 2>&1; then
@@ -358,14 +384,19 @@ if [[ "$BUILD_GUI" == true ]]; then
     fi
   fi
 
-  # Unmount any DMGs that Tauri's create-dmg may have left mounted
-  if [[ "$PLATFORM" == darwin-* ]]; then
-    for vol in /Volumes/y-agent*; do
-      if [[ -d "$vol" ]]; then
-        echo "  Unmounting leftover volume: $vol"
-        hdiutil detach "$vol" -quiet 2>/dev/null || true
-      fi
-    done
+  if [[ "$PLATFORM" == darwin-* && "$HOST_OS" == "darwin" ]]; then
+    MACOS_APP_BUNDLE="$BUNDLE_DIR/macos/y-agent.app"
+    if [[ -d "$MACOS_APP_BUNDLE" ]]; then
+      mkdir -p "$BUNDLE_DIR/pkg"
+      "$PROJECT_ROOT/scripts/package-macos-pkg.sh" \
+        --app-bundle "$MACOS_APP_BUNDLE" \
+        --cli-binary "$CLI_BIN" \
+        --version "$VERSION" \
+        --platform "$PLATFORM" \
+        --output-dir "$BUNDLE_DIR/pkg"
+    else
+      echo "  WARNING: No .app found at $MACOS_APP_BUNDLE; skipping .pkg installer" >&2
+    fi
   fi
 
   # Package GUI zip
@@ -375,11 +406,12 @@ if [[ "$BUILD_GUI" == true ]]; then
 
   case "$PLATFORM" in
     darwin-*)
-      if compgen -G "$BUNDLE_DIR/dmg/*.dmg" > /dev/null 2>&1; then
-        cp "$BUNDLE_DIR"/dmg/*.dmg "$GUI_STAGING/"
-        echo "  Collected .dmg"
+      if compgen -G "$BUNDLE_DIR/pkg/*.pkg" > /dev/null 2>&1; then
+        cp "$BUNDLE_DIR"/pkg/*.pkg "$GUI_STAGING/"
+        cp "$BUNDLE_DIR"/pkg/*.pkg "$DIST_DIR/"
+        echo "  Collected .pkg installer (GUI + yagent CLI)"
       else
-        echo "  WARNING: No .dmg found in $BUNDLE_DIR/dmg/"
+        echo "  WARNING: No .pkg found in $BUNDLE_DIR/pkg/"
       fi
       ;;
     linux-*)
@@ -410,7 +442,8 @@ if [[ "$BUILD_GUI" == true ]]; then
 
   cp "$PROJECT_ROOT/README.md" "$GUI_STAGING/"
 
-  (cd "$DIST_DIR" && zip -r "${GUI_ARCHIVE}.zip" "$GUI_ARCHIVE")
+  clean_release_metadata "$GUI_STAGING"
+  (cd "$DIST_DIR" && zip -X -r "${GUI_ARCHIVE}.zip" "$GUI_ARCHIVE")
   rm -rf "$GUI_STAGING"
 
   echo "  -> $DIST_DIR/${GUI_ARCHIVE}.zip ($(du -h "$DIST_DIR/${GUI_ARCHIVE}.zip" | cut -f1))"
@@ -422,6 +455,11 @@ echo "================================================================"
 echo "  Build complete"
 echo "================================================================"
 echo ""
-ls -lah "$DIST_DIR"/*.zip 2>/dev/null || echo "  (no zip files produced)"
+RELEASE_FILES=("$DIST_DIR"/*)
+if [[ -e "${RELEASE_FILES[0]}" ]]; then
+  ls -lah "${RELEASE_FILES[@]}"
+else
+  echo "  (no release files produced)"
+fi
 echo ""
 echo "================================================================"

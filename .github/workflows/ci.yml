@@ -39,6 +39,18 @@ jobs:
       - name: Tauri version family regression test
         run: bash scripts/tests/test-tauri-version-family.sh
 
+      - name: Unified development entrypoint regression test
+        run: bash scripts/tests/test-unified-development-entrypoints.sh
+
+      - name: Unified release build regression test
+        run: bash scripts/tests/test-build-release-unified.sh
+
+      - name: macOS package layout regression test
+        run: bash scripts/tests/test-package-macos-pkg.sh
+
+      - name: macOS release-note package regression test
+        run: bash scripts/tests/test-release-notes-macos-pkg.sh
+
   gui:
     name: GUI
     runs-on: ubuntu-latest

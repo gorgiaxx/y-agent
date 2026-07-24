@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+# Finder cannot replace an administrator-owned or locked application bundle.
+# Package Installer runs this script with elevated privileges, so clear file
+# flags and remove the previous bundle before installing the new payload.
+if [ -e "/Applications/y-agent.app" ]; then
+  chflags -R nouchg,noschg "/Applications/y-agent.app" 2>/dev/null || true
+  chmod -R u+rwX "/Applications/y-agent.app" 2>/dev/null || true
+  rm -rf "/Applications/y-agent.app"
+fi
+
+rm -f "/usr/local/bin/yagent" "/usr/local/bin/y-agent"
+
+exit 0

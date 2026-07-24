@@ -25,6 +25,7 @@ members = [
     "crates/y-browser",
     "crates/y-web",
     "crates/y-cli",
+    "crates/y-xtask",
     "crates/y-test-utils",
     "crates/y-gui/src-tauri",
 ]

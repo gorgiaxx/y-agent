@@ -243,7 +243,20 @@ EOF
 | :------- | :----- | :------- |
 EOF
 
-  # macOS GUI
+  # macOS GUI + CLI installer
+  for pkg in ${DIST_DIR}/*.pkg; do
+    [[ -f "$pkg" ]] || continue
+    fname="$(basename "$pkg")"
+    if echo "$fname" | grep -qi "arm64\|aarch64"; then
+      echo "| **macOS** | PKG installer + CLI (Apple Silicon) | $(badge "PKG" "Apple_Silicon" "000000" "apple" "${BASE_URL}/${fname}") |"
+    elif echo "$fname" | grep -qi "x64\|amd64\|x86_64"; then
+      echo "| **macOS** | PKG installer + CLI (Intel x64) | $(badge "PKG" "Intel_x64" "000000" "apple" "${BASE_URL}/${fname}") |"
+    else
+      echo "| **macOS** | PKG installer + CLI | $(badge "PKG" "Universal" "000000" "apple" "${BASE_URL}/${fname}") |"
+    fi
+  done
+
+  # macOS GUI-only disk image
   for dmg in ${DIST_DIR}/*.dmg; do
     [[ -f "$dmg" ]] || continue
     fname="$(basename "$dmg")"
@@ -330,6 +343,9 @@ cd y-agent-cli-${VERSION}-<platform>
 Expand-Archive y-agent-cli-${VERSION}-windows-amd64.zip -DestinationPath .
 .\y-agent-cli-${VERSION}-windows-amd64\y-agent.exe --help
 \`\`\`
+
+**macOS desktop + CLI:** install the \`.pkg\` asset. It installs the desktop app
+and both \`yagent\` and \`y-agent\` commands.
 
 ### Verification
 

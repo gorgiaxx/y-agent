@@ -97,26 +97,46 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Resolved version: ${VERSION}"
 
-      # -- CLI Binary ----------------------------------------------------------
-      - name: Build CLI binary
-        run: cargo build --release --target ${{ matrix.target }} --bin y-agent
+      - name: Install frontend dependencies
+        working-directory: crates/y-gui
+        run: npm ci
+
+      - name: Build shared frontend
+        working-directory: crates/y-gui
+        run: npm run build
+
+      - name: Build CLI and GUI binaries together
+        run: cargo build --release --target ${{ matrix.target }} --package y-cli --package y-gui --bins --features y-gui/custom-protocol
 
       - name: Strip CLI binary
         if: runner.os != 'Windows'
         run: strip target/${{ matrix.target }}/release/y-agent
 
-      # -- GUI (Tauri) App -----------------------------------------------------
-      - name: Install frontend dependencies
-        working-directory: crates/y-gui
-        run: npm ci
-
-      - name: Build Tauri app
+      - name: Bundle prebuilt Tauri app
         working-directory: crates/y-gui
         env:
           NODE_OPTIONS: "--max-old-space-size=3072"
           CI: true
           TAURI_SIGNING_PRIVATE_KEY: ""
-        run: npx @tauri-apps/cli build --ci --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            npx @tauri-apps/cli bundle --ci --bundles app --target ${{ matrix.target }}
+          else
+            npx @tauri-apps/cli bundle --ci --target ${{ matrix.target }}
+          fi
+
+      - name: Build macOS installer with yagent CLI
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          chmod +x scripts/package-macos-pkg.sh
+          scripts/package-macos-pkg.sh \
+            --app-bundle "target/${{ matrix.target }}/release/bundle/macos/y-agent.app" \
+            --cli-binary "target/${{ matrix.target }}/release/y-agent" \
+            --version "${{ steps.version.outputs.version }}" \
+            --platform "${{ matrix.platform }}" \
+            --output-dir "target/${{ matrix.target }}/release/bundle/pkg"
 
       - name: Patch AppImage bundle (Linux)
         if: runner.os == 'Linux'
@@ -266,7 +286,7 @@ jobs:
           BUNDLE_DIR="target/${{ matrix.target }}/release/bundle"
           mkdir -p dist
           if [ "${{ runner.os }}" = "macOS" ]; then
-            cp "${BUNDLE_DIR}"/dmg/*.dmg dist/ 2>/dev/null || true
+            cp "${BUNDLE_DIR}"/pkg/*.pkg dist/ 2>/dev/null || true
           else
             cp "${BUNDLE_DIR}"/deb/*.deb dist/ 2>/dev/null || true
             cp "${BUNDLE_DIR}"/appimage/*.AppImage dist/ 2>/dev/null || true
@@ -296,7 +316,7 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*.dmg
+            dist/*.pkg
             dist/*.deb
             dist/*.AppImage
             dist/*.rpm
@@ -380,7 +400,7 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*.dmg
+            dist/*.pkg
             dist/*.deb
             dist/*.AppImage
             dist/*.rpm
