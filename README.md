@@ -59,8 +59,11 @@ SQLite is embedded. Qdrant and Langfuse are optional integrations.
 ### Build and initialize
 
 ```bash
-cargo build --release
-cargo run --release -- init
+# Build the shared frontend plus the CLI and GUI binaries.
+cargo app build --release
+
+# Run CLI initialization.
+cargo app cli -- init
 ```
 
 Configure at least one provider in `config/providers.toml` or through the GUI.
@@ -71,20 +74,68 @@ possible.
 
 ```bash
 # Direct prompt or interactive chat
-cargo run --release -- "inspect this repository"
-cargo run --release -- chat
+cargo app cli -- "inspect this repository"
+cargo app cli -- chat
 
 # Terminal UI
-cargo run --release -- tui
+cargo app cli -- tui
 
 # REST API and optional Web UI
-cargo run --release -- serve
+cargo app cli -- serve
 
-# Desktop development
+# Show the complete CLI command surface
+cargo app cli -- --help
+
+# Desktop GUI using the same checked-out source and frontend bundle
+cargo app gui
+
+# Desktop development with frontend hot reload
 cd crates/y-gui
 npm install
 npm run tauri dev
 ```
+
+The TUI uses a full-width conversation view with an on-demand command palette
+instead of a persistent session sidebar. Useful commands include:
+
+```text
+/goal <objective>        run a goal with automatic fast/plan/loop selection
+/mode <mode>             select fast, auto, plan, or loop for later messages
+/plan [prompt]           select plan mode or submit a planned turn immediately
+/loop [prompt]           select loop mode or submit an iterative turn immediately
+/resume [session]        pick or resume a recent session
+/copy [N]                copy the latest or Nth-latest assistant response
+/copy code               copy the latest fenced code block
+/copy transcript         copy the complete visible transcript
+```
+
+While a response is running, the composer remains active: `Enter` queues the
+text as a service-owned follow-up and `Esc` requests cancellation without
+discarding the current draft.
+
+`cargo app build` is the unified development build entrypoint. It installs
+frontend dependencies when needed, builds the shared React frontend, and then
+builds every workspace binary, including `y-agent` and `y-gui`. Direct Cargo
+runs remain available as `cargo run -p y-cli --bin y-agent -- ...` and
+`cargo run -p y-gui --bin y-gui`, but package selection is required because the
+workspace intentionally contains multiple binaries.
+
+For release artifacts, the combined build also uses one Cargo invocation:
+
+```bash
+./scripts/build-release.sh --target aarch64-apple-darwin
+```
+
+On macOS, the generated GUI archive contains a `.pkg` installer. Install it to
+upgrade the application in `/Applications` and make both `yagent` and `y-agent`
+available from the terminal. Do not drag the generated `.app` over an existing
+administrator-owned installation in Finder.
+
+The canonical installed command is `yagent`. If `y-agent --version` still shows
+an older Cargo-installed release immediately after installation, run `rehash`
+in zsh (or open a new terminal), then inspect `which -a y-agent`. Existing
+shells can cache the old `~/.cargo/bin/y-agent` path even though
+`/usr/local/bin/y-agent` now takes precedence.
 
 Run `y-agent --help` for the current command surface. The CLI is actively
 evolving, so generated help is more authoritative than copied command lists.

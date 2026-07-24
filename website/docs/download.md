@@ -30,7 +30,7 @@ cargo build --release
 cd crates/y-gui && npm install && cd ../..
 ./scripts/build-release.sh gui
 # Output: dist/y-agent-gui-<version>-<platform>.zip
-#   macOS:   .dmg, .app
+#   macOS:   .pkg
 #   Linux:   .deb, .AppImage, .pkg.tar.zst
 #   Windows: .msi, .exe
 ```
@@ -53,9 +53,24 @@ nix develop          # Enter dev shell with all dependencies
 
 ### macOS
 
-1. Download the `.dmg` from [GitHub Releases](https://github.com/gorgias/y-agent/releases)
-2. Open the `.dmg` and drag y-agent to the Applications folder
-3. On first launch, allow it in System Settings > Privacy & Security
+1. Download the `.pkg` installer from [GitHub Releases](https://github.com/gorgias/y-agent/releases).
+2. Run the installer. It installs `y-agent.app` in Applications and the CLI as
+   `/usr/local/bin/yagent`.
+3. Verify the command with `yagent --help`. The compatibility name `y-agent`
+   is also installed.
+4. On first launch, allow the app in System Settings > Privacy & Security if
+   macOS requests confirmation.
+
+Use the `.pkg` for upgrades as well as first-time installation. It can replace
+an administrator-owned application bundle and updates the command-line tools;
+dragging an `.app` over such an installation in Finder can fail with a locked
+or read-only items message.
+
+Use `yagent` as the canonical command installed by the package. If the
+compatibility command `y-agent` reports an older version immediately after
+installation, run `rehash` in zsh or open a new terminal. Existing shells can
+cache an earlier Cargo installation under `~/.cargo/bin`; use `which -a y-agent`
+to compare it with `/usr/local/bin/y-agent`.
 
 ### Linux
 

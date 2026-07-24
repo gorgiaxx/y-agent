@@ -104,6 +104,9 @@ Multiple providers can coexist. y-agent routes requests by tags and automaticall
 # CLI interactive chat
 y-agent chat
 
+# macOS .pkg installations also provide the shorter command name
+yagent chat
+
 # TUI mode (ratatui terminal UI)
 y-agent tui
 
@@ -111,8 +114,20 @@ y-agent tui
 y-agent serve
 
 # Or launch the GUI desktop app
-# (built via build-release.sh -- .app / .dmg / .AppImage / .pkg.tar.zst in dist/)
+# (built via build-release.sh -- .pkg / .AppImage / .pkg.tar.zst in dist/)
 ```
+
+The TUI is command-first and keeps the conversation full width. Press `/` to
+open the command palette. Use `/goal <objective>` for automatically
+orchestrated work, `/resume` to pick a recent session, and `/copy` to copy the
+latest assistant response (`/copy code` and `/copy transcript` select other
+targets). Use `/mode fast|auto|plan|loop` to change how subsequent messages are
+executed. `/plan <prompt>` and `/loop <prompt>` switch mode and submit the prompt
+immediately.
+
+The composer remains usable while a response is running. Press `Enter` to queue
+the current text as a follow-up for the active run, or press `Esc` to cancel the
+run while preserving any draft text.
 
 ### Other CLI Commands
 
