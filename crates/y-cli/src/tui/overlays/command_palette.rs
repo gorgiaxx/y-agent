@@ -1,6 +1,6 @@
 //! Command palette overlay: floating popup showing filtered command list.
 //!
-//! Activated when the user types `:` (enters Command mode). Shows a
+//! Activated when the user types `/` or `:` (enters Command mode). Shows a
 //! fuzzy-filtered list of available commands that updates on each keystroke.
 
 use ratatui::layout::Rect;
@@ -146,12 +146,14 @@ impl CommandPaletteState {
     /// Push a character to the input.
     pub fn push_char(&mut self, ch: char) {
         self.input.push(ch);
+        self.selected = 0;
         self.update_filter();
     }
 
     /// Pop the last character from the input.
     pub fn pop_char(&mut self) {
         self.input.pop();
+        self.selected = 0;
         self.update_filter();
     }
 }
@@ -167,11 +169,10 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState, t: &
         palette.filtered_names.len()
     };
 
-    let max_height = (area.height / 2).clamp(5, 15);
-    let popup_height = (u16::try_from(item_count).unwrap_or(0) + 3).min(max_height);
-    let popup_width = area.width.clamp(30, 55);
+    let popup_height = palette_height(item_count, area.height);
+    let popup_width = area.width.saturating_sub(4).clamp(30, 72);
 
-    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let x = area.x + 2;
     let y = area.y + area.height.saturating_sub(popup_height + 4);
 
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -200,7 +201,7 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState, t: &
         return;
     }
 
-    let prefix = if palette.in_arg_mode() { "/" } else { ":" };
+    let prefix = "/";
     let display_input = if let Some(cmd) = &palette.arg_command {
         format!("{cmd} {}", palette.input)
     } else {
@@ -228,21 +229,34 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState, t: &
     }
 }
 
+fn palette_height(item_count: usize, area_height: u16) -> u16 {
+    let max_height = (area_height / 2).clamp(5, 15);
+    u16::try_from(item_count)
+        .unwrap_or(u16::MAX)
+        .saturating_add(3)
+        .clamp(5, max_height)
+}
+
 fn render_command_list(
     frame: &mut Frame,
     list_area: Rect,
     palette: &CommandPaletteState,
     t: &Theme,
 ) {
-    let items: Vec<ListItem> = palette
-        .filtered_names
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
+    let range = visible_range(
+        palette.filtered_names.len(),
+        palette.selected,
+        list_area.height as usize,
+    );
+    let registry = CommandRegistry::new();
+    let items: Vec<ListItem> = range
+        .map(|i| {
+            let name = &palette.filtered_names[i];
             let desc = palette
                 .filtered_descriptions
                 .get(i)
                 .map_or("", std::string::String::as_str);
+            let args = registry.find(name).map_or("", |command| command.args);
 
             let style = if i == palette.selected {
                 Style::default()
@@ -262,7 +276,7 @@ fn render_command_list(
             };
 
             ListItem::new(Line::from(vec![
-                Span::styled(format!(" /{name}"), style),
+                Span::styled(format!(" /{name} {args}"), style),
                 Span::styled(format!("  {desc}"), desc_style),
             ]))
         })
@@ -272,11 +286,14 @@ fn render_command_list(
 }
 
 fn render_arg_list(frame: &mut Frame, list_area: Rect, palette: &CommandPaletteState, t: &Theme) {
-    let items: Vec<ListItem> = palette
-        .filtered_args
-        .iter()
-        .enumerate()
-        .map(|(i, (id, desc))| {
+    let range = visible_range(
+        palette.filtered_args.len(),
+        palette.selected,
+        list_area.height as usize,
+    );
+    let items: Vec<ListItem> = range
+        .map(|i| {
+            let (id, desc) = &palette.filtered_args[i];
             let style = if i == palette.selected {
                 Style::default()
                     .fg(t.panel_bg())
@@ -302,14 +319,33 @@ fn render_arg_list(frame: &mut Frame, list_area: Rect, palette: &CommandPaletteS
         .collect();
 
     if items.is_empty() {
+        let message = match palette.arg_command.as_deref() {
+            Some("goal") => " Type an objective and press Enter",
+            _ => " No matches",
+        };
         let empty = ListItem::new(Line::from(Span::styled(
-            " No matches",
+            message,
             Style::default().fg(t.muted()),
         )));
         frame.render_widget(List::new(vec![empty]), list_area);
     } else {
         frame.render_widget(List::new(items), list_area);
     }
+}
+
+fn visible_range(
+    item_count: usize,
+    selected: usize,
+    visible_height: usize,
+) -> std::ops::Range<usize> {
+    if item_count == 0 || visible_height == 0 {
+        return 0..0;
+    }
+
+    let selected = selected.min(item_count - 1);
+    let start = selected.saturating_add(1).saturating_sub(visible_height);
+    let end = start.saturating_add(visible_height).min(item_count);
+    start..end
 }
 
 // ---------------------------------------------------------------------------
@@ -367,5 +403,41 @@ mod tests {
 
         palette.pop_char();
         assert!(palette.filtered_names.len() > narrow_count);
+    }
+
+    #[test]
+    fn test_freeform_argument_mode_preserves_typed_goal() {
+        let mut palette = CommandPaletteState::new();
+        palette.enter_arg_mode("goal".to_string(), Vec::new());
+        for ch in "ship release".chars() {
+            palette.push_char(ch);
+        }
+
+        assert_eq!(palette.input, "ship release");
+        assert!(palette.selected_arg().is_none());
+    }
+
+    #[test]
+    fn test_freeform_palette_keeps_room_for_input_and_hint() {
+        assert_eq!(palette_height(0, 24), 5);
+    }
+
+    #[test]
+    fn test_palette_viewport_keeps_selected_item_visible() {
+        assert_eq!(visible_range(20, 0, 5), 0..5);
+        assert_eq!(visible_range(20, 4, 5), 0..5);
+        assert_eq!(visible_range(20, 5, 5), 1..6);
+        assert_eq!(visible_range(20, 19, 5), 15..20);
+    }
+
+    #[test]
+    fn test_typing_resets_palette_selection_to_first_match() {
+        let mut palette = CommandPaletteState::new();
+        palette.select_next();
+        palette.select_next();
+        assert_eq!(palette.selected, 2);
+
+        palette.push_char('r');
+        assert_eq!(palette.selected, 0);
     }
 }

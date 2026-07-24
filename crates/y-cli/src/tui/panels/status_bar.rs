@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! [Left]                                        [Right]
-//! model_name  tokens/context (pct%)  $cost      v0.x.x
+//! session  mode  model  tokens/context (pct%)  $cost      / commands
 //!             [=========-------]
 //! ```
 //!
@@ -30,6 +30,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let sep = Span::styled(" | ", Style::default().fg(t.status_sep()));
 
     // -- Left section --
+    let mut left_spans: Vec<Span> = vec![Span::styled(" ", Style::default())];
+
+    // Session and orchestration mode replace the persistent session sidebar.
+    left_spans.push(Span::styled(
+        state.current_session_label(),
+        Style::default().fg(t.text()).add_modifier(Modifier::BOLD),
+    ));
+    left_spans.push(sep.clone());
+    left_spans.push(Span::styled(
+        state.turn_mode.label(),
+        Style::default().fg(t.input_border_focused()),
+    ));
+    left_spans.push(sep.clone());
 
     // Model name.
     let model_label = if state.status_model.is_empty() {
@@ -38,10 +51,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         state.status_model.clone()
     };
 
-    let mut left_spans: Vec<Span> = vec![
-        Span::styled(" ", Style::default()),
-        Span::styled(model_label, Style::default().fg(t.status_model())),
-    ];
+    left_spans.push(Span::styled(
+        model_label,
+        Style::default().fg(t.status_model()),
+    ));
 
     // Context window usage (tokens/window + pct + bar).
     let ctx_spans = build_context_spans(state, t);
@@ -62,7 +75,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 
     // -- Right section --
-    let right_str = format!("v{} ", state.version);
+    let right_str = format!("/ commands  v{} ", state.version);
     let right_len = right_str.len();
 
     // Compute available width for left section.

@@ -21,10 +21,6 @@ pub enum KeyAction {
     Submit,
     /// A character/edit to pass through to the textarea.
     InputPassthrough,
-    /// Toggle sidebar visibility.
-    ToggleSidebar,
-    /// Switch sidebar tab view.
-    ToggleSidebarView,
     /// Cycle focus forward.
     CycleFocus,
     /// Scroll chat up.
@@ -51,8 +47,6 @@ pub enum KeyAction {
     HistoryPrev,
     /// Navigate to next input history entry.
     HistoryNext,
-    /// Select the highlighted session item in the sidebar.
-    SelectSessionItem,
 }
 
 /// Dispatch a key event against the current state.
@@ -97,7 +91,6 @@ fn dispatch_normal(key: KeyEvent, state: &AppState) -> KeyAction {
     match state.focus {
         PanelFocus::Input => dispatch_input_normal(key, state),
         PanelFocus::Chat => dispatch_chat_normal(key, state),
-        PanelFocus::Sidebar => dispatch_sidebar_normal(key),
     }
 }
 
@@ -117,10 +110,6 @@ fn dispatch_input_normal(key: KeyEvent, state: &AppState) -> KeyAction {
         KeyCode::Down => KeyAction::HistoryNext,
         // Tab cycles focus.
         KeyCode::Tab => KeyAction::CycleFocus,
-        // Ctrl+B toggles sidebar.
-        _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') => {
-            KeyAction::ToggleSidebar
-        }
         // Ctrl+G scrolls to bottom (dismiss "new content below").
         _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') => {
             KeyAction::ScrollToBottom
@@ -129,7 +118,9 @@ fn dispatch_input_normal(key: KeyEvent, state: &AppState) -> KeyAction {
         KeyCode::Char(':') => KeyAction::EnterCommandMode,
         // Escape cancels streaming if active, otherwise returns to normal.
         KeyCode::Esc => {
-            if state.is_streaming {
+            if state.is_cancelling {
+                KeyAction::Consumed
+            } else if state.is_streaming {
                 KeyAction::CancelStreaming
             } else {
                 KeyAction::ReturnToNormal
@@ -154,15 +145,13 @@ fn dispatch_chat_normal(key: KeyEvent, state: &AppState) -> KeyAction {
         KeyCode::End | KeyCode::Char('G') => KeyAction::ScrollToBottom,
         // Tab cycles focus.
         KeyCode::Tab => KeyAction::CycleFocus,
-        // Ctrl+B toggles sidebar.
-        _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') => {
-            KeyAction::ToggleSidebar
-        }
         // '?' shows help.
         KeyCode::Char('?') => KeyAction::ShowHelp,
         // Escape cancels streaming if active, otherwise returns to input.
         KeyCode::Esc => {
-            if state.is_streaming {
+            if state.is_cancelling {
+                KeyAction::Consumed
+            } else if state.is_streaming {
                 KeyAction::CancelStreaming
             } else {
                 KeyAction::ReturnToNormal
@@ -170,28 +159,6 @@ fn dispatch_chat_normal(key: KeyEvent, state: &AppState) -> KeyAction {
         }
         // 'i' returns focus to input.
         KeyCode::Char('i') => KeyAction::ReturnToNormal,
-        _ => KeyAction::Unhandled,
-    }
-}
-
-/// Normal mode, Sidebar panel focused.
-fn dispatch_sidebar_normal(key: KeyEvent) -> KeyAction {
-    match key.code {
-        // Tab views within sidebar.
-        KeyCode::Tab if key.modifiers.contains(KeyModifiers::SHIFT) => KeyAction::ToggleSidebarView,
-        // Tab cycles focus.
-        KeyCode::Tab => KeyAction::CycleFocus,
-        // Ctrl+B toggles sidebar.
-        _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') => {
-            KeyAction::ToggleSidebar
-        }
-        // Up/Down navigate session list.
-        KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
-        // Enter selects the highlighted session.
-        KeyCode::Enter => KeyAction::SelectSessionItem,
-        // Escape returns focus to input.
-        KeyCode::Esc => KeyAction::ReturnToNormal,
         _ => KeyAction::Unhandled,
     }
 }
@@ -317,6 +284,17 @@ mod tests {
         assert_eq!(action, KeyAction::InputPassthrough);
     }
 
+    #[test]
+    fn test_escape_is_consumed_when_cancellation_is_already_pending() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.is_cancelling = true;
+
+        let action = dispatch(key(KeyCode::Esc), &state);
+
+        assert_eq!(action, KeyAction::Consumed);
+    }
+
     // T-TUI-03-05: j/k scroll in chat-focused normal mode.
     #[test]
     fn test_jk_scroll_chat() {
@@ -333,22 +311,15 @@ mod tests {
         );
     }
 
-    // T-TUI-03-06: Ctrl+B toggles sidebar from any panel.
+    // T-TUI-03-06: Ctrl+B is no longer reserved after removing the sidebar.
     #[test]
-    fn test_ctrl_b_toggles_sidebar() {
-        for focus in &[PanelFocus::Input, PanelFocus::Chat, PanelFocus::Sidebar] {
-            let mut state = AppState::default();
-            state.focus = *focus;
-            let action = dispatch(
-                key_with_mod(KeyCode::Char('b'), KeyModifiers::CONTROL),
-                &state,
-            );
-            assert_eq!(
-                action,
-                KeyAction::ToggleSidebar,
-                "Ctrl+B should toggle sidebar with {focus:?} focus"
-            );
-        }
+    fn test_ctrl_b_is_available_to_input_editor() {
+        let state = AppState::default();
+        let action = dispatch(
+            key_with_mod(KeyCode::Char('b'), KeyModifiers::CONTROL),
+            &state,
+        );
+        assert_eq!(action, KeyAction::InputPassthrough);
     }
 
     // T-TUI-03-07: Escape returns to normal from command mode.

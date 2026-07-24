@@ -8,7 +8,8 @@
 
 use std::fmt::Write as _;
 
-use crate::tui::state::{AppState, ChatMessage, MessageRole};
+use crate::tui::commands::copy::{self, CopyTarget};
+use crate::tui::state::{AppState, ChatMessage, TurnMode};
 
 /// Result of executing a command.
 #[derive(Debug, Clone)]
@@ -24,6 +25,12 @@ pub enum CommandResult {
     NewSession,
     /// Command requires async service access -- deferred to TUI event loop.
     Async(AsyncCommand),
+    /// Submit a chat turn using the requested orchestration mode.
+    SubmitTurn { input: String, mode: TurnMode },
+    /// Change the orchestration mode used by subsequent normal messages.
+    SetTurnMode(TurnMode),
+    /// Copy selected conversation content to the system clipboard.
+    Copy(CopyTarget),
 }
 
 /// Deferred async commands that require `AppServices` access.
@@ -36,6 +43,8 @@ pub enum AsyncCommand {
     ListSessions,
     /// `/switch <id|label>` -- switch to another session.
     SwitchSession(String),
+    /// `/resume [id|title]` -- open the session picker or resume directly.
+    ResumeSession(Option<String>),
     /// `/delete <id>` -- delete a session.
     DeleteSession(String),
     /// `/branch [label]` -- fork session from current point.
@@ -104,10 +113,10 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
 
         "status" => {
             let msg = format!(
-                "Messages: {} | Streaming: {} | Sidebar: {} | Mode: {:?} | Focus: {:?}",
+                "Messages: {} | Streaming: {} | Turn mode: {} | UI mode: {:?} | Focus: {:?}",
                 state.messages.len(),
                 state.is_streaming,
-                state.sidebar_visible,
+                state.turn_mode.label(),
                 state.mode,
                 state.focus,
             );
@@ -134,6 +143,45 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
                 CommandResult::Async(AsyncCommand::SwitchSession(args.to_string()))
             }
         }
+
+        "resume" => {
+            let target = if args.is_empty() {
+                None
+            } else {
+                Some(args.to_string())
+            };
+            CommandResult::Async(AsyncCommand::ResumeSession(target))
+        }
+
+        "goal" => {
+            if args.is_empty() {
+                CommandResult::Error("Usage: /goal <objective>".into())
+            } else {
+                CommandResult::SubmitTurn {
+                    input: args.to_string(),
+                    mode: TurnMode::Auto,
+                }
+            }
+        }
+
+        "mode" => {
+            if args.is_empty() {
+                CommandResult::Ok(Some(format!(
+                    "Turn mode: {}. Use /mode fast|auto|plan|loop.",
+                    state.turn_mode.label()
+                )))
+            } else {
+                TurnMode::parse(args).map_or_else(
+                    || CommandResult::Error("Usage: /mode fast|auto|plan|loop".into()),
+                    CommandResult::SetTurnMode,
+                )
+            }
+        }
+
+        "fast" => mode_command(TurnMode::Fast, args),
+        "auto" => mode_command(TurnMode::Auto, args),
+        "plan" => mode_command(TurnMode::Plan, args),
+        "loop" => mode_command(TurnMode::Loop, args),
 
         "delete" => {
             if args.is_empty() {
@@ -182,46 +230,25 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             CommandResult::Ok(None)
         }
 
-        "copy" => {
-            if state.messages.is_empty() {
-                return CommandResult::Ok(Some("No messages to copy.".into()));
-            }
-            let formatted: String = state
-                .messages
-                .iter()
-                .map(|m| {
-                    let role = match m.role {
-                        MessageRole::User => "You",
-                        MessageRole::Assistant => "Assistant",
-                        MessageRole::System => "System",
-                        MessageRole::Tool => "Tool",
-                    };
-                    format!("[{role}]\n{}", m.content)
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-
-            #[cfg(feature = "tui")]
-            {
-                match arboard::Clipboard::new() {
-                    Ok(mut clipboard) => match clipboard.set_text(&formatted) {
-                        Ok(()) => CommandResult::Ok(Some(format!(
-                            "Copied {} messages to clipboard.",
-                            state.messages.len()
-                        ))),
-                        Err(e) => CommandResult::Error(format!("Failed to set clipboard: {e}")),
-                    },
-                    Err(e) => CommandResult::Error(format!("Failed to access clipboard: {e}")),
-                }
-            }
-
-            #[cfg(not(feature = "tui"))]
-            CommandResult::Error("Clipboard not available without TUI feature.".into())
-        }
+        "copy" => match copy::parse_target(args) {
+            Ok(target) => CommandResult::Copy(target),
+            Err(message) => CommandResult::Error(message),
+        },
 
         _ => CommandResult::Error(format!(
             "Unknown command: /{cmd_name}. Type /help for a list."
         )),
+    }
+}
+
+fn mode_command(mode: TurnMode, args: &str) -> CommandResult {
+    if args.is_empty() {
+        CommandResult::SetTurnMode(mode)
+    } else {
+        CommandResult::SubmitTurn {
+            input: args.to_string(),
+            mode,
+        }
     }
 }
 
@@ -277,17 +304,17 @@ fn generate_shortcuts_text() -> String {
     text.push_str(
         "  [Global]
     Ctrl+Q / Ctrl+D / Ctrl+C  Quit
-    Ctrl+B                    Toggle sidebar\n\n",
+    Ctrl+H                    Show help\n\n",
     );
 
     text.push_str(
         "  [Input Panel]
-    Enter                     Send message
+    Enter                     Send message or queue follow-up while busy
     Shift+Enter               New line
-    Tab                       Cycle focus (Input -> Chat -> Sidebar)
+    Tab                       Cycle focus (Input -> Chat)
     /                         Open command palette (on empty input)
     :                         Open command palette (vim-style)
-    Esc                       Return to normal mode\n\n",
+    Esc                       Cancel active response / return to normal\n\n",
     );
 
     text.push_str(
@@ -296,13 +323,6 @@ fn generate_shortcuts_text() -> String {
     k / Up / PageUp           Scroll up
     i                         Return focus to input
     Tab                       Cycle focus\n\n",
-    );
-
-    text.push_str(
-        "  [Sidebar]
-    Tab                       Cycle focus
-    Shift+Tab                 Switch sidebar view
-    Esc                       Return focus to input\n\n",
     );
 
     text.push_str(
@@ -315,10 +335,15 @@ fn generate_shortcuts_text() -> String {
 
     text.push_str(
         "  [Mouse]
-    Click                     Focus panel (Chat/Input/Sidebar)
+    Click                     Focus conversation or input
     Scroll wheel              Scroll chat history
     Shift + drag              Native text selection (terminal)
-    /copy                     Copy full transcript to clipboard\n",
+    /resume                   Pick a recent session
+    /mode auto                Use automatic orchestration for later messages
+    /plan <prompt>            Switch to plan mode and submit immediately
+    /copy                     Copy latest assistant response
+    /copy code                Copy latest fenced code block
+    /copy transcript          Copy full transcript\n",
     );
 
     text
@@ -331,6 +356,7 @@ fn generate_shortcuts_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::state::MessageRole;
     use chrono::Utc;
 
     // T-TUI-04-04: /clear clears messages.
@@ -535,6 +561,82 @@ mod tests {
         assert!(matches!(
             result,
             CommandResult::Async(AsyncCommand::ShowAgents)
+        ));
+    }
+
+    #[test]
+    fn test_resume_supports_picker_and_direct_target() {
+        let mut state = AppState::default();
+        assert!(matches!(
+            execute("resume", &mut state),
+            CommandResult::Async(AsyncCommand::ResumeSession(None))
+        ));
+        assert!(matches!(
+            execute("resume recent work", &mut state),
+            CommandResult::Async(AsyncCommand::ResumeSession(Some(ref target)))
+                if target == "recent work"
+        ));
+    }
+
+    #[test]
+    fn test_goal_submits_auto_orchestrated_turn() {
+        let mut state = AppState::default();
+        assert!(matches!(
+            execute("goal finish the release", &mut state),
+            CommandResult::SubmitTurn { ref input, mode: TurnMode::Auto }
+                if input == "finish the release"
+        ));
+        assert!(matches!(
+            execute("goal", &mut state),
+            CommandResult::Error(ref message) if message.contains("/goal <objective>")
+        ));
+    }
+
+    #[test]
+    fn test_copy_parses_precise_targets() {
+        let mut state = AppState::default();
+        assert!(matches!(
+            execute("copy", &mut state),
+            CommandResult::Copy(super::copy::CopyTarget::AssistantResponse(1))
+        ));
+        assert!(matches!(
+            execute("copy 3", &mut state),
+            CommandResult::Copy(super::copy::CopyTarget::AssistantResponse(3))
+        ));
+        assert!(matches!(
+            execute("copy code", &mut state),
+            CommandResult::Copy(super::copy::CopyTarget::LastCodeBlock)
+        ));
+        assert!(matches!(
+            execute("copy transcript", &mut state),
+            CommandResult::Copy(super::copy::CopyTarget::Transcript)
+        ));
+    }
+
+    #[test]
+    fn test_mode_command_sets_persistent_turn_mode() {
+        let mut state = AppState::default();
+        assert!(matches!(
+            execute("mode plan", &mut state),
+            CommandResult::SetTurnMode(TurnMode::Plan)
+        ));
+        assert!(matches!(
+            execute("mode invalid", &mut state),
+            CommandResult::Error(ref message) if message.contains("fast|auto|plan|loop")
+        ));
+    }
+
+    #[test]
+    fn test_mode_shorthand_can_set_or_submit() {
+        let mut state = AppState::default();
+        assert!(matches!(
+            execute("loop", &mut state),
+            CommandResult::SetTurnMode(TurnMode::Loop)
+        ));
+        assert!(matches!(
+            execute("plan inspect the repository", &mut state),
+            CommandResult::SubmitTurn { ref input, mode: TurnMode::Plan }
+                if input == "inspect the repository"
         ));
     }
 }

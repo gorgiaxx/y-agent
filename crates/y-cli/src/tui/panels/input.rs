@@ -17,6 +17,8 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     focus: PanelFocus,
+    is_streaming: bool,
+    is_cancelling: bool,
     textarea: &TextArea<'_>,
     t: &Theme,
 ) {
@@ -28,11 +30,7 @@ pub fn render(
         Style::default().fg(t.input_border_unfocused())
     };
 
-    let title = if is_focused {
-        " Input (Enter to send, Shift+Enter for newline) "
-    } else {
-        " Input "
-    };
+    let title = input_title(focus, is_streaming, is_cancelling);
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -60,6 +58,19 @@ pub fn render(
     }
 
     frame.render_widget(&ta, area);
+}
+
+fn input_title(focus: PanelFocus, is_streaming: bool, is_cancelling: bool) -> &'static str {
+    if focus != PanelFocus::Input {
+        return " Message ";
+    }
+    if is_cancelling {
+        return " Follow-up  Cancelling... ";
+    }
+    if is_streaming {
+        return " Follow-up  Enter queue  Esc cancel ";
+    }
+    " Message  / commands  Enter send "
 }
 
 /// Calculate the desired input area height based on content.
@@ -98,5 +109,21 @@ mod tests {
         let lines: Vec<String> = (0..10).map(|i| format!("line {i}")).collect();
         let textarea = TextArea::new(lines);
         assert_eq!(input_height(&textarea), 8); // 6 content + 2 borders
+    }
+
+    #[test]
+    fn test_input_title_explains_follow_up_and_cancel_during_streaming() {
+        assert_eq!(
+            input_title(PanelFocus::Input, true, false),
+            " Follow-up  Enter queue  Esc cancel "
+        );
+    }
+
+    #[test]
+    fn test_input_title_reports_pending_cancellation() {
+        assert_eq!(
+            input_title(PanelFocus::Input, true, true),
+            " Follow-up  Cancelling... "
+        );
     }
 }

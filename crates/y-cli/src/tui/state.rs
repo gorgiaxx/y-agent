@@ -1,7 +1,7 @@
 //! TUI application state model.
 //!
 //! Contains all state types used by the TUI: panel focus, interaction mode,
-//! sidebar view, chat messages, and the top-level `AppState`.
+//! chat messages, and the top-level `AppState`.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -32,8 +32,6 @@ pub enum PanelFocus {
     Input,
     /// The chat message history panel.
     Chat,
-    /// The sidebar (sessions / agents list).
-    Sidebar,
 }
 
 /// The current interaction mode — determines how keystrokes are interpreted.
@@ -51,11 +49,46 @@ pub enum InteractionMode {
     Help,
 }
 
-/// Which list the sidebar is currently showing.
+/// Service-owned orchestration mode selected by the TUI operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SidebarView {
-    /// Session list.
-    Sessions,
+pub enum TurnMode {
+    Fast,
+    Auto,
+    Plan,
+    Loop,
+}
+
+impl TurnMode {
+    /// Parse a user-facing mode name.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fast" => Some(Self::Fast),
+            "auto" => Some(Self::Auto),
+            "plan" => Some(Self::Plan),
+            "loop" => Some(Self::Loop),
+            _ => None,
+        }
+    }
+
+    /// Compact label for status and command output.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+            Self::Auto => "auto",
+            Self::Plan => "plan",
+            Self::Loop => "loop",
+        }
+    }
+
+    /// Value expected by the shared service orchestration contract.
+    pub fn plan_mode(self) -> Option<&'static str> {
+        match self {
+            Self::Fast => None,
+            Self::Auto => Some("auto"),
+            Self::Plan => Some("plan"),
+            Self::Loop => Some("loop"),
+        }
+    }
 }
 
 /// Role of a chat message for display purposes.
@@ -144,7 +177,7 @@ impl ChatMessage {
 // SessionListItem
 // ---------------------------------------------------------------------------
 
-/// Lightweight session entry for sidebar display.
+/// Lightweight session entry for command palette completion and session labels.
 #[derive(Debug, Clone)]
 pub struct SessionListItem {
     /// Session ID.
@@ -215,10 +248,6 @@ pub struct AppState {
     pub focus: PanelFocus,
     /// Current interaction mode (determines key dispatch).
     pub mode: InteractionMode,
-    /// Whether the sidebar panel is visible.
-    pub sidebar_visible: bool,
-    /// Which list the sidebar is currently showing.
-    pub sidebar_view: SidebarView,
     /// Conversation transcript for the current session.
     pub messages: Vec<ChatMessage>,
     /// Current input buffer text.
@@ -227,6 +256,8 @@ pub struct AppState {
     pub scroll_offset: usize,
     /// Whether the assistant is currently streaming a response.
     pub is_streaming: bool,
+    /// Whether cancellation has been requested for the active response.
+    pub is_cancelling: bool,
     /// Input history for up/down recall.
     pub input_history: Vec<String>,
     /// Current index in input history (-1 = not browsing).
@@ -237,16 +268,16 @@ pub struct AppState {
     pub status_model: String,
     /// Token usage string (displayed in status bar).
     pub status_tokens: String,
+    /// Orchestration mode used for subsequent turns in this session.
+    pub turn_mode: TurnMode,
     /// Active toast notifications (most recent at back).
     pub toasts: VecDeque<Toast>,
     /// Monotonic counter for unique toast IDs.
     toast_counter: u64,
     /// Current text selection in the chat panel.
     pub selection: TextSelection,
-    /// Session list for sidebar display (sorted by `updated_at` desc).
+    /// Recent session list (sorted by `updated_at` desc).
     pub sessions: Vec<SessionListItem>,
-    /// Currently highlighted session index in the sidebar.
-    pub selected_session_index: Option<usize>,
     /// Active session ID for the current chat.
     pub current_session_id: Option<String>,
     /// Count of user messages sent in the current session (for title trigger).
@@ -279,22 +310,21 @@ impl Default for AppState {
         Self {
             focus: PanelFocus::Input,
             mode: InteractionMode::Normal,
-            sidebar_visible: true,
-            sidebar_view: SidebarView::Sessions,
             messages: Vec::new(),
             input_buffer: String::new(),
             scroll_offset: 0,
             is_streaming: false,
+            is_cancelling: false,
             input_history: Vec::new(),
             history_index: None,
             input_draft: None,
             status_model: String::new(),
             status_tokens: String::new(),
+            turn_mode: TurnMode::Fast,
             toasts: VecDeque::new(),
             toast_counter: 0,
             selection: TextSelection::default(),
             sessions: Vec::new(),
-            selected_session_index: None,
             current_session_id: None,
             user_message_count: 0,
             context_window: 0,
@@ -358,21 +388,6 @@ impl AppState {
         valid
     }
 
-    /// Toggle sidebar visibility.
-    pub fn toggle_sidebar(&mut self) {
-        self.sidebar_visible = !self.sidebar_visible;
-        // If sidebar was hidden and we were focused on it, move to Input.
-        if !self.sidebar_visible && self.focus == PanelFocus::Sidebar {
-            self.focus = PanelFocus::Input;
-        }
-    }
-
-    /// Switch sidebar view (currently sessions only, reserved for future views).
-    pub fn toggle_sidebar_view(&mut self) {
-        // Currently sessions-only; no-op.
-        self.sidebar_view = SidebarView::Sessions;
-    }
-
     /// Push a toast notification. Returns the assigned toast ID.
     ///
     /// If the toast queue exceeds `MAX_TOASTS`, the oldest toast is evicted.
@@ -411,40 +426,6 @@ impl AppState {
         self.toasts.clear();
     }
 
-    /// Navigate to the previous session in the sidebar list.
-    pub fn select_session_prev(&mut self) {
-        if self.sessions.is_empty() {
-            return;
-        }
-        self.selected_session_index = Some(match self.selected_session_index {
-            Some(i) => i.saturating_sub(1),
-            None => 0,
-        });
-    }
-
-    /// Navigate to the next session in the sidebar list.
-    pub fn select_session_next(&mut self) {
-        if self.sessions.is_empty() {
-            return;
-        }
-        let max = self.sessions.len().saturating_sub(1);
-        self.selected_session_index = Some(match self.selected_session_index {
-            Some(i) => (i + 1).min(max),
-            None => 0,
-        });
-    }
-
-    /// Synchronize `selected_session_index` to match `current_session_id`.
-    ///
-    /// Call after creating or switching sessions so the sidebar highlight
-    /// stays in sync with the active chat.
-    pub fn sync_selected_session_index(&mut self) {
-        self.selected_session_index = self
-            .current_session_id
-            .as_ref()
-            .and_then(|sid| self.sessions.iter().position(|s| s.id == *sid));
-    }
-
     /// Increment user message counter and return the new count.
     pub fn increment_user_message_count(&mut self) -> u32 {
         self.user_message_count += 1;
@@ -466,15 +447,35 @@ impl AppState {
         (self.last_input_tokens as f32 / self.context_window as f32) * 100.0
     }
 
-    /// Cycle focus forward: Input → Chat → Sidebar (if visible) → Input.
+    /// Cycle focus forward: Input → Chat → Input.
     /// Returns the new focus.
     pub fn cycle_focus_forward(&mut self) -> PanelFocus {
         self.focus = match self.focus {
             PanelFocus::Input => PanelFocus::Chat,
-            PanelFocus::Chat if self.sidebar_visible => PanelFocus::Sidebar,
-            PanelFocus::Chat | PanelFocus::Sidebar => PanelFocus::Input,
+            PanelFocus::Chat => PanelFocus::Input,
         };
         self.focus
+    }
+
+    /// Label the active session for compact status rendering.
+    pub fn current_session_label(&self) -> String {
+        let Some(current_id) = self.current_session_id.as_deref() else {
+            return "new session".to_string();
+        };
+
+        self.sessions
+            .iter()
+            .find(|session| session.id == current_id)
+            .map_or_else(
+                || short_session_id(current_id),
+                |session| {
+                    if session.title.trim().is_empty() {
+                        short_session_id(current_id)
+                    } else {
+                        session.title.clone()
+                    }
+                },
+            )
     }
 
     /// Push a non-empty, non-duplicate entry to input history.
@@ -531,6 +532,10 @@ impl AppState {
     }
 }
 
+fn short_session_id(session_id: &str) -> String {
+    session_id.chars().take(8).collect()
+}
+
 // ---------------------------------------------------------------------------
 // Tests — TDD: these were written FIRST per the test plan.
 // ---------------------------------------------------------------------------
@@ -545,12 +550,12 @@ mod tests {
         let state = AppState::new();
         assert_eq!(state.focus, PanelFocus::Input);
         assert_eq!(state.mode, InteractionMode::Normal);
-        assert!(state.sidebar_visible);
-        assert_eq!(state.sidebar_view, SidebarView::Sessions);
         assert!(state.messages.is_empty());
         assert!(state.input_buffer.is_empty());
         assert_eq!(state.scroll_offset, 0);
         assert!(!state.is_streaming);
+        assert!(!state.is_cancelling);
+        assert_eq!(state.turn_mode, TurnMode::Fast);
     }
 
     // T-TUI-01-02: set_focus() transitions update focus field.
@@ -560,9 +565,6 @@ mod tests {
 
         state.set_focus(PanelFocus::Chat);
         assert_eq!(state.focus, PanelFocus::Chat);
-
-        state.set_focus(PanelFocus::Sidebar);
-        assert_eq!(state.focus, PanelFocus::Sidebar);
 
         state.set_focus(PanelFocus::Input);
         assert_eq!(state.focus, PanelFocus::Input);
@@ -598,19 +600,6 @@ mod tests {
         assert_eq!(state.mode, InteractionMode::Normal);
     }
 
-    // T-TUI-01-04: toggle_sidebar() flips sidebar_visible.
-    #[test]
-    fn test_toggle_sidebar() {
-        let mut state = AppState::new();
-        assert!(state.sidebar_visible);
-
-        state.toggle_sidebar();
-        assert!(!state.sidebar_visible);
-
-        state.toggle_sidebar();
-        assert!(state.sidebar_visible);
-    }
-
     // T-TUI-01-05: InteractionMode state transitions follow design state machine.
     #[test]
     fn test_mode_state_machine_rejects_invalid() {
@@ -644,7 +633,7 @@ mod tests {
         assert_eq!(state.mode, InteractionMode::Select);
     }
 
-    // T-TUI-01-06: PanelFocus transitions follow design focus model.
+    // T-TUI-01-06: Panel focus cycles only between input and conversation.
     #[test]
     fn test_focus_cycle_forward() {
         let mut state = AppState::new();
@@ -652,17 +641,42 @@ mod tests {
         // Input → Chat
         assert_eq!(state.cycle_focus_forward(), PanelFocus::Chat);
 
-        // Chat → Sidebar (sidebar visible)
-        assert_eq!(state.cycle_focus_forward(), PanelFocus::Sidebar);
-
-        // Sidebar → Input
+        // Chat → Input
         assert_eq!(state.cycle_focus_forward(), PanelFocus::Input);
+    }
 
-        // Hide sidebar: Input → Chat → Input (skips sidebar)
-        state.sidebar_visible = false;
-        state.focus = PanelFocus::Input;
-        assert_eq!(state.cycle_focus_forward(), PanelFocus::Chat);
-        assert_eq!(state.cycle_focus_forward(), PanelFocus::Input);
+    #[test]
+    fn test_current_session_label_uses_title_or_short_id() {
+        let mut state = AppState::new();
+        assert_eq!(state.current_session_label(), "new session");
+
+        state.current_session_id = Some("1234567890abcdef".to_string());
+        assert_eq!(state.current_session_label(), "12345678");
+
+        state.sessions.push(SessionListItem {
+            id: "1234567890abcdef".to_string(),
+            title: "Release work".to_string(),
+            updated_at: Utc::now(),
+            message_count: 3,
+        });
+        assert_eq!(state.current_session_label(), "Release work");
+    }
+
+    #[test]
+    fn test_turn_mode_maps_to_service_plan_mode() {
+        assert_eq!(TurnMode::Fast.plan_mode(), None);
+        assert_eq!(TurnMode::Auto.plan_mode(), Some("auto"));
+        assert_eq!(TurnMode::Plan.plan_mode(), Some("plan"));
+        assert_eq!(TurnMode::Loop.plan_mode(), Some("loop"));
+    }
+
+    #[test]
+    fn test_turn_mode_parses_user_facing_names() {
+        assert_eq!(TurnMode::parse("FAST"), Some(TurnMode::Fast));
+        assert_eq!(TurnMode::parse("auto"), Some(TurnMode::Auto));
+        assert_eq!(TurnMode::parse("plan"), Some(TurnMode::Plan));
+        assert_eq!(TurnMode::parse("loop"), Some(TurnMode::Loop));
+        assert_eq!(TurnMode::parse("unknown"), None);
     }
 
     #[test]
@@ -701,27 +715,6 @@ mod tests {
         assert_eq!(state.history_next(), Some("third"));
         // Past end returns None (clear input).
         assert_eq!(state.history_next(), None);
-    }
-
-    #[test]
-    fn test_toggle_sidebar_moves_focus_when_hidden() {
-        let mut state = AppState::new();
-        state.set_focus(PanelFocus::Sidebar);
-
-        state.toggle_sidebar();
-        // Focus should move to Input when sidebar is hidden.
-        assert_eq!(state.focus, PanelFocus::Input);
-        assert!(!state.sidebar_visible);
-    }
-
-    #[test]
-    fn test_toggle_sidebar_view() {
-        let mut state = AppState::new();
-        assert_eq!(state.sidebar_view, SidebarView::Sessions);
-
-        // Currently sessions-only; toggle is a no-op.
-        state.toggle_sidebar_view();
-        assert_eq!(state.sidebar_view, SidebarView::Sessions);
     }
 
     // --- Toast tests ---

@@ -7,9 +7,9 @@ use tracing::warn;
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::types::{Message, Role, SessionId};
 
-use crate::orchestrator::{self, TurnInput};
+use crate::orchestrator::{self, ChatService, TurnCancellationToken, TurnError, TurnInput};
 use crate::tui::state::{
-    AppState, ChatMessage, MessageRole, SessionListItem, StreamSegment, ToolCallInfo,
+    AppState, ChatMessage, MessageRole, SessionListItem, StreamSegment, ToolCallInfo, TurnMode,
 };
 use crate::wire::AppServices;
 
@@ -49,6 +49,48 @@ pub enum ChatEvent {
         title: String,
         updated_at: chrono::DateTime<Utc>,
     },
+    /// A queued follow-up was injected into the active service run.
+    FollowUpInjected { id: String, text: String },
+    /// The active service run acknowledged cancellation.
+    Cancelled,
+}
+
+/// Presentation routing for submitted composer text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputIntent {
+    Ignore,
+    Command(String),
+    NewTurn(String),
+    FollowUp(String),
+}
+
+/// Classify composer text without performing service work.
+pub fn classify_input(input: &str, is_streaming: bool) -> InputIntent {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return InputIntent::Ignore;
+    }
+    if let Some(command) = trimmed.strip_prefix('/') {
+        return InputIntent::Command(command.to_string());
+    }
+    if is_streaming {
+        InputIntent::FollowUp(trimmed.to_string())
+    } else {
+        InputIntent::NewTurn(trimmed.to_string())
+    }
+}
+
+/// Receiver and cancellation handle for one active service turn.
+pub struct ActiveChat {
+    pub events: mpsc::Receiver<ChatEvent>,
+    cancellation: TurnCancellationToken,
+}
+
+impl ActiveChat {
+    /// Request cancellation of the service-owned turn.
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
 }
 
 /// Submit a user message: adds to state, persists, starts async LLM call.
@@ -59,7 +101,17 @@ pub fn submit_message(
     input: &str,
     state: &mut AppState,
     services: &Arc<AppServices>,
-) -> Option<mpsc::Receiver<ChatEvent>> {
+) -> Option<ActiveChat> {
+    submit_message_with_mode(input, state.turn_mode, state, services)
+}
+
+/// Submit a user message with an optional service-owned orchestration mode.
+pub fn submit_message_with_mode(
+    input: &str,
+    turn_mode: TurnMode,
+    state: &mut AppState,
+    services: &Arc<AppServices>,
+) -> Option<ActiveChat> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;
@@ -130,6 +182,7 @@ pub fn submit_message(
 
     // Mark state as streaming — add placeholder assistant message.
     state.is_streaming = true;
+    state.is_cancelling = false;
     state.messages.push(ChatMessage {
         role: MessageRole::Assistant,
         content: String::new(),
@@ -144,6 +197,8 @@ pub fn submit_message(
 
     // Spawn async task for LLM call.
     let (tx, rx) = mpsc::channel(16);
+    let cancellation = TurnCancellationToken::new();
+    let task_cancellation = cancellation.clone();
 
     tokio::spawn(async move {
         // Lazy session creation: if no current session, create one now.
@@ -259,7 +314,7 @@ pub fn submit_message(
             knowledge_collections: vec![],
             skills: vec![],
             thinking: None,
-            plan_mode: None,
+            plan_mode: turn_mode.plan_mode().map(str::to_string),
             operation_mode: y_service::chat_types::OperationMode::Default,
             agent_name: "chat-turn".to_string(),
             toolcall_enabled: true,
@@ -309,18 +364,32 @@ pub fn submit_message(
                             })
                             .await;
                     }
+                    y_service::TurnEvent::FollowUpInjected { follow_up_id, text } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::FollowUpInjected {
+                                id: follow_up_id,
+                                text,
+                            })
+                            .await;
+                    }
                     _ => {}
                 }
             }
         });
 
-        match orchestrator::execute_turn_streaming(&services, &turn_input, progress_tx).await {
-            Ok(result) => {
-                // Wait for the progress forwarder to finish before emitting
-                // the final Response so all deltas (and tool-call events)
-                // arrive first.
-                let _ = progress_forwarder.await;
+        ChatService::begin_follow_up_run(&services, &session_id);
+        let result = orchestrator::execute_turn_streaming(
+            &services,
+            &turn_input,
+            progress_tx,
+            Some(task_cancellation),
+        )
+        .await;
+        let _ = progress_forwarder.await;
+        ChatService::finish_follow_up_run(&services, &session_id).await;
 
+        match result {
+            Ok(result) => {
                 let _ = tx
                     .send(ChatEvent::Response {
                         content: result.content,
@@ -333,13 +402,19 @@ pub fn submit_message(
                     })
                     .await;
             }
+            Err(TurnError::Cancelled) => {
+                let _ = tx.send(ChatEvent::Cancelled).await;
+            }
             Err(e) => {
                 let _ = tx.send(ChatEvent::Error(format!("{e}"))).await;
             }
         }
     });
 
-    Some(rx)
+    Some(ActiveChat {
+        events: rx,
+        cancellation,
+    })
 }
 
 /// Apply a `ChatEvent` to the state.
@@ -359,12 +434,15 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             // Update the last (streaming) assistant message.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
-                    last.content = content;
+                    if last.content.is_empty() && last.segments.is_empty() {
+                        last.content = content;
+                    }
                     last.is_streaming = false;
                     last.reasoning_complete = true;
                 }
             }
             state.is_streaming = false;
+            state.is_cancelling = false;
 
             // Update status bar data.
             state.status_model = model;
@@ -431,12 +509,61 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 }
             }
             state.is_streaming = false;
+            state.is_cancelling = false;
 
             // Also emit a transient warning toast.
             state.push_toast(msg, crate::tui::state::ToastLevel::Warning);
         }
+        ChatEvent::FollowUpInjected { text, .. } => {
+            if let Some(last) = state.messages.last_mut() {
+                if last.role == MessageRole::Assistant && last.is_streaming {
+                    last.is_streaming = false;
+                    last.reasoning_complete = true;
+                }
+            }
+            state.messages.push(ChatMessage {
+                role: MessageRole::User,
+                content: text,
+                timestamp: Utc::now(),
+                is_streaming: false,
+                is_cancelled: false,
+                reasoning_content: String::new(),
+                reasoning_complete: false,
+                tool_calls: Vec::new(),
+                segments: Vec::new(),
+            });
+            state.messages.push(ChatMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                timestamp: Utc::now(),
+                is_streaming: true,
+                is_cancelled: false,
+                reasoning_content: String::new(),
+                reasoning_complete: false,
+                tool_calls: Vec::new(),
+                segments: Vec::new(),
+            });
+        }
+        ChatEvent::Cancelled => {
+            if let Some(last) = state.messages.last_mut() {
+                if last.role == MessageRole::Assistant && last.is_streaming {
+                    last.is_streaming = false;
+                    last.is_cancelled = true;
+                    last.reasoning_complete = true;
+                    if last.content.is_empty() {
+                        last.content = "(cancelled)".to_string();
+                    }
+                }
+            }
+            state.is_streaming = false;
+            state.is_cancelling = false;
+            state.push_toast(
+                "Response cancelled.".into(),
+                crate::tui::state::ToastLevel::Info,
+            );
+        }
         ChatEvent::TitleUpdated { session_id, title } => {
-            // Update matching session entry in the sidebar list.
+            // Update matching recent-session entry used by status and completion.
             if let Some(session) = state.sessions.iter_mut().find(|s| s.id == session_id) {
                 session.title = title;
             }
@@ -446,7 +573,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             title,
             updated_at,
         } => {
-            // Insert newly created session at the top of the sidebar list.
+            // Insert newly created session at the top of the recent-session list.
             state.current_session_id = Some(id.clone());
             state.sessions.insert(
                 0,
@@ -457,24 +584,36 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                     message_count: 0,
                 },
             );
-            state.sync_selected_session_index();
         }
     }
 }
 
-/// Cancel the currently streaming response (if any).
+/// Enqueue composer text into the service-owned follow-up queue.
+pub fn enqueue_follow_up(
+    input: &str,
+    state: &AppState,
+    services: &AppServices,
+) -> Result<y_service::FollowUpMessage, String> {
+    let text = input.trim();
+    if text.is_empty() {
+        return Err("follow-up text must not be empty".to_string());
+    }
+    let session_id = state
+        .current_session_id
+        .as_ref()
+        .ok_or_else(|| "the active session is not ready yet".to_string())?;
+    ChatService::add_follow_up(
+        services,
+        &SessionId::from_string(session_id.clone()),
+        text.to_string(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+/// Mark the active response as awaiting service-side cancellation.
 pub fn cancel_streaming(state: &mut AppState) {
-    if state.is_streaming {
-        state.is_streaming = false;
-        if let Some(last) = state.messages.last_mut() {
-            if last.role == MessageRole::Assistant && last.is_streaming {
-                last.is_streaming = false;
-                last.is_cancelled = true;
-                if last.content.is_empty() {
-                    last.content = "(cancelled)".to_string();
-                }
-            }
-        }
+    if state.is_streaming && !state.is_cancelling {
+        state.is_cancelling = true;
     }
 }
 
@@ -551,7 +690,7 @@ mod tests {
 
     // T-TUI-05-03: Cancel streaming marks message.
     #[test]
-    fn test_cancel_streaming() {
+    fn test_cancel_streaming_marks_request_pending() {
         let mut state = AppState::default();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
@@ -567,8 +706,130 @@ mod tests {
         });
 
         cancel_streaming(&mut state);
+        assert!(state.is_streaming);
+        assert!(state.is_cancelling);
+        assert!(!state.messages.last().unwrap().is_cancelled);
+    }
+
+    #[test]
+    fn test_apply_chat_cancelled_preserves_partial_response() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.is_cancelling = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: "partial response".into(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: vec![StreamSegment::Text("partial response".into())],
+        });
+
+        apply_chat_event(ChatEvent::Cancelled, &mut state);
+
         assert!(!state.is_streaming);
-        assert!(state.messages.last().unwrap().is_cancelled);
+        assert!(!state.is_cancelling);
+        let last = state.messages.last().unwrap();
+        assert_eq!(last.content, "partial response");
+        assert!(last.is_cancelled);
+    }
+
+    #[test]
+    fn test_apply_follow_up_injected_creates_real_history_boundary() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: "first answer".into(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: vec![StreamSegment::Text("first answer".into())],
+        });
+
+        apply_chat_event(
+            ChatEvent::FollowUpInjected {
+                id: "follow-up-1".into(),
+                text: "also add tests".into(),
+            },
+            &mut state,
+        );
+
+        assert_eq!(state.messages.len(), 3);
+        assert_eq!(state.messages[0].role, MessageRole::Assistant);
+        assert!(!state.messages[0].is_streaming);
+        assert_eq!(state.messages[1].role, MessageRole::User);
+        assert_eq!(state.messages[1].content, "also add tests");
+        assert_eq!(state.messages[2].role, MessageRole::Assistant);
+        assert!(state.messages[2].is_streaming);
+    }
+
+    #[test]
+    fn test_final_response_does_not_duplicate_prior_follow_up_iterations() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: "second answer".into(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: vec![StreamSegment::Text("second answer".into())],
+        });
+
+        apply_chat_event(
+            ChatEvent::Response {
+                content: "first answer\nsecond answer".into(),
+                model: "test-model".into(),
+                input_tokens: 10,
+                output_tokens: 5,
+                last_input_tokens: 10,
+                context_window: 1_000,
+                cost_usd: 0.0,
+            },
+            &mut state,
+        );
+
+        assert_eq!(state.messages.last().unwrap().content, "second answer");
+    }
+
+    #[test]
+    fn test_classify_input_queues_regular_text_while_streaming() {
+        assert_eq!(
+            classify_input("next task", true),
+            InputIntent::FollowUp("next task".into())
+        );
+    }
+
+    #[test]
+    fn test_classify_input_keeps_commands_immediate_while_streaming() {
+        assert_eq!(
+            classify_input("/copy", true),
+            InputIntent::Command("copy".into())
+        );
+    }
+
+    #[test]
+    fn test_active_chat_cancel_signals_service_token() {
+        let cancellation = TurnCancellationToken::new();
+        let (_, events) = mpsc::channel(1);
+        let active_chat = ActiveChat {
+            events,
+            cancellation: cancellation.clone(),
+        };
+
+        active_chat.cancel();
+
+        assert!(cancellation.is_cancelled());
     }
 
     // T-TUI-TITLE-01: TitleUpdated event updates session list.

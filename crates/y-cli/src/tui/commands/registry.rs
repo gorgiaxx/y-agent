@@ -25,6 +25,7 @@ pub struct CommandInfo {
 pub enum CommandCategory {
     Session,
     Agent,
+    Mode,
     Model,
     Debug,
     General,
@@ -35,6 +36,7 @@ impl CommandCategory {
         match self {
             Self::Session => "Session",
             Self::Agent => "Agent",
+            Self::Mode => "Mode",
             Self::Model => "Model",
             Self::Debug => "Debug",
             Self::General => "General",
@@ -120,6 +122,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Session,
         },
         CommandInfo {
+            name: "resume",
+            alias: Some("r"),
+            description: "Resume a recent session",
+            args: "[session-id|title]",
+            category: CommandCategory::Session,
+        },
+        CommandInfo {
             name: "list",
             alias: Some("ls"),
             description: "List all sessions",
@@ -168,6 +177,48 @@ fn builtin_commands() -> Vec<CommandInfo> {
             description: "Agent management (list, select, info)",
             args: "<subcommand> [args]",
             category: CommandCategory::Agent,
+        },
+        CommandInfo {
+            name: "goal",
+            alias: Some("g"),
+            description: "Run an objective with automatic orchestration",
+            args: "<objective>",
+            category: CommandCategory::Mode,
+        },
+        CommandInfo {
+            name: "mode",
+            alias: Some("md"),
+            description: "Select the mode for subsequent turns",
+            args: "[fast|auto|plan|loop]",
+            category: CommandCategory::Mode,
+        },
+        CommandInfo {
+            name: "fast",
+            alias: None,
+            description: "Use direct execution for subsequent turns",
+            args: "[prompt]",
+            category: CommandCategory::Mode,
+        },
+        CommandInfo {
+            name: "auto",
+            alias: None,
+            description: "Let y-agent select fast, plan, or loop",
+            args: "[prompt]",
+            category: CommandCategory::Mode,
+        },
+        CommandInfo {
+            name: "plan",
+            alias: Some("p"),
+            description: "Use reviewed structured planning",
+            args: "[prompt]",
+            category: CommandCategory::Mode,
+        },
+        CommandInfo {
+            name: "loop",
+            alias: Some("l"),
+            description: "Use iterative execution and self-review",
+            args: "[prompt]",
+            category: CommandCategory::Mode,
         },
         // Model commands
         CommandInfo {
@@ -224,8 +275,8 @@ fn builtin_commands() -> Vec<CommandInfo> {
         CommandInfo {
             name: "copy",
             alias: Some("cp"),
-            description: "Copy chat transcript to clipboard",
-            args: "",
+            description: "Copy a response, code block, or transcript",
+            args: "[N|code|transcript]",
             category: CommandCategory::General,
         },
         CommandInfo {
@@ -309,6 +360,40 @@ mod tests {
     fn test_all_commands_registered() {
         let reg = CommandRegistry::new();
         assert!(reg.all().len() >= 18, "should have at least 18 commands");
+        assert!(
+            reg.find("goal").is_some(),
+            "goal command should be discoverable"
+        );
+        assert!(
+            reg.find("resume").is_some(),
+            "resume command should be discoverable"
+        );
+        assert!(
+            reg.find("mode").is_some(),
+            "mode command should be discoverable"
+        );
+        assert!(
+            reg.find("plan").is_some(),
+            "plan command should be discoverable"
+        );
+        assert!(
+            reg.find("loop").is_some(),
+            "loop command should be discoverable"
+        );
+    }
+
+    #[test]
+    fn test_command_first_workflow_metadata() {
+        let reg = CommandRegistry::new();
+
+        let goal = reg.find("goal").expect("goal command");
+        assert_eq!(goal.args, "<objective>");
+
+        let resume = reg.find("resume").expect("resume command");
+        assert_eq!(resume.args, "[session-id|title]");
+
+        let copy = reg.find("copy").expect("copy command");
+        assert_eq!(copy.args, "[N|code|transcript]");
     }
 
     #[test]

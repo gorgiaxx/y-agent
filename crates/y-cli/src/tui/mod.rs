@@ -42,7 +42,7 @@ use tracing::warn;
 use tui_textarea::TextArea;
 
 use crate::wire::AppServices;
-use chat_flow::ChatEvent;
+use chat_flow::{ActiveChat, InputIntent};
 use commands::handlers::{self, AsyncCommand, CommandResult};
 use events::{AppEvent, EventLoop};
 use keys::KeyAction;
@@ -78,8 +78,8 @@ pub struct TuiApp {
     palette: CommandPaletteState,
     /// Application services (LLM, session, etc.).
     services: Arc<AppServices>,
-    /// Receiver for LLM response events.
-    llm_rx: Option<tokio::sync::mpsc::Receiver<ChatEvent>>,
+    /// Active service turn, including progress events and cancellation.
+    active_chat: Option<ActiveChat>,
     /// Receiver for toast messages from the tracing bridge.
     toast_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Toast>>,
     /// Last computed layout chunks for mouse hit-testing.
@@ -116,7 +116,7 @@ impl TuiApp {
             textarea,
             palette,
             services,
-            llm_rx: None,
+            active_chat: None,
             toast_rx,
             last_chunks: None,
             chat_plain_lines: Vec::new(),
@@ -154,7 +154,6 @@ impl TuiApp {
         if let Some(node) = matched {
             self.state.current_session_id = Some(node.id.to_string());
             self.load_session_transcript(&node.id).await;
-            self.state.sync_selected_session_index();
         } else {
             warn!(target = target, "no session matching resume target");
         }
@@ -188,7 +187,7 @@ impl TuiApp {
                         break;
                     }
                 }
-                AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse).await,
+                AppEvent::Mouse(mouse) => self.handle_mouse_event(mouse),
                 AppEvent::Resize(_w, _h) => {}
                 AppEvent::Tick => self.handle_tick(),
             }
@@ -207,7 +206,10 @@ impl TuiApp {
                 if self.state.mode == InteractionMode::Command {
                     if self.palette.in_arg_mode() {
                         let cmd = self.palette.arg_command.clone().unwrap_or_default();
-                        let arg = self.palette.selected_arg().unwrap_or("").to_string();
+                        let arg = self
+                            .palette
+                            .selected_arg()
+                            .map_or_else(|| self.palette.input.trim().to_string(), str::to_string);
                         let cmd_input = if arg.is_empty() {
                             cmd
                         } else {
@@ -238,19 +240,52 @@ impl TuiApp {
                     }
                 } else {
                     let input: String = self.textarea.lines().join("\n");
-                    let trimmed = input.trim();
-                    if trimmed.starts_with('/') && !trimmed.is_empty() {
-                        let cmd_input = &trimmed[1..];
-                        self.state.push_history(trimmed);
-                        if self.execute_command(cmd_input).await {
-                            return true;
-                        }
-                    } else if !trimmed.is_empty() {
-                        self.state.push_history(trimmed);
-                        self.llm_rx =
-                            chat_flow::submit_message(&input, &mut self.state, &self.services);
+                    let clear_input =
+                        match chat_flow::classify_input(&input, self.state.is_streaming) {
+                            InputIntent::Ignore => false,
+                            InputIntent::Command(command) => {
+                                self.state.push_history(input.trim());
+                                if self.execute_command(&command).await {
+                                    return true;
+                                }
+                                true
+                            }
+                            InputIntent::NewTurn(text) => {
+                                self.state.push_history(&text);
+                                self.active_chat = chat_flow::submit_message(
+                                    &text,
+                                    &mut self.state,
+                                    &self.services,
+                                );
+                                true
+                            }
+                            InputIntent::FollowUp(text) => {
+                                match chat_flow::enqueue_follow_up(
+                                    &text,
+                                    &self.state,
+                                    &self.services,
+                                ) {
+                                    Ok(_) => {
+                                        self.state.push_history(&text);
+                                        self.state.push_toast(
+                                            "Follow-up queued for the active run.".into(),
+                                            ToastLevel::Success,
+                                        );
+                                        true
+                                    }
+                                    Err(error) => {
+                                        self.state.push_toast(
+                                            format!("Could not queue follow-up: {error}"),
+                                            ToastLevel::Error,
+                                        );
+                                        false
+                                    }
+                                }
+                            }
+                        };
+                    if clear_input {
+                        self.textarea = TextArea::default();
                     }
-                    self.textarea = TextArea::default();
                 }
             }
             KeyAction::InputPassthrough => {
@@ -277,16 +312,12 @@ impl TuiApp {
                     self.textarea.input(key);
                 }
             }
-            KeyAction::ToggleSidebar => self.state.toggle_sidebar(),
-            KeyAction::ToggleSidebarView => self.state.toggle_sidebar_view(),
             KeyAction::CycleFocus => {
                 self.state.cycle_focus_forward();
             }
             KeyAction::ScrollUp => {
                 if self.state.mode == InteractionMode::Command {
                     self.palette.select_prev();
-                } else if self.state.focus == PanelFocus::Sidebar {
-                    self.state.select_session_prev();
                 } else {
                     self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
                 }
@@ -294,8 +325,6 @@ impl TuiApp {
             KeyAction::ScrollDown => {
                 if self.state.mode == InteractionMode::Command {
                     self.palette.select_next();
-                } else if self.state.focus == PanelFocus::Sidebar {
-                    self.state.select_session_next();
                 } else {
                     self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
                 }
@@ -316,10 +345,12 @@ impl TuiApp {
                 self.state.scroll_offset = 0;
             }
             KeyAction::CancelStreaming => {
-                chat_flow::cancel_streaming(&mut self.state);
-                self.llm_rx = None;
-                self.state
-                    .push_toast("Response cancelled.".into(), ToastLevel::Info);
+                if let Some(active_chat) = &self.active_chat {
+                    active_chat.cancel();
+                    chat_flow::cancel_streaming(&mut self.state);
+                    self.state
+                        .push_toast("Cancelling response...".into(), ToastLevel::Info);
+                }
             }
             KeyAction::ShowHelp => {
                 if self.state.mode == InteractionMode::Help {
@@ -388,15 +419,12 @@ impl TuiApp {
                 }
             }
             KeyAction::Consumed | KeyAction::Unhandled => {}
-            KeyAction::SelectSessionItem => {
-                self.switch_to_selected_session().await;
-            }
         }
         false
     }
 
     /// Process a mouse event.
-    async fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
+    fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
         use crossterm::event::{MouseButton, MouseEventKind};
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -409,12 +437,6 @@ impl TuiApp {
                         self.state.set_focus(PanelFocus::Chat);
                         let (row, col) = self.terminal_to_content(x, y, chunks.chat);
                         self.state.selection.start(row, col);
-                    } else if let Some(sb) = chunks.sidebar {
-                        if contains(sb, x, y) {
-                            self.state.set_focus(PanelFocus::Sidebar);
-                            self.state.selection.reset();
-                            self.handle_sidebar_click(sb, y).await;
-                        }
                     }
                 }
             }
@@ -452,28 +474,10 @@ impl TuiApp {
                 self.state.selection.reset();
             }
             MouseEventKind::ScrollUp => {
-                let over_sidebar = self
-                    .last_chunks
-                    .as_ref()
-                    .and_then(|c| c.sidebar)
-                    .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
-                if over_sidebar {
-                    self.state.select_session_prev();
-                } else {
-                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
-                }
+                self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
             }
             MouseEventKind::ScrollDown => {
-                let over_sidebar = self
-                    .last_chunks
-                    .as_ref()
-                    .and_then(|c| c.sidebar)
-                    .is_some_and(|sb| contains(sb, mouse.column, mouse.row));
-                if over_sidebar {
-                    self.state.select_session_next();
-                } else {
-                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
-                }
+                self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
             }
             _ => {}
         }
@@ -491,10 +495,10 @@ impl TuiApp {
 
         self.state.tick_toasts();
 
-        if let Some(ref mut rx) = self.llm_rx {
+        if let Some(ref mut active_chat) = self.active_chat {
             let mut channel_closed = false;
             loop {
-                match rx.try_recv() {
+                match active_chat.events.try_recv() {
                     Ok(event) => {
                         chat_flow::apply_chat_event(event, &mut self.state);
                     }
@@ -509,7 +513,8 @@ impl TuiApp {
             }
             if channel_closed {
                 self.state.is_streaming = false;
-                self.llm_rx = None;
+                self.state.is_cancelling = false;
+                self.active_chat = None;
             }
         }
     }
@@ -521,7 +526,7 @@ impl TuiApp {
         let input_lines = panels::input::input_height(&self.textarea);
         let term_size = self.terminal.size()?;
         let term_rect = ratatui::layout::Rect::new(0, 0, term_size.width, term_size.height);
-        let chunks = layout::compute_layout(term_rect, self.state.sidebar_visible, input_lines);
+        let chunks = layout::compute_layout(term_rect, input_lines);
         self.last_chunks = Some(chunks.clone());
 
         // Update page_height from the chat panel for page-scroll calculations.
@@ -613,6 +618,38 @@ impl TuiApp {
                 self.palette.enter_arg_mode("model".into(), completions);
                 true
             }
+            "resume" => self.open_session_picker().await,
+            "goal" => {
+                self.palette.enter_arg_mode("goal".into(), Vec::new());
+                true
+            }
+            "mode" => {
+                self.palette.enter_arg_mode(
+                    "mode".into(),
+                    vec![
+                        ("fast".into(), "Direct execution".into()),
+                        (
+                            "auto".into(),
+                            "Automatically select fast, plan, or loop".into(),
+                        ),
+                        ("plan".into(), "Reviewed structured planning".into()),
+                        ("loop".into(), "Iterative execution and self-review".into()),
+                    ],
+                );
+                true
+            }
+            "copy" => {
+                self.palette.enter_arg_mode(
+                    "copy".into(),
+                    vec![
+                        ("1".into(), "Latest assistant response".into()),
+                        ("2".into(), "Second-latest assistant response".into()),
+                        ("code".into(), "Latest fenced code block".into()),
+                        ("transcript".into(), "Complete visible transcript".into()),
+                    ],
+                );
+                true
+            }
             _ => false,
         }
     }
@@ -637,13 +674,35 @@ impl TuiApp {
                 // State has been reset by the handler (messages cleared,
                 // current_session_id set to None, user_message_count reset).
                 // Actual session creation is deferred to first message.
-                self.state.sync_selected_session_index();
                 self.state
                     .push_toast("New session started.".into(), ToastLevel::Info);
             }
             CommandResult::Async(cmd) => {
                 self.execute_async_command(cmd).await;
             }
+            CommandResult::SubmitTurn { input, mode } => {
+                if self.state.is_streaming {
+                    self.state.push_toast(
+                        "A response is active. Enter plain text to queue a follow-up, or press Esc to cancel."
+                            .into(),
+                        ToastLevel::Error,
+                    );
+                    return false;
+                }
+                self.state.turn_mode = mode;
+                self.active_chat = chat_flow::submit_message_with_mode(
+                    &input,
+                    mode,
+                    &mut self.state,
+                    &self.services,
+                );
+            }
+            CommandResult::SetTurnMode(mode) => {
+                self.state.turn_mode = mode;
+                self.state
+                    .push_toast(format!("Turn mode: {}", mode.label()), ToastLevel::Success);
+            }
+            CommandResult::Copy(target) => self.copy_to_clipboard(target),
         }
         false
     }
@@ -653,6 +712,12 @@ impl TuiApp {
         match cmd {
             AsyncCommand::ListSessions => self.cmd_list_sessions().await,
             AsyncCommand::SwitchSession(target) => self.cmd_switch_session(&target).await,
+            AsyncCommand::ResumeSession(target) => match target {
+                Some(target) => self.cmd_switch_session(&target).await,
+                None => {
+                    self.open_session_picker().await;
+                }
+            },
             AsyncCommand::DeleteSession(target) => self.cmd_delete_session(&target).await,
             AsyncCommand::BranchSession(label) => self.cmd_branch_session(label).await,
             AsyncCommand::ExportSession(ref format) => {
@@ -670,6 +735,87 @@ impl TuiApp {
     // -----------------------------------------------------------------------
     // Async command implementations
     // -----------------------------------------------------------------------
+
+    /// Open a command-palette session picker populated from recent sessions.
+    async fn open_session_picker(&mut self) -> bool {
+        self.load_sessions().await;
+        if self.state.sessions.is_empty() {
+            self.state
+                .push_toast("No sessions available to resume.".into(), ToastLevel::Info);
+            return false;
+        }
+
+        let current_id = self.state.current_session_id.as_deref();
+        let completions = self
+            .state
+            .sessions
+            .iter()
+            .map(|session| {
+                let short_id: String = session.id.chars().take(8).collect();
+                let title = if session.title.trim().is_empty() {
+                    "Untitled session"
+                } else {
+                    session.title.as_str()
+                };
+                let current = if current_id == Some(session.id.as_str()) {
+                    " · current"
+                } else {
+                    ""
+                };
+                (
+                    short_id,
+                    format!("{title} · {} messages{current}", session.message_count),
+                )
+            })
+            .collect();
+
+        if self.state.mode != InteractionMode::Command {
+            let _ = self.state.set_mode(InteractionMode::Command);
+        }
+        self.palette.enter_arg_mode("resume".into(), completions);
+        true
+    }
+
+    /// Resolve a copy target and place it on the system clipboard.
+    fn copy_to_clipboard(&mut self, target: commands::copy::CopyTarget) {
+        let text = match commands::copy::resolve_target(&self.state.messages, target) {
+            Ok(text) => text,
+            Err(message) => {
+                self.state.push_toast(message, ToastLevel::Info);
+                return;
+            }
+        };
+
+        #[cfg(feature = "tui")]
+        {
+            match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(&text)) {
+                Ok(()) => {
+                    let label = match target {
+                        commands::copy::CopyTarget::AssistantResponse(nth) => {
+                            format!("assistant response {nth}")
+                        }
+                        commands::copy::CopyTarget::LastCodeBlock => "code block".to_string(),
+                        commands::copy::CopyTarget::Transcript => "transcript".to_string(),
+                    };
+                    self.state
+                        .push_toast(format!("Copied {label}."), ToastLevel::Success);
+                }
+                Err(error) => {
+                    self.state
+                        .push_toast(format!("Clipboard error: {error}"), ToastLevel::Error);
+                }
+            }
+        }
+
+        #[cfg(not(feature = "tui"))]
+        {
+            let _ = text;
+            self.state.push_toast(
+                "Clipboard not available without TUI feature.".into(),
+                ToastLevel::Error,
+            );
+        }
+    }
 
     /// `/list` -- list all sessions.
     async fn cmd_list_sessions(&mut self) {
@@ -750,7 +896,6 @@ impl TuiApp {
                     .unwrap_or_else(|| sid.to_string()[..8].to_string());
                 self.state.current_session_id = Some(sid.to_string());
                 self.load_session_transcript(&sid).await;
-                self.state.sync_selected_session_index();
                 self.state.set_focus(PanelFocus::Input);
                 self.state
                     .push_toast(format!("Switched to: {title}"), ToastLevel::Info);
@@ -802,7 +947,7 @@ impl TuiApp {
                             format!("Deleted session: {}", &sid.to_string()[..8]),
                             ToastLevel::Info,
                         );
-                        // Refresh sidebar.
+                        // Refresh recent session completions and status labels.
                         self.load_sessions().await;
                         // If we deleted the current session, clear the chat.
                         if is_current {
@@ -810,7 +955,6 @@ impl TuiApp {
                             self.state.current_session_id = None;
                             self.state.user_message_count = 0;
                         }
-                        self.state.sync_selected_session_index();
                     }
                     Err(e) => {
                         self.state
@@ -850,7 +994,6 @@ impl TuiApp {
                 self.state.current_session_id = Some(fork_id.clone());
                 self.load_session_transcript(&fork.id).await;
                 self.load_sessions().await;
-                self.state.sync_selected_session_index();
                 self.state.set_focus(PanelFocus::Input);
                 self.state
                     .push_toast(format!("Branched: {fork_title}"), ToastLevel::Info);
@@ -1117,11 +1260,6 @@ impl TuiApp {
         state: &AppState,
         textarea: &TextArea<'_>,
     ) -> Vec<String> {
-        // Sidebar (if visible).
-        if let Some(sidebar_area) = chunks.sidebar {
-            panels::sidebar::render(frame, sidebar_area, state);
-        }
-
         // Chat panel -- returns plain text lines for selection.
         let plain_lines = panels::chat::render(frame, chunks.chat, state);
 
@@ -1129,7 +1267,15 @@ impl TuiApp {
         panels::status_bar::render(frame, chunks.status_bar, state);
 
         // Input area.
-        panels::input::render(frame, chunks.input, state.focus, textarea, &state.theme);
+        panels::input::render(
+            frame,
+            chunks.input,
+            state.focus,
+            state.is_streaming,
+            state.is_cancelling,
+            textarea,
+            &state.theme,
+        );
 
         plain_lines
     }
@@ -1217,7 +1363,7 @@ impl TuiApp {
                     .into_iter()
                     .map(|n| SessionListItem {
                         id: n.id.to_string(),
-                        title: n.title.unwrap_or_default(),
+                        title: n.manual_title.or(n.title).unwrap_or_default(),
                         updated_at: n.updated_at,
                         message_count: n.message_count,
                     })
@@ -1299,78 +1445,6 @@ impl TuiApp {
                 warn!(error = %e, "failed to load transcript");
             }
         }
-    }
-
-    /// Handle a left-click inside the sidebar area.
-    ///
-    /// Calculates which row was clicked and either creates a new session
-    /// ("+ New Session" row) or switches to the clicked session item.
-    async fn handle_sidebar_click(&mut self, sidebar_rect: ratatui::layout::Rect, click_y: u16) {
-        // Inner area excludes the 1-cell border on each side.
-        let inner_y = sidebar_rect.y + 1;
-        let inner_height = sidebar_rect.height.saturating_sub(2);
-        let click_row = click_y.saturating_sub(inner_y) as usize;
-
-        if click_row == 0 {
-            // "New Session" clicked.
-            self.state.messages.clear();
-            self.state.scroll_offset = 0;
-            self.state.current_session_id = None;
-            self.state.user_message_count = 0;
-            self.state.sync_selected_session_index();
-            self.state
-                .push_toast("New session started.".into(), ToastLevel::Info);
-            self.state.set_focus(PanelFocus::Input);
-            return;
-        }
-
-        // Sessions start at row 2 (row 1 is the separator).
-        if click_row < 2 || self.state.sessions.is_empty() {
-            return;
-        }
-
-        let session_row = click_row - 2;
-
-        // Reproduce the scroll offset logic from sidebar::render.
-        let visible_height = inner_height.saturating_sub(2) as usize;
-        let selected_idx = self.state.selected_session_index.unwrap_or(0);
-        let scroll_offset = if visible_height == 0 {
-            0
-        } else if selected_idx >= visible_height {
-            selected_idx - visible_height + 1
-        } else {
-            0
-        };
-
-        let clicked_idx = scroll_offset + session_row;
-        if clicked_idx < self.state.sessions.len() {
-            self.state.selected_session_index = Some(clicked_idx);
-            self.switch_to_selected_session().await;
-        }
-    }
-
-    /// Switch to the currently selected session in the sidebar.
-    async fn switch_to_selected_session(&mut self) {
-        let Some(idx) = self.state.selected_session_index else {
-            return;
-        };
-        let Some(session) = self.state.sessions.get(idx) else {
-            return;
-        };
-
-        let sid = session.id.clone();
-        if self.state.current_session_id.as_deref() == Some(&sid) {
-            // Already on this session.
-            self.state.set_focus(PanelFocus::Input);
-            return;
-        }
-
-        self.state.current_session_id = Some(sid.clone());
-        let session_id = y_core::types::SessionId::from_string(sid);
-        self.load_session_transcript(&session_id).await;
-
-        // Switch focus to input after selecting a session.
-        self.state.set_focus(PanelFocus::Input);
     }
 }
 
@@ -1481,6 +1555,15 @@ fn restore_status_from_metadata(metadata: &serde_json::Value, state: &mut state:
 
     if let Some(model) = metadata.get("model").and_then(|v| v.as_str()) {
         state.status_model = model.to_string();
+    }
+
+    if let Some(requested_mode) = metadata
+        .get("orchestration")
+        .and_then(|value| value.get("requested_mode"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(state::TurnMode::parse)
+    {
+        state.turn_mode = requested_mode;
     }
 
     state.status_tokens = format!(

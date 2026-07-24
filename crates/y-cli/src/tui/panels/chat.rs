@@ -237,7 +237,7 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, 
     lines.push(Line::from(""));
     plain.push(String::new());
 
-    let subtitle = "Start a conversation by typing a message below.";
+    let subtitle = "Type a message or press / for commands.";
     let pad2 = width.saturating_sub(subtitle.len()) / 2;
     let padded2 = format!("{}{}", " ".repeat(pad2), subtitle);
     lines.push(Line::from(Span::styled(
@@ -245,6 +245,18 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, 
         Style::default().fg(t.muted()),
     )));
     plain.push(padded2);
+
+    lines.push(Line::from(""));
+    plain.push(String::new());
+
+    let commands = "/mode   /goal <objective>   /resume   /copy";
+    let command_pad = width.saturating_sub(commands.len()) / 2;
+    let padded_commands = format!("{}{}", " ".repeat(command_pad), commands);
+    lines.push(Line::from(Span::styled(
+        padded_commands.clone(),
+        Style::default().fg(t.input_border_focused()),
+    )));
+    plain.push(padded_commands);
 }
 
 // ---------------------------------------------------------------------------
@@ -1579,6 +1591,19 @@ mod tests {
         let items = build_display_items(&state);
         assert_eq!(items.len(), 1);
         assert!(matches!(items[0], DisplayItem::WelcomeScreen));
+    }
+
+    #[test]
+    fn test_welcome_screen_advertises_command_first_workflow() {
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+        render_welcome(&mut lines, &mut plain, 80, &Theme::default());
+        let text = plain.join("\n");
+
+        assert!(text.contains("/goal"));
+        assert!(text.contains("/mode"));
+        assert!(text.contains("/resume"));
+        assert!(text.contains("/copy"));
     }
 
     #[test]
