@@ -1,27 +1,12 @@
 //! Bare-prompt resolution: detect `y-agent "do X"` and forward to `chat`.
 
-/// Known subcommand names (mirrors `commands::Commands` variants, lowercased).
-const SUBCOMMANDS: &[&str] = &[
-    "chat",
-    "init",
-    "status",
-    "config",
-    "session",
-    "tool",
-    "agent",
-    "workflow",
-    "diag",
-    "skill",
-    "kb",
-    "mcp",
-    "completion",
-    "tui",
-    "serve",
-    "resume",
-    "fork",
-    "print",
-    "rpc",
-];
+use crate::commands::Commands;
+
+fn is_registered_subcommand(name: &str) -> bool {
+    <Commands as clap::Subcommand>::augment_subcommands(clap::Command::new("y-agent"))
+        .get_subcommands()
+        .any(|command| command.get_name() == name)
+}
 
 /// Resolve raw argv (excluding `argv[0]`, the program name) into the args that
 /// clap should parse.
@@ -47,7 +32,7 @@ pub fn resolve(raw: &[String]) -> Vec<String> {
     }
 
     // Known subcommand → pass through.
-    if SUBCOMMANDS.contains(&first.as_str()) {
+    if is_registered_subcommand(first) {
         return raw.to_vec();
     }
 
@@ -150,6 +135,22 @@ mod tests {
             vec!["print".to_string(), "hi".to_string()]
         );
         assert_eq!(resolve(&vec!["rpc".to_string()]), vec!["rpc".to_string()]);
+    }
+
+    #[test]
+    fn every_registered_management_subcommand_passes_through() {
+        for name in [
+            "workspace",
+            "provider",
+            "observe",
+            "rewind",
+            "schedule",
+            "background-task",
+            "capability-pack",
+        ] {
+            let raw = vec![name.to_string(), "--help".to_string()];
+            assert_eq!(resolve(&raw), raw, "{name} must not become a chat prompt");
+        }
     }
 
     #[test]

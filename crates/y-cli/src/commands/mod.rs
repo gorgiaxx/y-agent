@@ -1,6 +1,9 @@
 //! Command dispatch — defines all CLI subcommands and routes to handlers.
 
 pub mod agent;
+pub mod background_task;
+#[cfg(feature = "capability_packs")]
+pub mod capability_pack;
 pub mod chat;
 pub mod common;
 pub mod completion;
@@ -14,6 +17,7 @@ pub mod print;
 pub mod provider;
 pub mod rewind;
 pub mod rpc;
+pub mod schedule;
 pub mod serve;
 pub mod session;
 pub mod skills;
@@ -182,6 +186,25 @@ pub enum Commands {
         #[command(subcommand)]
         action: rewind::RewindAction,
     },
+
+    /// Scheduled workflow management.
+    Schedule {
+        #[command(subcommand)]
+        action: schedule::ScheduleAction,
+    },
+
+    /// Runtime-managed background task inspection and control.
+    BackgroundTask {
+        #[command(subcommand)]
+        action: background_task::BackgroundTaskAction,
+    },
+
+    /// Capability Pack inspection and lifecycle management.
+    #[cfg(feature = "capability_packs")]
+    CapabilityPack {
+        #[command(subcommand)]
+        action: capability_pack::CapabilityPackAction,
+    },
 }
 
 #[cfg(test)]
@@ -260,5 +283,46 @@ mod tests {
     fn test_parse_init_invalid_provider() {
         let result = TestCli::try_parse_from(["y-agent", "init", "--provider", "invalid-provider"]);
         assert!(result.is_err(), "invalid provider should fail");
+    }
+
+    #[test]
+    fn test_parse_schedule_list_command() {
+        let cli = TestCli::parse_from(["y-agent", "schedule", "list"]);
+        assert!(matches!(
+            cli.command,
+            Some(super::Commands::Schedule {
+                action: super::schedule::ScheduleAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_parse_background_task_poll_command() {
+        let cli = TestCli::parse_from([
+            "y-agent",
+            "background-task",
+            "poll",
+            "--session",
+            "session-1",
+            "process-1",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Some(super::Commands::BackgroundTask {
+                action: super::background_task::BackgroundTaskAction::Poll { .. }
+            })
+        ));
+    }
+
+    #[cfg(feature = "capability_packs")]
+    #[test]
+    fn test_parse_capability_pack_inspect_command() {
+        let cli = TestCli::parse_from(["y-agent", "capability-pack", "inspect", "./pack"]);
+        assert!(matches!(
+            cli.command,
+            Some(super::Commands::CapabilityPack {
+                action: super::capability_pack::CapabilityPackAction::Inspect { .. }
+            })
+        ));
     }
 }

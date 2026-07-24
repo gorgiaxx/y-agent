@@ -55,7 +55,13 @@ syntect = { workspace = true, optional = true }
 two-face = { workspace = true, optional = true }
 
 [features]
-default = ["tui"]
+default = [
+    "tui",
+    "background_auto_wake",
+    "capability_packs",
+    "lsp",
+    "langfuse",
+]
 tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard", "pulldown-cmark", "syntect", "two-face"]
 hook_handlers = ["y-service/hook_handlers"]
 llm_hooks = ["y-service/llm_hooks"]

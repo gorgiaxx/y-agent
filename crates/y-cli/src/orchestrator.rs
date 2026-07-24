@@ -4,7 +4,9 @@
 //! `crate::orchestrator` without changes.
 
 // Re-export all service types for backward compatibility within y-cli.
-pub use y_service::chat::{ChatService, TurnError, TurnEventSender, TurnInput, TurnResult};
+pub use y_service::chat::{
+    ChatService, TurnCancellationToken, TurnError, TurnEventSender, TurnInput, TurnResult,
+};
 
 use crate::wire::AppServices;
 
@@ -24,8 +26,9 @@ pub async fn execute_turn_streaming(
     services: &AppServices,
     input: &TurnInput<'_>,
     progress: TurnEventSender,
+    cancel: Option<TurnCancellationToken>,
 ) -> Result<TurnResult, TurnError> {
-    ChatService::execute_turn_with_progress(services, input, progress, None).await
+    ChatService::execute_turn_with_progress(services, input, progress, cancel).await
 }
 
 /// Trigger manual context compaction for a session.

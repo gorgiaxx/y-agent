@@ -360,6 +360,19 @@ async fn main() -> Result<()> {
             let services = wire::wire(&config).await?;
             commands::rewind::run(action, &services, mode).await?;
         }
+        Some(Commands::Schedule { action }) => {
+            let services = wire::wire(&config).await?;
+            commands::schedule::run(action, &services, mode).await?;
+        }
+        Some(Commands::BackgroundTask { action }) => {
+            let services = wire::wire(&config).await?;
+            commands::background_task::run(action, &services, mode).await?;
+        }
+        #[cfg(feature = "capability_packs")]
+        Some(Commands::CapabilityPack { action }) => {
+            let services = wire::wire(&config).await?;
+            commands::capability_pack::run(action, &services, mode).await?;
+        }
         None => {
             println!("y-agent v{}", env!("CARGO_PKG_VERSION"));
             println!("Use --help for available commands.");
