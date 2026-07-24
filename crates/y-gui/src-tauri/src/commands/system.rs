@@ -531,10 +531,9 @@ pub async fn provider_thaw_all(state: State<'_, AppState>) -> Result<usize, Stri
 
 /// Show the main window.
 ///
-/// Called by the frontend after the initial render completes to avoid the
-/// white-flash that occurs when the webview loads with a blank background.
-/// The window starts hidden (`visible: false` in `tauri.conf.json`) and is
-/// shown only once the React tree is mounted and CSS has been applied.
+/// Native setup shows the window after applying platform effects so a
+/// frontend startup failure cannot leave the application with only a Dock
+/// icon. This command remains an idempotent recovery hook for the frontend.
 #[tauri::command]
 pub async fn show_window(window: tauri::WebviewWindow) {
     let _ = window.show();

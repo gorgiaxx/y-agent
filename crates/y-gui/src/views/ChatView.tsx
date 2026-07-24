@@ -18,13 +18,18 @@ import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { getVisiblePendingEdit } from '../hooks/chatEditState';
 import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
+import { usePersistentState } from '../hooks/usePersistentState';
 import {
   createSessionInputStates,
+  deserializeSessionProviderSelections,
   getSessionInputState,
+  serializeSessionProviderSelections,
   setSessionDraft,
   setSessionProvider,
   type SessionInputDraft,
+  type SessionInputStates,
 } from '../hooks/sessionInputState';
+import { STORAGE_KEYS } from '../constants/storageKeys';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
 import type { ThinkingEffort, PlanMode, McpMode, RequestMode, TodoItem } from '../types';
 
@@ -49,20 +54,28 @@ export function ChatView() {
   const [rewindDraft, setRewindDraft] = useState<string | null>(null);
 
   const sessionInputKey = sessionHooks.activeSessionId ?? '__no_session__';
-  const [sessionInputStates, setSessionInputStates] = useState(createSessionInputStates);
+  const [sessionInputStates, setSessionInputStates] = usePersistentState<SessionInputStates>(
+    STORAGE_KEYS.SESSION_INPUT_STATES,
+    createSessionInputStates,
+    {
+      serialize: serializeSessionProviderSelections,
+      deserialize: deserializeSessionProviderSelections,
+    },
+  );
   const activeInputState = getSessionInputState(
     sessionInputStates,
     sessionInputKey,
     providerHooks.selectedProviderId,
+    providerHooks.providers.map((provider) => provider.id),
   );
   const handleDraftChange = useCallback((draft: SessionInputDraft) => {
     setSessionInputStates((previous) => setSessionDraft(previous, sessionInputKey, draft));
-  }, [sessionInputKey]);
+  }, [sessionInputKey, setSessionInputStates]);
   const handleProviderChange = useCallback((providerId: string) => {
     setSessionInputStates((previous) => (
       setSessionProvider(previous, sessionInputKey, providerId)
     ));
-  }, [sessionInputKey]);
+  }, [sessionInputKey, setSessionInputStates]);
   const createSessionWithInputState = useCallback(async (title?: string) => {
     const session = await createSession(title);
     if (session) {
@@ -71,7 +84,7 @@ export function ChatView() {
       ));
     }
     return session;
-  }, [activeInputState.providerId, createSession]);
+  }, [activeInputState.providerId, createSession, setSessionInputStates]);
 
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
   const [planMode, setPlanMode] = useState<PlanMode>(() => {

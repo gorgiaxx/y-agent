@@ -15,7 +15,7 @@ function AppContent({ onRequestWizard }: { onRequestWizard: () => void }) {
   const { config, updateConfig, loading } = configHooks;
   const [checked, setChecked] = useState(false);
 
-  // Show the window once React tree is mounted (prevents white-flash).
+  // Keep the native window visible if the host restored it in a hidden state.
   useEffect(() => {
     transport.invoke('show_window').catch(() => {});
   }, []);
@@ -131,7 +131,7 @@ function WizardWrapper({ onComplete }: { onComplete: () => void }) {
   const configHooks = useConfigContext();
   const { config, updateConfig, saveSection } = configHooks;
 
-  // Show the window (may be first render).
+  // Keep the native window visible while the setup wizard is active.
   useEffect(() => {
     transport.invoke('show_window').catch(() => {});
   }, []);

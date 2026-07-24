@@ -8,6 +8,14 @@ fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let manifest_path = Path::new(&manifest_dir);
 
+    // `generate_context!` embeds the Vite output into the desktop binary.
+    // Cargo does not infer this dependency from `frontendDist`, so explicitly
+    // track the directory to prevent release builds from reusing stale assets.
+    if let Some(frontend_dir) = manifest_path.parent() {
+        let frontend_dist = frontend_dir.join("dist");
+        println!("cargo:rerun-if-changed={}", frontend_dist.display());
+    }
+
     let project_root = manifest_path
         .parent() // crates/y-gui/
         .and_then(|p| p.parent()) // crates/

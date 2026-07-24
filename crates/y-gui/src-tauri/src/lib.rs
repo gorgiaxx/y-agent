@@ -340,7 +340,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 color: None,
             };
             if let Err(e) = main_window.set_effects(Some(effects)) {
-                tracing::warn!(error = %e, "Failed to apply vibrancy effects");
+                tracing::warn!(error = %e, "Failed to apply sidebar vibrancy effect");
             }
         }
 
@@ -411,6 +411,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     app.manage(app_state);
     app.manage(knowledge_state);
+
+    // Transparent macOS webviews must not be exposed before AppKit has
+    // attached their rendering surface. Show the window after native setup
+    // and effects are complete, without relying on frontend JavaScript.
+    if let Some(main_window) = app.get_webview_window("main") {
+        main_window.show()?;
+    }
 
     Ok(())
 }

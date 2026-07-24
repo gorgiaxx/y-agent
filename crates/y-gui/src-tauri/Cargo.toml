@@ -63,6 +63,7 @@ base64 = { workspace = true }
 
 [features]
 default = ["background_auto_wake", "capability_packs", "lsp"]
+custom-protocol = ["tauri/custom-protocol"]
 background_auto_wake = ["y-service/background_auto_wake"]
 capability_packs = ["y-service/capability_packs"]
 lsp = ["y-service/lsp"]

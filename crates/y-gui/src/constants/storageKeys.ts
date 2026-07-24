@@ -7,4 +7,5 @@ export const STORAGE_KEYS = {
   SECTION_COLLAPSED: 'y-gui:section-collapsed',
   AGENT_SESSION_ORDER: 'y-gui:agent-session-order',
   DEFAULT_PROMPT_TEMPLATE: 'y-gui:default-prompt-template',
+  SESSION_INPUT_STATES: 'y-gui:session-input-states:v1',
 } as const;
