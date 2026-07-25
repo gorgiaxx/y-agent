@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! [Left]                                        [Right]
-//! session  mode  model  tokens/context (pct%)  $cost      / commands
+//! session  mode  prompt  model  tokens/context (pct%)  $cost      / commands
 //!             [=========-------]
 //! ```
 //!
@@ -42,6 +42,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         state.turn_mode.label(),
         Style::default().fg(t.input_border_focused()),
     ));
+    left_spans.push(sep.clone());
+    left_spans.push(build_prompt_status_span(state, t));
     left_spans.push(sep.clone());
 
     // Model name.
@@ -103,6 +105,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let line = Line::from(spans);
     let para = Paragraph::new(line).style(Style::default().bg(t.status_bg()));
     frame.render_widget(para, area);
+}
+
+fn build_prompt_status_span(state: &AppState, t: &Theme) -> Span<'static> {
+    Span::styled(
+        state.prompt_template_status.label(),
+        Style::default().fg(t.active()),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +258,28 @@ mod tests {
         let state = AppState::default();
         let spans = build_context_spans(&state, &state.theme);
         assert!(spans.is_empty(), "no spans when window is 0 and no tokens");
+    }
+
+    #[test]
+    fn test_prompt_template_status_span_is_always_visible() {
+        let mut state = AppState::default();
+        assert_eq!(
+            build_prompt_status_span(&state, &state.theme)
+                .content
+                .as_ref(),
+            "prompt:default"
+        );
+
+        state.prompt_template_status = crate::tui::state::PromptTemplateStatus::Template {
+            id: "review".into(),
+            name: "Reviewer".into(),
+        };
+        assert_eq!(
+            build_prompt_status_span(&state, &state.theme)
+                .content
+                .as_ref(),
+            "prompt:Reviewer"
+        );
     }
 
     #[test]

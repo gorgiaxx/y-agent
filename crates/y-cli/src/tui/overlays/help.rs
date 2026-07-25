@@ -13,7 +13,7 @@ use ratatui::Frame;
 pub fn render(frame: &mut Frame, area: Rect) {
     // Calculate popup size.
     let popup_width = area.width.clamp(30, 60);
-    let popup_height = area.height.clamp(10, 42);
+    let popup_height = area.height.clamp(10, 44);
 
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -132,6 +132,12 @@ fn help_lines() -> Vec<Line<'static>> {
             desc_style,
         ),
         keybinding_line(
+            "  /prompt   ",
+            "Select session prompt template",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
             "  /mode     ",
             "Select fast / auto / plan / loop",
             key_style,
@@ -195,5 +201,6 @@ mod tests {
         assert!(text.contains("Copy selected tool"));
         assert!(text.contains("Prompt Backtrack"));
         assert!(text.contains("Branch before prompt"));
+        assert!(text.contains("/prompt"));
     }
 }
