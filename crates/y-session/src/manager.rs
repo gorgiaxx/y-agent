@@ -275,6 +275,9 @@ impl SessionManager {
             })
             .await?;
 
+        self.copy_custom_system_prompt(parent_id, &branch.id)
+            .await?;
+
         Ok(branch)
     }
 
@@ -644,6 +647,9 @@ impl SessionManager {
             })
             .await?;
 
+        self.copy_custom_system_prompt(source_id, &fork_node.id)
+            .await?;
+
         // 6. Copy display messages [0..=message_index].
         let display_end = message_index.saturating_add(1).min(display_messages.len());
         for msg in &display_messages[..display_end] {
@@ -712,6 +718,23 @@ impl SessionManager {
         let source = self.session_store.get(source_id).await?;
         let branch_title = title.or_else(|| source.title.map(|value| format!("{value} (Branch)")));
         self.branch(source_id, branch_title).await
+    }
+
+    async fn copy_custom_system_prompt(
+        &self,
+        source_id: &SessionId,
+        target_id: &SessionId,
+    ) -> Result<(), SessionManagerError> {
+        let prompt = self
+            .session_store
+            .get_custom_system_prompt(source_id)
+            .await?;
+        if prompt.is_some() {
+            self.session_store
+                .set_custom_system_prompt(target_id, prompt)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Get a snapshot of the session configuration.
@@ -1070,6 +1093,9 @@ mod tests {
                 .await
                 .unwrap();
         }
+        mgr.set_custom_system_prompt(&session.id, Some("template-config".into()))
+            .await
+            .unwrap();
 
         let middle = mgr
             .fork_session_before_message(&session.id, 2, Some("Before third".into()))
@@ -1083,6 +1109,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["msg-0", "msg-1"]
         );
+        assert_eq!(
+            mgr.get_custom_system_prompt(&middle.id).await.unwrap(),
+            Some("template-config".into())
+        );
 
         let before_first = mgr
             .fork_session_before_message(&session.id, 0, Some("Before first".into()))
@@ -1093,6 +1123,12 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+        assert_eq!(
+            mgr.get_custom_system_prompt(&before_first.id)
+                .await
+                .unwrap(),
+            Some("template-config".into())
+        );
         assert_eq!(
             mgr.read_display_transcript(&session.id)
                 .await
