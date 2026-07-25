@@ -129,7 +129,10 @@ the message:
 - `permission_denied` -- stop or request an allowed alternative.
 
 `FileRead` returns `content_hash`. Callers should pass that value to
-`FileEdit.expected_content_hash` so stale writes fail before mutation.
+`FileEdit.expected_content_hash` so stale writes fail before mutation. The
+canonical representation is `sha256:<64 lowercase hex characters>`. Callers
+should copy the full value exactly; `FileEdit` also accepts a bare 64-character
+SHA-256 digest and normalizes it to the canonical representation.
 
 ### Declaring file-mutating tools
 

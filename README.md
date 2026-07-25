@@ -77,8 +77,10 @@ possible.
 cargo app cli -- "inspect this repository"
 cargo app cli -- chat
 
-# Terminal UI
+# Terminal UI (default when run interactively with no subcommand)
 cargo app cli -- tui
+cargo app cli --            # launches the TUI in an interactive terminal
+cargo app cli -- --no-tui   # skip the TUI and print the version banner
 
 # REST API and optional Web UI
 cargo app cli -- serve

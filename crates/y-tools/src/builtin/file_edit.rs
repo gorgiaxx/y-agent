@@ -80,7 +80,8 @@ impl FileEditTool {
                     "expected_content_hash": {
                         "type": "string",
                         "description": concat!(
-                            "Optional SHA-256 content hash returned by FileRead. ",
+                            "Optional SHA-256 content hash returned by FileRead. Copy the full ",
+                            "value exactly; a bare 64-character digest is also accepted. ",
                             "The edit fails without writing if the file changed after it was read."
                         )
                     }
@@ -351,10 +352,11 @@ fn verify_expected_hash(
     current_content: &[u8],
 ) -> Result<(), ToolError> {
     if let Some(expected_hash) = expected_hash {
+        let expected_hash = normalize_expected_hash(expected_hash);
         if expected_hash != actual_hash {
             return Err(ToolError::StaleFile {
                 path: file_path.to_string(),
-                expected_hash: expected_hash.to_string(),
+                expected_hash,
                 actual_hash: actual_hash.to_string(),
                 fresh_context: String::from_utf8_lossy(current_content)
                     .chars()
@@ -364,6 +366,17 @@ fn verify_expected_hash(
         }
     }
     Ok(())
+}
+
+fn normalize_expected_hash(expected_hash: &str) -> String {
+    let digest = expected_hash
+        .strip_prefix("sha256:")
+        .unwrap_or(expected_hash);
+    if digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        format!("sha256:{}", digest.to_ascii_lowercase())
+    } else {
+        expected_hash.to_string()
+    }
 }
 
 fn lock_for_path(path: &Path) -> Arc<Mutex<()>> {
@@ -500,6 +513,27 @@ mod tests {
             output.content["after_hash"],
             y_core::file_mutation::content_hash(b"after")
         );
+    }
+
+    #[tokio::test]
+    async fn test_bare_sha256_digest_is_accepted_as_expected_content_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("bare-hash.txt");
+        std::fs::write(&file, "before").unwrap();
+        let prefixed_hash = y_core::file_mutation::content_hash(b"before");
+        let bare_hash = prefixed_hash.strip_prefix("sha256:").unwrap();
+
+        let tool = FileEditTool::new();
+        let input = make_input(serde_json::json!({
+            "file_path": file.to_str().unwrap(),
+            "old_string": "before",
+            "new_string": "after",
+            "expected_content_hash": bare_hash
+        }));
+        let output = tool.execute(input).await.unwrap();
+
+        assert_eq!(output.content["before_hash"], prefixed_hash);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "after");
     }
 
     #[tokio::test]
