@@ -423,13 +423,7 @@ pub(crate) async fn execute_and_record_tool(
     // ---------------------------------------------------------------
     // Actual tool execution
     // ---------------------------------------------------------------
-    if let Some(tx) = progress {
-        let _ = tx.send(TurnEvent::ToolStart {
-            name: tc.name.clone(),
-            input_preview: tool_arguments_preview(tc),
-            agent_name: config.agent_name.clone(),
-        });
-    }
+    emit_tool_start(progress, tc, config);
 
     let (tool_success, full_result, result_content, tool_metadata) = match execute_tool_call(
         container,
@@ -750,6 +744,7 @@ fn emit_tool_result(
 ) {
     if let Some(tx) = progress {
         let _ = tx.send(TurnEvent::ToolResult {
+            tool_call_id: tc.id.clone(),
             name: tc.name.clone(),
             success,
             duration_ms,
@@ -758,6 +753,21 @@ fn emit_tool_result(
             agent_name: config.agent_name.clone(),
             url_meta,
             metadata,
+        });
+    }
+}
+
+fn emit_tool_start(
+    progress: Option<&TurnEventSender>,
+    tc: &ToolCallRequest,
+    config: &AgentExecutionConfig,
+) {
+    if let Some(tx) = progress {
+        let _ = tx.send(TurnEvent::ToolStart {
+            tool_call_id: tc.id.clone(),
+            name: tc.name.clone(),
+            input_preview: tool_arguments_preview(tc),
+            agent_name: config.agent_name.clone(),
         });
     }
 }
@@ -772,6 +782,7 @@ fn record_tool_call(
     metadata: Option<serde_json::Value>,
 ) {
     ctx.tool_calls_executed.push(ToolCallRecord {
+        tool_call_id: tc.id.clone(),
         name: tc.name.clone(),
         arguments: tool_arguments_preview(tc),
         success,
@@ -1279,6 +1290,16 @@ async fn prepare_file_mutation(
     };
     let pending = PendingFileMutation::capture(capability, &tc.arguments, working_dir).await?;
     let root_id = resolve_root_session_for_history(container, session_id).await;
+    crate::rewind::RewindService::ensure_manager(
+        &container.file_history_managers,
+        &root_id,
+        &container.data_dir,
+    )
+    .await
+    .map_err(|message| y_core::tool::ToolError::RuntimeError {
+        name: tc.name.clone(),
+        message,
+    })?;
     crate::rewind::RewindService::track_edit(
         &container.file_history_managers,
         &root_id,
@@ -1473,6 +1494,7 @@ async fn execute_tool_call(
             &tc.arguments,
             container,
             &session_id_clone,
+            &tc.id,
             progress,
             cancel.cloned(),
         ))
@@ -1486,6 +1508,7 @@ async fn execute_tool_call(
             &tc.arguments,
             container,
             &session_id_clone,
+            &tc.id,
             progress,
             cancel.cloned(),
         ))
@@ -1804,6 +1827,40 @@ fn strip_url_tool_result(tool_name: &str, content: &serde_json::Value) -> String
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn test_tool_progress_events_preserve_request_identity() {
+        let (sender, mut receiver) = TurnEventSender::channel();
+        let request = ToolCallRequest {
+            id: "call-shell-1".into(),
+            name: "ShellExec".into(),
+            arguments: serde_json::json!({"command": "true"}),
+        };
+        let config = test_execution_config(SessionId::new(), &["ShellExec"]);
+
+        emit_tool_start(Some(&sender), &request, &config);
+        emit_tool_result(
+            Some(&sender),
+            &request,
+            &config,
+            true,
+            5,
+            "ok".into(),
+            None,
+            None,
+        );
+
+        let (start, _) = receiver.recv().await.unwrap();
+        let (result, _) = receiver.recv().await.unwrap();
+        assert!(matches!(
+            start,
+            TurnEvent::ToolStart { ref tool_call_id, .. } if tool_call_id == "call-shell-1"
+        ));
+        assert!(matches!(
+            result,
+            TurnEvent::ToolResult { ref tool_call_id, .. } if tool_call_id == "call-shell-1"
+        ));
+    }
 
     #[cfg(feature = "lsp")]
     #[test]
@@ -2181,6 +2238,47 @@ mod tests {
             event.operation,
             y_core::file_mutation::FileMutationOperation::Move
         );
+    }
+
+    #[tokio::test]
+    async fn prepare_file_mutation_initializes_missing_history_manager() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("tracked.txt"), "before").unwrap();
+        let mut service_config = crate::ServiceConfig::default();
+        service_config.storage = y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: temp.path().join("state/transcripts"),
+            ..y_storage::StorageConfig::default()
+        };
+        let container = ServiceContainer::from_config(&service_config)
+            .await
+            .unwrap();
+        let session_id = SessionId::new();
+        let tool_call = ToolCallRequest {
+            id: "edit-call".into(),
+            name: "FileEdit".into(),
+            arguments: serde_json::json!({
+                "file_path": "tracked.txt",
+                "old_string": "before",
+                "new_string": "after"
+            }),
+        };
+
+        let pending =
+            prepare_file_mutation(&container, &tool_call, &session_id, workspace.to_str())
+                .await
+                .unwrap();
+
+        assert!(pending.is_some());
+        assert!(container
+            .file_history_managers
+            .read()
+            .await
+            .contains_key(&session_id));
     }
 
     #[tokio::test]
@@ -2961,6 +3059,7 @@ mod tests {
             iteration: 0,
             last_gen_id: None,
             tool_calls_executed: vec![ToolCallRecord {
+                tool_call_id: "call-ask-user-1".to_string(),
                 name: "AskUser".to_string(),
                 arguments: "{}".to_string(),
                 success: true,

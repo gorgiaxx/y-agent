@@ -58,6 +58,9 @@ function buildAskUserMergeKey(entry: Record<string, unknown>): string {
 }
 
 function buildToolResultMergeKey(entry: Record<string, unknown>): string {
+  const toolCallId = String(entry.tool_call_id ?? '');
+  if (toolCallId) return `tool_call_id::${toolCallId}`;
+
   const name = String(entry.name ?? '');
   if (name === 'AskUser') {
     return buildAskUserMergeKey(entry);
@@ -82,6 +85,9 @@ function toToolResultMetadata(records: ToolResultRecord[]): Array<Record<string,
       duration_ms: tr.durationMs,
       result_preview: tr.resultPreview,
     };
+    if (tr.toolCallId) {
+      entry.tool_call_id = tr.toolCallId;
+    }
     if (tr.urlMeta) {
       try {
         entry.url_meta = JSON.parse(tr.urlMeta) as Record<string, unknown>;

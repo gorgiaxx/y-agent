@@ -1808,6 +1808,7 @@ impl ChatService {
             .iter()
             .map(|tc| {
                 let mut entry = serde_json::json!({
+                    "tool_call_id": tc.tool_call_id,
                     "name": tc.name,
                     "arguments": tc.arguments,
                     "success": tc.success,
@@ -2151,6 +2152,7 @@ impl ChatService {
                 });
 
                 records.push(ToolCallRecord {
+                    tool_call_id: tool_call.id.clone(),
                     name: tool_call.name.clone(),
                     arguments: serde_json::to_string(&tool_call.arguments).unwrap_or_default(),
                     success: tool_result
@@ -2509,6 +2511,22 @@ fn tool_result_success_from_content(content: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tool_results_metadata_preserves_tool_call_id() {
+        let metadata = ChatService::build_tool_results_metadata(&[ToolCallRecord {
+            tool_call_id: "call-read-1".into(),
+            name: "FileRead".into(),
+            arguments: r#"{"path":"src/lib.rs"}"#.into(),
+            success: true,
+            duration_ms: 8,
+            result_content: "contents".into(),
+            url_meta: None,
+            metadata: None,
+        }]);
+
+        assert_eq!(metadata[0]["tool_call_id"], "call-read-1");
+    }
     use y_context::{ContextCategory, ContextItem};
 
     fn make_history() -> Vec<Message> {
@@ -2902,6 +2920,7 @@ mod tests {
             pre_turn_message_count: None,
         };
         let tool_calls = vec![ToolCallRecord {
+            tool_call_id: "call-file-read-1".to_string(),
             name: "FileRead".to_string(),
             arguments: "{}".to_string(),
             success: false,
@@ -3130,6 +3149,7 @@ mod tests {
             cost_usd: 0.1,
             tool_calls_executed: (0..total_tools)
                 .map(|i| crate::agent_service::ToolCallRecord {
+                    tool_call_id: format!("call-{i}"),
                     name: format!("tool{i}"),
                     arguments: "{}".into(),
                     success: true,

@@ -325,6 +325,7 @@ export function useChatStreaming(
         const sid = event.session_id;
         markSessionActivity(sid);
         const record: ToolResultRecord = {
+          toolCallId: event.tool_call_id,
           name: event.name,
           arguments: event.input_preview,
           success: true,
@@ -718,6 +719,7 @@ export function useChatStreaming(
         const sid = event.session_id;
         markSessionActivity(sid);
         const record: ToolResultRecord = {
+          toolCallId: event.tool_call_id,
           name: event.name,
           arguments: event.input_preview,
           success: event.success,

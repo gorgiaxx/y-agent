@@ -1,6 +1,8 @@
 import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
 
 export interface ToolResultRecord {
+  /** Stable backend correlation ID shared by tool_start and tool_result. */
+  toolCallId?: string;
   name: string;
   /** Serialised tool arguments (JSON string). Available from persisted metadata. */
   arguments?: string;

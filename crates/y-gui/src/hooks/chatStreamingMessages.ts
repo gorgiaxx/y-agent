@@ -95,6 +95,7 @@ function appendInterruptedRunningToolResults(
     }
     seen.add(key);
     const entry: Record<string, unknown> = {
+      ...(toolResult.toolCallId ? { tool_call_id: toolResult.toolCallId } : {}),
       name: toolResult.name,
       arguments: toolResult.arguments ?? '',
       success: false,

@@ -94,6 +94,7 @@ async fn test_plan_review_wait_is_cancelled_by_root_stop() {
         plan_path,
         PlanReviewMode::Manual,
         &session,
+        "call-plan-review-1",
         Some(&progress),
         &container.session_state.pending_plan_reviews,
         &container,
@@ -1700,6 +1701,40 @@ fn make_simple_plan(tasks: Vec<&str>) -> StructuredPlan {
                 acceptance_criteria: vec![],
             })
             .collect(),
+    }
+}
+
+#[tokio::test]
+async fn test_plan_progress_reuses_owner_tool_call_id() {
+    let (sender, mut receiver) = TurnEventSender::channel();
+    let plan = make_simple_plan(vec!["t1"]);
+    let plan_path = Path::new("/tmp/test-plan.md");
+
+    emit_plan_execution_progress(
+        &sender,
+        "call-plan-1",
+        plan_path,
+        &plan,
+        "run-1",
+        &[],
+        "Plan started".into(),
+    );
+    emit_plan_execution_progress(
+        &sender,
+        "call-plan-1",
+        plan_path,
+        &plan,
+        "run-1",
+        &[],
+        "Plan updated".into(),
+    );
+
+    for _ in 0..2 {
+        let (event, _) = receiver.recv().await.unwrap();
+        assert!(matches!(
+            event,
+            TurnEvent::ToolResult { ref tool_call_id, .. } if tool_call_id == "call-plan-1"
+        ));
     }
 }
 

@@ -27,8 +27,8 @@ use y_guardrails::PlanReviewMode;
 use crate::agent_service::{AgentExecutionConfig, AgentExecutionError, AgentService};
 use crate::chat::{TurnEvent, TurnEventSender};
 use crate::chat_types::{
-    ActivePlanExecution, ActivePlanExecutions, OperationMode, PendingPlanReviews,
-    PlanReviewDecision,
+    synthetic_tool_call_id, ActivePlanExecution, ActivePlanExecutions, OperationMode,
+    PendingPlanReviews, PlanReviewDecision,
 };
 use crate::container::ServiceContainer;
 
@@ -313,6 +313,7 @@ impl PlanOrchestrator {
         arguments: &serde_json::Value,
         container: &ServiceContainer,
         parent_session_id: &SessionId,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<CancellationToken>,
     ) -> Result<ToolOutput, ToolError> {
@@ -353,6 +354,7 @@ impl PlanOrchestrator {
                 container,
                 parent_session_id,
                 resume_requested,
+                tool_call_id,
                 progress,
                 cancel.as_ref(),
             )
@@ -372,6 +374,7 @@ impl PlanOrchestrator {
 
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::ToolResult {
+                tool_call_id: tool_call_id.to_string(),
                 name: "Plan".into(),
                 success: true,
                 duration_ms: 0,
@@ -410,6 +413,7 @@ impl PlanOrchestrator {
                 &plan_path,
                 review_mode,
                 revision_feedback.as_deref(),
+                tool_call_id,
                 progress,
                 cancel.as_ref(),
             )
@@ -423,6 +427,7 @@ impl PlanOrchestrator {
                 &plan_path,
                 review_mode,
                 parent_session_id,
+                tool_call_id,
                 progress,
                 &container.session_state.pending_plan_reviews,
                 container,
@@ -509,6 +514,7 @@ impl PlanOrchestrator {
                 &plan_path,
                 &plan_run_id,
                 max_parallel,
+                tool_call_id,
                 progress,
                 cancel.as_ref(),
             ))
@@ -611,6 +617,7 @@ impl PlanOrchestrator {
         plan_path: &std::path::Path,
         review_mode: PlanReviewMode,
         revision_feedback: Option<&str>,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
     ) -> Result<StructuredPlan, ToolError> {
@@ -737,6 +744,7 @@ impl PlanOrchestrator {
 
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::ToolResult {
+                tool_call_id: tool_call_id.to_string(),
                 name: "Plan".into(),
                 success: true,
                 duration_ms: 0,
@@ -772,6 +780,7 @@ impl PlanOrchestrator {
         plan_path: &Path,
         review_mode: PlanReviewMode,
         session_id: &SessionId,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         pending_plan_reviews: &PendingPlanReviews,
         container: &ServiceContainer,
@@ -781,7 +790,15 @@ impl PlanOrchestrator {
         match review_mode {
             PlanReviewMode::Auto => {
                 if let Some(tx) = progress {
-                    emit_plan_review_progress(tx, plan_path, plan, "auto_approved", "", None);
+                    emit_plan_review_progress(
+                        tx,
+                        tool_call_id,
+                        plan_path,
+                        plan,
+                        "auto_approved",
+                        "",
+                        None,
+                    );
                 }
                 PlanReviewOutcome {
                     approved: true,
@@ -849,6 +866,7 @@ impl PlanOrchestrator {
 
                 emit_plan_review_progress(
                     tx,
+                    tool_call_id,
                     plan_path,
                     plan,
                     "awaiting_user",
@@ -890,7 +908,15 @@ impl PlanOrchestrator {
 
                 let outcome = match decision {
                     Some(Ok(PlanReviewDecision::Approve)) => {
-                        emit_plan_review_progress(tx, plan_path, plan, "approved", "", None);
+                        emit_plan_review_progress(
+                            tx,
+                            tool_call_id,
+                            plan_path,
+                            plan,
+                            "approved",
+                            "",
+                            None,
+                        );
                         PlanReviewOutcome {
                             approved: true,
                             status: "approved".to_string(),
@@ -901,6 +927,7 @@ impl PlanOrchestrator {
                     Some(Ok(PlanReviewDecision::Revise { feedback })) => {
                         emit_plan_review_progress(
                             tx,
+                            tool_call_id,
                             plan_path,
                             plan,
                             "feedback_received",
@@ -915,7 +942,15 @@ impl PlanOrchestrator {
                         }
                     }
                     Some(Ok(PlanReviewDecision::Reject { feedback })) => {
-                        emit_plan_review_progress(tx, plan_path, plan, "rejected", &feedback, None);
+                        emit_plan_review_progress(
+                            tx,
+                            tool_call_id,
+                            plan_path,
+                            plan,
+                            "rejected",
+                            &feedback,
+                            None,
+                        );
                         PlanReviewOutcome {
                             approved: false,
                             status: "rejected".to_string(),
@@ -927,6 +962,7 @@ impl PlanOrchestrator {
                         Self::remove_pending_review(&review_id, pending_plan_reviews).await;
                         emit_plan_review_progress(
                             tx,
+                            tool_call_id,
                             plan_path,
                             plan,
                             "review_cancelled",
@@ -1011,6 +1047,7 @@ impl PlanOrchestrator {
         plan_path: &Path,
         plan_run_id: &str,
         max_parallel: usize,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         root_cancel: Option<&CancellationToken>,
     ) -> PlanExecutionAttempt {
@@ -1035,6 +1072,7 @@ impl PlanOrchestrator {
             plan_path,
             plan_run_id,
             max_parallel,
+            tool_call_id,
             progress,
             Some(&phase_cancel),
             None,
@@ -1169,6 +1207,7 @@ impl PlanOrchestrator {
         plan_path: &Path,
         plan_run_id: &str,
         max_parallel: usize,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
         resume: Option<(HashSet<String>, HashSet<String>, Vec<serde_json::Value>)>,
@@ -1194,6 +1233,7 @@ impl PlanOrchestrator {
                     plan,
                     plan_path,
                     plan_run_id,
+                    tool_call_id,
                     progress,
                     cancel,
                     resume,
@@ -1209,6 +1249,7 @@ impl PlanOrchestrator {
             if let Some(tx) = progress {
                 emit_plan_execution_progress(
                     tx,
+                    tool_call_id,
                     plan_path,
                     plan,
                     plan_run_id,
@@ -1333,6 +1374,7 @@ impl PlanOrchestrator {
                 }
                 emit_plan_execution_progress(
                     tx,
+                    tool_call_id,
                     plan_path,
                     plan,
                     plan_run_id,
@@ -1414,6 +1456,7 @@ impl PlanOrchestrator {
                                     snapshot_with_running(&phase_results, &running, &task_map);
                                 emit_plan_execution_progress(
                                     tx,
+                                    tool_call_id,
                                     plan_path,
                                     plan,
                                     plan_run_id,
@@ -1458,6 +1501,7 @@ impl PlanOrchestrator {
                                     snapshot_with_running(&phase_results, &running, &task_map);
                                 emit_plan_execution_progress(
                                     tx,
+                                    tool_call_id,
                                     plan_path,
                                     plan,
                                     plan_run_id,
@@ -1486,6 +1530,7 @@ impl PlanOrchestrator {
         plan: &StructuredPlan,
         plan_path: &Path,
         plan_run_id: &str,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
         resume: Option<(HashSet<String>, HashSet<String>, Vec<serde_json::Value>)>,
@@ -1545,6 +1590,7 @@ impl PlanOrchestrator {
                 }));
                 emit_plan_execution_progress(
                     tx,
+                    tool_call_id,
                     plan_path,
                     plan,
                     plan_run_id,
@@ -1596,6 +1642,7 @@ impl PlanOrchestrator {
                     if let Some(tx) = progress {
                         emit_plan_execution_progress(
                             tx,
+                            tool_call_id,
                             plan_path,
                             plan,
                             plan_run_id,
@@ -1637,6 +1684,7 @@ impl PlanOrchestrator {
                     if let Some(tx) = progress {
                         emit_plan_execution_progress(
                             tx,
+                            tool_call_id,
                             plan_path,
                             plan,
                             plan_run_id,
@@ -1668,6 +1716,30 @@ impl PlanOrchestrator {
         plan_run_id: &str,
         from_task_id: &str,
         working_directory: Option<String>,
+        progress: Option<&TurnEventSender>,
+        cancel: Option<CancellationToken>,
+    ) -> Result<ToolOutput, ToolError> {
+        let tool_call_id = synthetic_tool_call_id("plan-resume");
+        Self::resume_plan_with_tool_call_id(
+            container,
+            session_id,
+            plan_run_id,
+            from_task_id,
+            working_directory,
+            &tool_call_id,
+            progress,
+            cancel,
+        )
+        .await
+    }
+
+    async fn resume_plan_with_tool_call_id(
+        container: &ServiceContainer,
+        session_id: &SessionId,
+        plan_run_id: &str,
+        from_task_id: &str,
+        working_directory: Option<String>,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<CancellationToken>,
     ) -> Result<ToolOutput, ToolError> {
@@ -1781,6 +1853,7 @@ impl PlanOrchestrator {
             &plan_path,
             plan_run_id,
             DEFAULT_MAX_PARALLEL_PHASES,
+            tool_call_id,
             progress,
             cancel.as_ref(),
             Some((pre_completed, pre_failed, pre_phase_results)),
@@ -1846,6 +1919,7 @@ impl PlanOrchestrator {
         container: &ServiceContainer,
         session_id: &SessionId,
         force: bool,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<&CancellationToken>,
     ) -> Result<Option<ToolOutput>, ToolError> {
@@ -1913,6 +1987,7 @@ impl PlanOrchestrator {
 
         if let Some(tx) = progress {
             let _ = tx.send(TurnEvent::ToolResult {
+                tool_call_id: tool_call_id.to_string(),
                 name: "Plan".into(),
                 success: true,
                 duration_ms: 0,
@@ -1942,12 +2017,13 @@ impl PlanOrchestrator {
             .find(|t| !completed_ids.contains(t.id.as_str()))
             .map_or("", |t| t.id.as_str());
 
-        let result = Self::resume_plan(
+        let result = Self::resume_plan_with_tool_call_id(
             container,
             session_id,
             &run.id,
             first_uncompleted,
             None,
+            tool_call_id,
             progress,
             cancel.cloned(),
         )
@@ -3222,6 +3298,7 @@ fn build_plan_review_metadata(
 
 fn emit_plan_review_progress(
     tx: &TurnEventSender,
+    tool_call_id: &str,
     plan_path: &Path,
     plan: &StructuredPlan,
     review_status: &str,
@@ -3244,6 +3321,7 @@ fn emit_plan_review_progress(
     };
 
     let _ = tx.send(TurnEvent::ToolResult {
+        tool_call_id: tool_call_id.to_string(),
         name: "Plan".into(),
         success: true,
         duration_ms: 0,
@@ -3692,6 +3770,7 @@ fn compute_downstream_tasks(tasks: &[PlanTask], from_task_id: &str) -> HashSet<S
 
 fn emit_plan_execution_progress(
     tx: &TurnEventSender,
+    tool_call_id: &str,
     plan_path: &Path,
     plan: &StructuredPlan,
     plan_run_id: &str,
@@ -3702,6 +3781,7 @@ fn emit_plan_execution_progress(
     let failed = count_phase_results(phase_results, "failed");
 
     let _ = tx.send(TurnEvent::ToolResult {
+        tool_call_id: tool_call_id.to_string(),
         name: "Plan".into(),
         success: failed == 0,
         duration_ms: 0,

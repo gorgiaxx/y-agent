@@ -161,6 +161,7 @@ export interface RawDiagnosticsRecord {
   response_text?: string;
   context_window?: number;
   agent_name?: string;
+  tool_call_id?: string;
   name?: string;
   success?: boolean;
   input_preview?: string;
@@ -218,6 +219,7 @@ export function mapRawToEntry(item: RawDiagnosticsRecord, idPrefix: string, idx:
     case 'tool_result':
       event = {
         type: 'tool_result' as const,
+        tool_call_id: item.tool_call_id ?? `historical:${item.name ?? 'tool'}`,
         name: item.name ?? '',
         success: item.success ?? false,
         duration_ms: item.duration_ms ?? 0,
@@ -353,8 +355,11 @@ async function initialiseBus() {
         const startIdx = existing.findIndex(
           (e) =>
             e.event.type === 'tool_start' &&
-            e.event.name === turnEvent.name &&
-            e.event.agent_name === turnEvent.agent_name,
+            (e.event.tool_call_id === turnEvent.tool_call_id || (
+              !e.event.tool_call_id
+              && e.event.name === turnEvent.name
+              && e.event.agent_name === turnEvent.agent_name
+            )),
         );
         if (startIdx !== -1) {
           existing = [...existing];
@@ -404,6 +409,7 @@ async function initialiseBus() {
               ...e,
               event: {
                 type: 'tool_result' as const,
+                tool_call_id: e.event.tool_call_id,
                 name: e.event.name,
                 success: false,
                 duration_ms: 0,
@@ -481,6 +487,7 @@ async function initialiseBus() {
         timestamp: new Date().toISOString(),
         event: {
           type: 'tool_result',
+          tool_call_id: `diagnostics:${ev.trace_id}:${ev.tool_name}`,
           name: ev.tool_name,
           success: ev.success,
           duration_ms: ev.duration_ms,

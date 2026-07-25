@@ -98,6 +98,7 @@ impl LoopOrchestrator {
         arguments: &serde_json::Value,
         container: &ServiceContainer,
         parent_session_id: &SessionId,
+        tool_call_id: &str,
         progress: Option<&TurnEventSender>,
         cancel: Option<CancellationToken>,
     ) -> Result<ToolOutput, ToolError> {
@@ -143,6 +144,7 @@ impl LoopOrchestrator {
         // Emit init event.
         emit_loop_event(
             progress,
+            tool_call_id,
             true,
             serde_json::json!({
                 "display": {
@@ -202,6 +204,7 @@ impl LoopOrchestrator {
 
                     emit_loop_event(
                         progress,
+                        tool_call_id,
                         true,
                         build_round_metadata(
                             round_num,
@@ -229,6 +232,7 @@ impl LoopOrchestrator {
 
                         emit_loop_event(
                             progress,
+                            tool_call_id,
                             true,
                             serde_json::json!({
                                 "display": {
@@ -260,6 +264,7 @@ impl LoopOrchestrator {
 
                     emit_loop_event(
                         progress,
+                        tool_call_id,
                         false,
                         build_round_metadata(
                             round_num,
@@ -281,6 +286,7 @@ impl LoopOrchestrator {
         let total_rounds = round_summaries.len();
         emit_loop_event(
             progress,
+            tool_call_id,
             outcome == LoopOutcome::Converged,
             serde_json::json!({
                 "display": {
@@ -763,9 +769,15 @@ fn emit_subagent_completed(
         });
 }
 
-fn emit_loop_event(progress: Option<&TurnEventSender>, success: bool, metadata: serde_json::Value) {
+fn emit_loop_event(
+    progress: Option<&TurnEventSender>,
+    tool_call_id: &str,
+    success: bool,
+    metadata: serde_json::Value,
+) {
     if let Some(tx) = progress {
         let _ = tx.send(TurnEvent::ToolResult {
+            tool_call_id: tool_call_id.to_string(),
             name: "Loop".into(),
             success,
             duration_ms: 0,
@@ -825,6 +837,28 @@ fn map_loop_agent_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_loop_progress_reuses_owner_tool_call_id() {
+        let (sender, mut receiver) = TurnEventSender::channel();
+
+        for status in ["running", "completed"] {
+            emit_loop_event(
+                Some(&sender),
+                "call-loop-1",
+                true,
+                serde_json::json!({"status": status}),
+            );
+        }
+
+        for _ in 0..2 {
+            let (event, _) = receiver.recv().await.unwrap();
+            assert!(matches!(
+                event,
+                TurnEvent::ToolResult { ref tool_call_id, .. } if tool_call_id == "call-loop-1"
+            ));
+        }
+    }
 
     #[test]
     fn test_initialize_progress_file() {

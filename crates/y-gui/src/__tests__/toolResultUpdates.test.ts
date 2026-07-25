@@ -47,6 +47,110 @@ function makeAskUserResult(status: 'pending' | 'answered') {
 }
 
 describe('toolResultUpdates', () => {
+  it('completes the matching same-name tool by tool call id', () => {
+    const first = {
+      toolCallId: 'call-a',
+      name: 'FileRead',
+      arguments: JSON.stringify({ path: 'same.txt' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: '',
+      state: 'running' as const,
+    };
+    const second = {
+      ...first,
+      toolCallId: 'call-b',
+    };
+    const completed = {
+      ...first,
+      durationMs: 12,
+      resultPreview: 'first contents',
+      state: 'completed' as const,
+    };
+
+    const updated = upsertToolResultRecord([first, second], completed);
+
+    expect(updated.replacedIndex).toBe(0);
+    expect(updated.records[0]).toEqual(completed);
+    expect(updated.records[1]).toEqual(second);
+  });
+
+  it('does not merge same-plan progress with a different tool call id', () => {
+    const first = {
+      toolCallId: 'call-plan-a',
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix streaming' }),
+      success: true,
+      durationMs: 0,
+      resultPreview: 'Plan started',
+      metadata: {
+        display: {
+          kind: 'plan_execution',
+          plan_file: '/tmp/shared-plan.md',
+        },
+      },
+    };
+    const second = {
+      ...first,
+      toolCallId: 'call-plan-b',
+      resultPreview: 'Another plan started',
+    };
+
+    const records = upsertToolResultRecord([first], second);
+    const segments = upsertToolResultSegment(
+      [{ type: 'tool_result', record: first }],
+      second,
+    );
+
+    expect(records.replacedIndex).toBeNull();
+    expect(records.records).toEqual([first, second]);
+    expect(segments.replacedIndex).toBeNull();
+    expect(segments.segments).toEqual([
+      { type: 'tool_result', record: first },
+      { type: 'tool_result', record: second },
+    ]);
+  });
+
+  it('preserves structured Plan metadata for a same-id terminal error', () => {
+    const progress = {
+      toolCallId: 'call-plan-1',
+      name: 'Plan',
+      arguments: 'plan-writer completed',
+      success: true,
+      durationMs: 18,
+      resultPreview: 'Plan written',
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage: 'plan_writer',
+          stage_status: 'completed',
+          plan_file: '/tmp/gui-plan.md',
+        },
+      },
+    };
+    const terminalError = {
+      toolCallId: 'call-plan-1',
+      name: 'Plan',
+      arguments: JSON.stringify({ request: 'Fix streaming' }),
+      success: false,
+      durationMs: 93,
+      resultPreview: 'Plan failed',
+    };
+
+    const updated = upsertToolResultRecord([progress], terminalError);
+
+    expect(updated.records[0]).toMatchObject({
+      ...terminalError,
+      metadata: {
+        display: {
+          kind: 'plan_stage',
+          stage_status: 'failed',
+          plan_file: '/tmp/gui-plan.md',
+        },
+      },
+    });
+  });
+
   it('replaces a pending AskUser result with the answered result', () => {
     const pending = makeAskUserResult('pending');
     const answered = makeAskUserResult('answered');

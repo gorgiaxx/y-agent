@@ -56,6 +56,7 @@ export const StaticBubble = memo(function StaticBubble({ message, onRetry, onFor
     const metaResults = message.metadata?.tool_results;
     if (!Array.isArray(metaResults)) return [];
     return (metaResults as Array<Record<string, unknown>>).map((tr) => ({
+      toolCallId: typeof tr.tool_call_id === 'string' ? tr.tool_call_id : undefined,
       name: String(tr.name ?? ''),
       arguments: String(tr.arguments ?? ''),
       success: Boolean(tr.success),

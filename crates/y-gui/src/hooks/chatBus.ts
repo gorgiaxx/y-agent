@@ -46,8 +46,8 @@ export type ChatBusEvent =
   | { type: 'stream_reasoning_delta'; run_id: string; session_id: string; content: string; agent_name?: string; sub_session?: boolean }
   | { type: 'stream_image_delta'; run_id: string; session_id: string; index: number; mime_type: string; partial_data: string; agent_name?: string; sub_session?: boolean }
   | { type: 'stream_image_complete'; run_id: string; session_id: string; index: number; mime_type: string; data: string; agent_name?: string; sub_session?: boolean }
-  | { type: 'tool_start'; session_id: string; name: string; input_preview: string; agent_name?: string; sub_session?: boolean }
-  | { type: 'tool_result'; session_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown>; agent_name?: string; sub_session?: boolean }
+  | { type: 'tool_start'; session_id: string; tool_call_id: string; name: string; input_preview: string; agent_name?: string; sub_session?: boolean }
+  | { type: 'tool_result'; session_id: string; tool_call_id: string; name: string; success: boolean; duration_ms: number; input_preview: string; result_preview: string; url_meta?: string; metadata?: Record<string, unknown>; agent_name?: string; sub_session?: boolean }
   | { type: 'steer_injected'; run_id: string; session_id: string; steer_id: string; text: string }
   | { type: 'todo_injected'; run_id: string; session_id: string; todo_id: string; text: string }
   | { type: 'todo_queue'; session_id: string; queue: TodoItem[] }
@@ -229,6 +229,7 @@ async function initialiseChatBus() {
         notifyChatSubscribers({
           type: 'tool_start',
           session_id,
+          tool_call_id: event.tool_call_id,
           name: event.name,
           input_preview: event.input_preview ?? '',
           agent_name: event.agent_name,
@@ -241,6 +242,7 @@ async function initialiseChatBus() {
         notifyChatSubscribers({
           type: 'tool_result',
           session_id,
+          tool_call_id: event.tool_call_id,
           name: event.name,
           success: event.success,
           duration_ms: event.duration_ms,

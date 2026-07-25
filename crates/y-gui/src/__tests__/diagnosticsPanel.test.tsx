@@ -62,6 +62,7 @@ describe('DiagnosticsPanel', () => {
         timestamp: new Date().toISOString(),
         event: {
           type: 'tool_result',
+          tool_call_id: 'call-read-1',
           name: 'FileRead',
           success: true,
           duration_ms: 12,

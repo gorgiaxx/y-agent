@@ -6,15 +6,15 @@
 // Also includes the slash-command handler.
 // ---------------------------------------------------------------------------
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { logger, transport } from '../lib';
-import type { ChatStarted, Message, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions } from '../types';
+import type { ChatStarted, Message, SessionInfo, ThinkingEffort, PlanMode, McpMode, OperationMode, Attachment, RequestMode, ImageGenerationOptions } from '../types';
 import type { ViewType } from '../types';
 import type { CompactInfo, ChatOpStatus, SendMessageOptions } from './useChat';
 
 export interface SessionOps {
   activeSessionId: string | null;
-  createSession: (title?: string) => Promise<{ id: string; title: string | null } | null>;
+  createSession: (title?: string, options?: { workspacePath?: string | null }) => Promise<{ id: string; title: string | null } | null>;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => Promise<void>;
   refreshSessions: () => void;
@@ -39,6 +39,9 @@ export interface ChatOps {
 
 export interface WorkspaceOps {
   welcomeWorkspaceId: string | null;
+  currentWorkspaceId: string | null;
+  currentWorkspacePath: string | null;
+  workspacePathForId: (workspaceId: string) => string | null;
   assignSession: (workspaceId: string, sessionId: string) => Promise<void>;
   refreshWorkspaces: () => Promise<void>;
 }
@@ -81,6 +84,15 @@ export interface UseChatHandlersReturn {
   handleDeleteSession: (id: string) => Promise<void>;
   handleCreateWorkspace: (name: string, path: string) => Promise<void>;
   handleCommand: (commandName: string) => boolean;
+  resumeDialog: {
+    open: boolean;
+    workspacePath: string | null;
+    sessions: SessionInfo[];
+    loading: boolean;
+    error: string | null;
+    close: () => void;
+    select: (sessionId: string) => void;
+  };
 }
 
 export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
@@ -91,21 +103,58 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     resendLastTurn, restoreBranch, pendingEdit, loadMessages, clearMessages,
     purgeSession, messages, addCompactPoint, setOp,
   } = chat;
-  const { welcomeWorkspaceId, assignSession, refreshWorkspaces } = workspace;
+  const {
+    welcomeWorkspaceId,
+    currentWorkspaceId,
+    currentWorkspacePath,
+    workspacePathForId,
+    assignSession,
+    refreshWorkspaces,
+  } = workspace;
   const { selectedProviderId, thinkingEffort, planMode } = config;
   const { addUserMessage, setActiveView, setDiagOpen, setObsOpen, onRewind, onSetRewindDraft } = callbacks;
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const [resumeSessions, setResumeSessions] = useState<SessionInfo[]>([]);
+  const [resumeLoading, setResumeLoading] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+
+  const openResumeDialog = useCallback(() => {
+    setResumeOpen(true);
+    setResumeSessions([]);
+    if (!currentWorkspacePath) {
+      setResumeLoading(false);
+      setResumeError('Select a workspace before resuming a session.');
+      return;
+    }
+
+    setResumeLoading(true);
+    setResumeError(null);
+    void transport.invoke<SessionInfo[]>('session_list_resumable', {
+      workspacePath: currentWorkspacePath,
+    }).then(setResumeSessions).catch((error: unknown) => {
+      logger.error('Failed to list resumable sessions:', error);
+      setResumeError(String(error));
+    }).finally(() => setResumeLoading(false));
+  }, [currentWorkspacePath]);
+
+  const closeResumeDialog = useCallback(() => setResumeOpen(false), []);
+  const selectResumeSession = useCallback((sessionId: string) => {
+    selectSession(sessionId);
+    setResumeOpen(false);
+  }, [selectSession]);
 
   const handleSend = useCallback(
     async (message: string, skillNames?: string[], knowledgeCollections?: string[], thinkingEffort?: ThinkingEffort | null, attachments?: Attachment[], planMode?: PlanMode, operationMode?: OperationMode, mcpMode?: McpMode | null, mcpServers?: string[], requestMode?: RequestMode, imageGenerationOptions?: ImageGenerationOptions) => {
       let sid = activeSessionId;
       if (!sid) {
-        const session = await createSession();
+        const session = await createSession(undefined, { workspacePath: currentWorkspacePath });
         if (!session) return;
         sid = session.id;
 
         // If a workspace is selected on the welcome page, assign the session.
-        if (welcomeWorkspaceId) {
-          await assignSession(welcomeWorkspaceId, sid);
+        const workspaceId = currentWorkspaceId ?? welcomeWorkspaceId;
+        if (workspaceId) {
+          await assignSession(workspaceId, sid);
         }
       }
 
@@ -156,7 +205,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
         refreshSessions();
       }
     },
-    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId, pendingEdit, editAndResend, welcomeWorkspaceId, assignSession],
+    [activeSessionId, createSession, sendMessage, selectSession, refreshSessions, addUserMessage, selectedProviderId, pendingEdit, editAndResend, welcomeWorkspaceId, currentWorkspaceId, currentWorkspacePath, assignSession],
   );
 
   const handleEditMessage = useCallback((content: string, messageId: string) => {
@@ -239,22 +288,28 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
 
   const handleNewChat = useCallback(async () => {
     clearMessages();
-    const session = await createSession();
+    const session = await createSession(undefined, { workspacePath: currentWorkspacePath });
     if (session) {
+      const workspaceId = currentWorkspaceId ?? welcomeWorkspaceId;
+      if (workspaceId) {
+        await assignSession(workspaceId, session.id);
+      }
       selectSession(session.id);
     }
-  }, [createSession, selectSession, clearMessages]);
+  }, [createSession, selectSession, clearMessages, currentWorkspacePath, currentWorkspaceId, welcomeWorkspaceId, assignSession]);
 
   const handleNewChatInWorkspace = useCallback(
     async (workspaceId: string) => {
       clearMessages();
-      const session = await createSession();
+      const session = await createSession(undefined, {
+        workspacePath: workspacePathForId(workspaceId),
+      });
       if (session) {
         await assignSession(workspaceId, session.id);
         selectSession(session.id);
       }
     },
-    [createSession, selectSession, clearMessages, assignSession],
+    [createSession, selectSession, clearMessages, assignSession, workspacePathForId],
   );
 
   const handleDeleteSession = useCallback(
@@ -286,6 +341,9 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
       switch (commandName) {
         case 'new':
           handleNewChat();
+          return true;
+        case 'resume':
+          openResumeDialog();
           return true;
         case 'clear':
           clearMessages();
@@ -347,7 +405,7 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
           return false;
       }
     },
-    [handleNewChat, clearMessages, activeSessionId, loadMessages, setActiveView, setDiagOpen, setObsOpen, addCompactPoint, setOp, onRewind],
+    [handleNewChat, openResumeDialog, clearMessages, activeSessionId, loadMessages, setActiveView, setDiagOpen, setObsOpen, addCompactPoint, setOp, onRewind],
   );
 
   return {
@@ -364,5 +422,14 @@ export function useChatHandlers(deps: ChatDeps): UseChatHandlersReturn {
     handleDeleteSession,
     handleCreateWorkspace,
     handleCommand,
+    resumeDialog: {
+      open: resumeOpen,
+      workspacePath: currentWorkspacePath,
+      sessions: resumeSessions,
+      loading: resumeLoading,
+      error: resumeError,
+      close: closeResumeDialog,
+      select: selectResumeSession,
+    },
   };
 }

@@ -12,10 +12,37 @@ interface ToolResultSegmentUpdate {
   replacedIndex: number | null;
 }
 
+function hasMatchingToolCallId(
+  current: ToolResultRecord,
+  next: ToolResultRecord,
+): boolean {
+  return current.toolCallId != null
+    && next.toolCallId != null
+    && current.toolCallId === next.toolCallId;
+}
+
+function findToolCallIdIndex(
+  records: ToolResultRecord[],
+  next: ToolResultRecord,
+): number {
+  for (let i = records.length - 1; i >= 0; i--) {
+    if (hasMatchingToolCallId(records[i], next)) return i;
+  }
+  return -1;
+}
+
+function canUseLegacySemanticFallback(
+  current: ToolResultRecord,
+  next: ToolResultRecord,
+): boolean {
+  return current.toolCallId == null || next.toolCallId == null;
+}
+
 function shouldReplacePendingAskUser(
   current: ToolResultRecord,
   next: ToolResultRecord,
 ): boolean {
+  if (!canUseLegacySemanticFallback(current, next)) return false;
   if (current.name !== 'AskUser' || next.name !== 'AskUser') return false;
   if ((current.arguments ?? '') !== (next.arguments ?? '')) return false;
 
@@ -66,6 +93,7 @@ function shouldReplacePlanProgress(
   current: ToolResultRecord,
   next: ToolResultRecord,
 ): boolean {
+  if (!canUseLegacySemanticFallback(current, next)) return false;
   const currentKey = extractPlanProgressKey(current);
   const nextKey = extractPlanProgressKey(next);
 
@@ -80,6 +108,7 @@ function shouldReplacePlanTerminalError(
   const current = records[currentIndex];
   const matchingRunningIndex = findRunningToolIndex(records, next);
 
+  if (!canUseLegacySemanticFallback(current, next)) return false;
   if (current.name !== 'Plan' || next.name !== 'Plan' || next.success !== false) return false;
   if (extractPlanDisplay(current) == null || extractPlanDisplay(next) != null) return false;
 
@@ -153,6 +182,7 @@ function shouldReplaceLoopProgress(
   current: ToolResultRecord,
   next: ToolResultRecord,
 ): boolean {
+  if (!canUseLegacySemanticFallback(current, next)) return false;
   return extractLoopDisplay(current) != null && extractLoopDisplay(next) != null;
 }
 
@@ -160,6 +190,7 @@ function shouldReplaceRunningTool(
   current: ToolResultRecord,
   next: ToolResultRecord,
 ): boolean {
+  if (!canUseLegacySemanticFallback(current, next)) return false;
   if (current.state !== 'running' || current.name !== next.name) return false;
   if (current.name === 'Plan' && !extractPlanDisplay(next)) return true;
   if (current.name === 'Loop' && extractLoopDisplay(next)) return true;
@@ -257,6 +288,13 @@ export function upsertToolResultRecord(
   records: ToolResultRecord[],
   next: ToolResultRecord,
 ): ToolResultRecordUpdate {
+  const identityIdx = findToolCallIdIndex(records, next);
+  if (identityIdx >= 0) {
+    const updated = [...records];
+    updated[identityIdx] = withPreservedFailedPlanMetadata(records[identityIdx], next);
+    return { records: updated, replacedIndex: identityIdx };
+  }
+
   const replacePlanIdx = findPlanProgressIndex(records, next);
   if (replacePlanIdx >= 0) {
     return replaceRecordAndDropRunningPlanPlaceholder(
@@ -317,6 +355,18 @@ export function upsertToolResultSegment(
         entry.segment.type === 'tool_result',
     );
   const toolRecords = toolSegments.map((entry) => entry.segment.record);
+
+  for (let i = toolSegments.length - 1; i >= 0; i--) {
+    const { segment, index } = toolSegments[i];
+    if (hasMatchingToolCallId(segment.record, next)) {
+      const updated = [...segments];
+      updated[index] = {
+        type: 'tool_result',
+        record: withPreservedFailedPlanMetadata(segment.record, next),
+      };
+      return { segments: updated, replacedIndex: index };
+    }
+  }
 
   const replaceSegmentAndDropRunningPlanPlaceholder = (
     replaceIndex: number,

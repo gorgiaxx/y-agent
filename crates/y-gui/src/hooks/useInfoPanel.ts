@@ -54,6 +54,7 @@ function parseMetaToolResults(messages: Message[]): ToolResultRecord[] {
     if (!Array.isArray(metaResults)) continue;
     for (const tr of metaResults as Array<Record<string, unknown>>) {
       results.push({
+        toolCallId: typeof tr.tool_call_id === 'string' ? tr.tool_call_id : undefined,
         name: String(tr.name ?? ''),
         arguments: String(tr.arguments ?? ''),
         success: Boolean(tr.success),
