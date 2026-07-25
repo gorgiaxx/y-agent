@@ -200,6 +200,20 @@ Legacy session-to-workspace TOML assignments may backfill missing SQLite
 workspace paths after canonicalization. Sessions that cannot be mapped remain
 unassigned and are excluded from normal workspace-scoped resume results.
 
+## Session Prompt Template Contract
+
+Per-session prompt composition is stored in session metadata as a versioned
+`SessionPromptConfig`. `y-service::PromptTemplateService` owns decoding,
+encoding, applying, clearing, and reading that configuration, while user prompt
+template files are loaded through the same service module. Presentation layers
+may list choices and display the active template, but they must not construct a
+different persistence format or apply only part of a template.
+
+Applying a template persists its system prompt, prompt-section IDs, and template
+identity atomically. Clearing restores the built-in prompt composition. Session
+branches inherit the source prompt configuration so GUI, TUI, and web clients
+observe the same behavior after a fork.
+
 ## Safe File Mutation Contract
 
 File mutation identity is capability metadata, not a list of tool names.
