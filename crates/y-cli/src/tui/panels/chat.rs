@@ -22,9 +22,11 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::selection::TextSelection;
 use crate::tui::state::{
-    AppState, ChatMessage, MessageRole, PanelFocus, StreamSegment, ToolCallInfo,
+    AppState, ChatMessage, MessageRole, PanelFocus, StreamSegment, ToolCallDisplayMode,
+    ToolCallInfo, ToolCallStatus, ToolSelection,
 };
 use crate::tui::theme::Theme;
+use crate::tui::tool_renderers::{group_tool_indexes, present_tool, ToolKind, ToolRenderGroup};
 
 // ---------------------------------------------------------------------------
 // Display items (mirrors GUI `DisplayItem` enum)
@@ -33,7 +35,11 @@ use crate::tui::theme::Theme;
 /// A flat display item consumed by the renderer.
 enum DisplayItem<'a> {
     /// A chat message (user / assistant / system / tool).
-    Message { msg: &'a ChatMessage, is_last: bool },
+    Message {
+        message_index: usize,
+        msg: &'a ChatMessage,
+        is_last: bool,
+    },
     /// Streaming indicator when no live streaming message exists.
     StreamingIndicator,
     /// Error banner.
@@ -54,6 +60,7 @@ fn build_display_items<'a>(state: &'a AppState) -> Vec<DisplayItem<'a>> {
 
     for (i, msg) in state.messages.iter().enumerate() {
         items.push(DisplayItem::Message {
+            message_index: i,
             msg,
             is_last: i + 1 == msg_count,
         });
@@ -103,7 +110,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
             DisplayItem::WelcomeScreen => {
                 render_welcome(&mut raw_lines, &mut raw_plain, inner_width, t);
             }
-            DisplayItem::Message { msg, is_last } => {
+            DisplayItem::Message {
+                message_index,
+                msg,
+                is_last,
+            } => {
                 if !raw_lines.is_empty() {
                     raw_lines.push(Line::from(""));
                     raw_plain.push(String::new());
@@ -112,6 +123,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) -> Vec<String> {
                     &mut raw_lines,
                     &mut raw_plain,
                     msg,
+                    *message_index,
+                    state.selected_tool,
                     *is_last,
                     state.tick_counter,
                     inner_width,
@@ -278,6 +291,8 @@ fn render_message(
     lines: &mut Vec<Line>,
     plain_lines: &mut Vec<String>,
     msg: &ChatMessage,
+    message_index: usize,
+    selected_tool: Option<ToolSelection>,
     is_last: bool,
     tick: u64,
     content_width: usize,
@@ -316,8 +331,9 @@ fn render_message(
     lines.push(Line::from(header_spans));
     plain_lines.push(header_plain);
 
-    // Render accumulated reasoning content (from StreamReasoningDelta events).
-    if !msg.reasoning_content.is_empty() {
+    // Historical messages may only have the legacy aggregate reasoning field.
+    // Streaming messages render reasoning from event-ordered segments below.
+    if msg.segments.is_empty() && !msg.reasoning_content.is_empty() {
         render_think_card(
             lines,
             plain_lines,
@@ -354,7 +370,18 @@ fn render_message(
                     is_streaming,
                 } => {
                     if let Some(tc) = msg.tool_calls.get(tc_idx) {
-                        render_tool_call_executed_card(lines, plain_lines, tc, t);
+                        render_tool_call_executed_card(
+                            lines,
+                            plain_lines,
+                            tc,
+                            selected_tool
+                                == Some(ToolSelection {
+                                    message_index,
+                                    tool_index: tc_idx,
+                                }),
+                            content_width,
+                            t,
+                        );
                     } else {
                         render_tool_call_card(
                             lines,
@@ -369,12 +396,23 @@ fn render_message(
                 }
             }
         }
-        for tc in msg.tool_calls.iter().skip(tc_idx) {
-            render_tool_call_executed_card(lines, plain_lines, tc, t);
+        if tc_idx < msg.tool_calls.len() {
+            let tool_indexes = (tc_idx..msg.tool_calls.len()).collect::<Vec<_>>();
+            render_tool_index_run(
+                lines,
+                plain_lines,
+                &msg.tool_calls,
+                &tool_indexes,
+                message_index,
+                selected_tool,
+                content_width,
+                t,
+            );
         }
     } else {
-        for seg in &msg.segments {
-            match seg {
+        let mut segment_index = 0;
+        while segment_index < msg.segments.len() {
+            match &msg.segments[segment_index] {
                 StreamSegment::Text(text) => {
                     let sub_segs = preprocess_content(text);
                     for sub in &sub_segs {
@@ -418,9 +456,39 @@ fn render_message(
                             }
                         }
                     }
+                    segment_index += 1;
                 }
-                StreamSegment::ToolCall(tc) => {
-                    render_tool_call_executed_card(lines, plain_lines, tc, t);
+                StreamSegment::Reasoning {
+                    content,
+                    is_complete,
+                } => {
+                    render_think_card(lines, plain_lines, content, *is_complete, tick, t);
+                    segment_index += 1;
+                }
+                StreamSegment::ToolCall(_) => {
+                    let start = segment_index;
+                    while segment_index < msg.segments.len()
+                        && matches!(msg.segments[segment_index], StreamSegment::ToolCall(_))
+                    {
+                        segment_index += 1;
+                    }
+                    let tool_indexes = msg.segments[start..segment_index]
+                        .iter()
+                        .filter_map(|segment| match segment {
+                            StreamSegment::ToolCall(tool_index) => Some(*tool_index),
+                            StreamSegment::Text(_) | StreamSegment::Reasoning { .. } => None,
+                        })
+                        .collect::<Vec<_>>();
+                    render_tool_index_run(
+                        lines,
+                        plain_lines,
+                        &msg.tool_calls,
+                        &tool_indexes,
+                        message_index,
+                        selected_tool,
+                        content_width,
+                        t,
+                    );
                 }
             }
         }
@@ -924,42 +992,342 @@ fn render_tool_call_card(
 }
 
 /// Render a tool call from structured `ToolCallInfo` (from `ToolCallExecuted` events).
-fn render_tool_call_executed_card(
+fn render_tool_index_run(
     lines: &mut Vec<Line>,
     plain: &mut Vec<String>,
-    tc: &ToolCallInfo,
+    tools: &[ToolCallInfo],
+    tool_indexes: &[usize],
+    message_index: usize,
+    selected_tool: Option<ToolSelection>,
+    content_width: usize,
+    t: &Theme,
+) {
+    for group in group_tool_indexes(tools, tool_indexes) {
+        match group {
+            ToolRenderGroup::Single(tool_index) => {
+                if let Some(tool) = tools.get(tool_index) {
+                    render_tool_call_executed_card(
+                        lines,
+                        plain,
+                        tool,
+                        selected_tool
+                            == Some(ToolSelection {
+                                message_index,
+                                tool_index,
+                            }),
+                        content_width,
+                        t,
+                    );
+                }
+            }
+            ToolRenderGroup::Exploration(group_indexes) => render_exploration_group(
+                lines,
+                plain,
+                tools,
+                &group_indexes,
+                message_index,
+                selected_tool,
+                content_width,
+                t,
+            ),
+        }
+    }
+}
+
+fn render_exploration_group(
+    lines: &mut Vec<Line>,
+    plain: &mut Vec<String>,
+    tools: &[ToolCallInfo],
+    tool_indexes: &[usize],
+    message_index: usize,
+    selected_tool: Option<ToolSelection>,
+    content_width: usize,
     t: &Theme,
 ) {
     let indent = "     ";
-
-    let (status_label, status_color) = if tc.success {
-        ("Done", t.success())
+    let total_duration: u64 = tool_indexes
+        .iter()
+        .filter_map(|index| tools.get(*index)?.duration_ms)
+        .sum();
+    let timing = if total_duration == 0 {
+        String::new()
     } else {
-        ("Failed", t.error())
+        format!(" ({total_duration}ms)")
     };
-
-    let duration_str = format!("{}ms", tc.duration_ms);
-
-    let header_spans = vec![
+    let group_selected = selected_tool.is_some_and(|selected| {
+        selected.message_index == message_index && tool_indexes.contains(&selected.tool_index)
+    });
+    let header_marker = if group_selected { ">" } else { "\u{2022}" };
+    lines.push(Line::from(vec![
         Span::styled(
-            format!("{indent}\u{2692} "),
-            Style::default().fg(t.tool_card_accent()),
+            format!("{indent}{header_marker} "),
+            Style::default().fg(if group_selected {
+                t.input_border_focused()
+            } else {
+                t.tool_card_accent()
+            }),
         ),
         Span::styled(
-            tc.name.clone(),
+            "Exploring",
             Style::default()
                 .fg(t.tool_card_accent())
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            format!("  {} calls", tool_indexes.len()),
+            Style::default().fg(t.muted()),
+        ),
+        Span::styled(format!("  Done{timing}"), Style::default().fg(t.success())),
+    ]));
+    plain.push(format!(
+        "{indent}{header_marker} Exploring  {} calls  Done{timing}",
+        tool_indexes.len()
+    ));
+
+    for &tool_index in tool_indexes {
+        let Some(tool) = tools.get(tool_index) else {
+            continue;
+        };
+        let selected = selected_tool
+            == Some(ToolSelection {
+                message_index,
+                tool_index,
+            });
+        let presentation = present_tool(tool, content_width.saturating_sub(indent.len() + 6));
+        let summary = if presentation.summary.is_empty() {
+            tool.name.as_str()
+        } else {
+            presentation.summary.as_str()
+        };
+        let timing = tool
+            .duration_ms
+            .map_or_else(String::new, |duration| format!(" ({duration}ms)"));
+        let selected_label = if selected { "  [selected]" } else { "" };
+        let marker = if selected { ">" } else { "-" };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{indent}  {marker} "),
+                Style::default().fg(if selected {
+                    t.input_border_focused()
+                } else {
+                    t.muted()
+                }),
+            ),
+            Span::styled(
+                format!("{} {}", presentation.verb, truncate_str(summary, 56)),
+                Style::default().fg(t.tool_card_text()),
+            ),
+            Span::styled(timing.clone(), Style::default().fg(t.muted())),
+            Span::styled(
+                selected_label,
+                Style::default().fg(t.input_border_focused()),
+            ),
+        ]));
+        plain.push(format!(
+            "{indent}  {marker} {} {}{timing}{selected_label}",
+            presentation.verb,
+            truncate_str(summary, 56)
+        ));
+
+        if !selected || tool.display_mode == ToolCallDisplayMode::Collapsed {
+            continue;
+        }
+        if tool.display_mode == ToolCallDisplayMode::Expanded {
+            push_tool_section(
+                lines,
+                plain,
+                "Arguments",
+                &presentation.argument_lines,
+                80,
+                t.tool_card_text(),
+                t,
+            );
+        }
+        let result_limit = match tool.display_mode {
+            ToolCallDisplayMode::Collapsed => 0,
+            ToolCallDisplayMode::Preview => 4,
+            ToolCallDisplayMode::Expanded => 200,
+        };
+        push_tool_section(
+            lines,
+            plain,
+            "Result",
+            &presentation.result_lines,
+            result_limit,
+            t.muted(),
+            t,
+        );
+    }
+}
+
+fn render_tool_call_executed_card(
+    lines: &mut Vec<Line>,
+    plain: &mut Vec<String>,
+    tc: &ToolCallInfo,
+    selected: bool,
+    content_width: usize,
+    t: &Theme,
+) {
+    let indent = "     ";
+
+    let (status_label, status_color) = match tc.status {
+        ToolCallStatus::Running => ("Running", t.warning()),
+        ToolCallStatus::Succeeded => ("Done", t.success()),
+        ToolCallStatus::Failed => ("Failed", t.error()),
+    };
+    let presentation = present_tool(tc, content_width.saturating_sub(indent.len() + 4));
+    let timing = tc
+        .duration_ms
+        .map_or_else(String::new, |duration| format!(" ({duration}ms)"));
+    let collapsed_summary =
+        if tc.display_mode == ToolCallDisplayMode::Collapsed && !presentation.summary.is_empty() {
+            format!("  {}", truncate_str(&presentation.summary, 48))
+        } else {
+            String::new()
+        };
+
+    let selected_label = if selected { "  [selected]" } else { "" };
+    let header_spans = vec![
+        Span::styled(
+            format!("{indent}{} ", if selected { ">" } else { "\u{2022}" }),
+            Style::default().fg(if selected {
+                t.input_border_focused()
+            } else {
+                t.tool_card_accent()
+            }),
+        ),
+        Span::styled(
+            format!("{} {}", presentation.verb, tc.name),
+            Style::default()
+                .fg(t.tool_card_accent())
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(collapsed_summary.clone(), Style::default().fg(t.muted())),
         Span::styled("  ", Style::default()),
         Span::styled(
-            format!("{status_label} ({duration_str})"),
+            format!("{status_label}{timing}"),
             Style::default().fg(status_color),
         ),
+        Span::styled(
+            selected_label,
+            Style::default().fg(t.input_border_focused()),
+        ),
     ];
-    let header_plain = format!("{indent}# {}  {status_label} ({duration_str})", tc.name);
+    let header_plain = format!(
+        "{indent}{} {} {}{}  {status_label}{timing}{selected_label}",
+        if selected { ">" } else { "*" },
+        presentation.verb,
+        tc.name,
+        collapsed_summary
+    );
     lines.push(Line::from(header_spans));
     plain.push(header_plain);
+
+    if tc.display_mode == ToolCallDisplayMode::Collapsed {
+        return;
+    }
+
+    if !presentation.summary.is_empty() {
+        let argument_line = format!(
+            "{indent}  {}={}",
+            summary_label(presentation.kind),
+            presentation.summary
+        );
+        lines.push(Line::from(Span::styled(
+            argument_line.clone(),
+            Style::default().fg(t.tool_card_text()),
+        )));
+        plain.push(argument_line);
+    } else if let Some(argument) = presentation.argument_lines.first() {
+        let argument_line = format!("{indent}  {argument}");
+        lines.push(Line::from(Span::styled(
+            argument_line.clone(),
+            Style::default().fg(t.tool_card_text()),
+        )));
+        plain.push(argument_line);
+    }
+
+    if tc.display_mode == ToolCallDisplayMode::Expanded && !presentation.argument_lines.is_empty() {
+        push_tool_section(
+            lines,
+            plain,
+            "Arguments",
+            &presentation.argument_lines,
+            80,
+            t.tool_card_text(),
+            t,
+        );
+    }
+
+    let result_limit = match tc.display_mode {
+        ToolCallDisplayMode::Collapsed => 0,
+        ToolCallDisplayMode::Preview => 4,
+        ToolCallDisplayMode::Expanded => 200,
+    };
+    push_tool_section(
+        lines,
+        plain,
+        "Result",
+        &presentation.result_lines,
+        result_limit,
+        t.muted(),
+        t,
+    );
+}
+
+fn push_tool_section(
+    lines: &mut Vec<Line>,
+    plain: &mut Vec<String>,
+    label: &str,
+    content: &[String],
+    limit: usize,
+    color: Color,
+    t: &Theme,
+) {
+    if content.is_empty() || limit == 0 {
+        return;
+    }
+    let indent = "     ";
+    if limit > 4 {
+        let label_line = format!("{indent}  {label}:");
+        lines.push(Line::from(Span::styled(
+            label_line.clone(),
+            Style::default()
+                .fg(t.tool_card_accent())
+                .add_modifier(Modifier::BOLD),
+        )));
+        plain.push(label_line);
+    }
+    let shown = content.len().min(limit);
+    for line in content.iter().take(shown) {
+        let output_line = format!("{indent}  \u{2514} {line}");
+        lines.push(Line::from(Span::styled(
+            output_line.clone(),
+            Style::default().fg(color),
+        )));
+        plain.push(output_line);
+    }
+    if content.len() > shown {
+        let omitted = content.len() - shown;
+        let more_line = format!("{indent}    ... {omitted} more lines");
+        lines.push(Line::from(Span::styled(
+            more_line.clone(),
+            Style::default().fg(t.muted()),
+        )));
+        plain.push(more_line);
+    }
+}
+
+fn summary_label(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Shell => "command",
+        ToolKind::Read | ToolKind::Edit => "path",
+        ToolKind::Search => "query",
+        ToolKind::List => "directory",
+        ToolKind::Web => "target",
+        ToolKind::Task => "task",
+        ToolKind::Generic => "input",
+    }
 }
 
 /// Format JSON arguments as a compact preview string.
@@ -1514,6 +1882,8 @@ mod tests {
             &mut lines,
             &mut plain,
             &msg,
+            0,
+            None,
             false,
             0,
             80,
@@ -1544,6 +1914,8 @@ mod tests {
             &mut lines,
             &mut plain,
             &msg,
+            0,
+            None,
             false,
             0,
             80,
@@ -1553,6 +1925,79 @@ mod tests {
         let header = &lines[0];
         let header_text: String = header.spans.iter().map(|s| s.content.to_string()).collect();
         assert!(header_text.contains('*'));
+    }
+
+    #[test]
+    fn test_reasoning_cards_render_at_their_timeline_positions() {
+        let tool = ToolCallInfo {
+            tool_call_id: "call-read".into(),
+            name: "FileRead".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(5),
+            input_preview: r#"{"path":"src/lib.rs"}"#.into(),
+            result_preview: "contents".into(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        };
+        let msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: "The result is valid.".into(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: "Inspect the fileNow verify the result".into(),
+            reasoning_complete: false,
+            tool_calls: vec![tool],
+            segments: vec![
+                StreamSegment::Reasoning {
+                    content: "Inspect the file".into(),
+                    is_complete: true,
+                },
+                StreamSegment::ToolCall(0),
+                StreamSegment::Reasoning {
+                    content: "Now verify the result".into(),
+                    is_complete: true,
+                },
+                StreamSegment::Text("The result is valid.".into()),
+            ],
+        };
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+
+        render_message(
+            &mut lines,
+            &mut plain,
+            &msg,
+            0,
+            None,
+            false,
+            0,
+            80,
+            &Theme::default(),
+        );
+
+        let first_reasoning = plain
+            .iter()
+            .position(|line| line.contains("Inspect the file"))
+            .unwrap();
+        let tool = plain
+            .iter()
+            .position(|line| line.contains("Read FileRead"))
+            .unwrap();
+        let second_reasoning = plain
+            .iter()
+            .position(|line| line.contains("Now verify the result"))
+            .unwrap();
+        let answer = plain
+            .iter()
+            .position(|line| line.contains("The result is valid."))
+            .unwrap();
+
+        assert!(first_reasoning < tool);
+        assert!(tool < second_reasoning);
+        assert!(second_reasoning < answer);
     }
 
     #[test]
@@ -1676,5 +2121,121 @@ mod tests {
         );
         // Markdown renderer produces lines for: text, lang label, code line, more.
         assert!(lines.len() >= 3, "code block should produce multiple lines");
+    }
+
+    #[test]
+    fn test_tool_card_renders_semantic_action_arguments_and_result() {
+        let tool = ToolCallInfo {
+            tool_call_id: "call-shell-1".into(),
+            name: "ShellExec".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(238),
+            input_preview: r#"{"command":"cargo test"}"#.into(),
+            result_preview: "test result: ok\n42 passed".into(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Expanded,
+        };
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+
+        render_tool_call_executed_card(&mut lines, &mut plain, &tool, true, 80, &Theme::default());
+
+        let text = plain.join("\n");
+        assert!(text.contains("Ran ShellExec"));
+        assert!(text.contains("command=cargo test"));
+        assert!(text.contains("test result: ok"));
+        assert!(text.contains("42 passed"));
+        assert!(text.contains("selected"));
+    }
+
+    #[test]
+    fn test_collapsed_tool_card_keeps_summary_and_hides_result() {
+        let tool = ToolCallInfo {
+            tool_call_id: "call-shell-1".into(),
+            name: "ShellExec".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(10),
+            input_preview: r#"{"command":"cargo check"}"#.into(),
+            result_preview: "hidden result".into(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Collapsed,
+        };
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+
+        render_tool_call_executed_card(&mut lines, &mut plain, &tool, false, 80, &Theme::default());
+
+        let text = plain.join("\n");
+        assert!(text.contains("cargo check"));
+        assert!(!text.contains("hidden result"));
+    }
+
+    #[test]
+    fn test_exploration_group_renders_selected_child_detail() {
+        let tools = vec![
+            ToolCallInfo {
+                tool_call_id: "call-read-1".into(),
+                name: "FileRead".into(),
+                status: ToolCallStatus::Succeeded,
+                duration_ms: Some(10),
+                input_preview: r#"{"path":"src/lib.rs"}"#.into(),
+                result_preview: "library contents".into(),
+                agent_name: "chat-turn".into(),
+                url_meta: None,
+                metadata: None,
+                display_mode: ToolCallDisplayMode::Preview,
+            },
+            ToolCallInfo {
+                tool_call_id: "call-search-1".into(),
+                name: "FileSearch".into(),
+                status: ToolCallStatus::Succeeded,
+                duration_ms: Some(15),
+                input_preview: r#"{"query":"ToolCallInfo"}"#.into(),
+                result_preview: "3 matches".into(),
+                agent_name: "chat-turn".into(),
+                url_meta: None,
+                metadata: None,
+                display_mode: ToolCallDisplayMode::Expanded,
+            },
+        ];
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+        let message = ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: chrono::Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: tools,
+            segments: vec![StreamSegment::ToolCall(0), StreamSegment::ToolCall(1)],
+        };
+
+        render_message(
+            &mut lines,
+            &mut plain,
+            &message,
+            0,
+            Some(ToolSelection {
+                message_index: 0,
+                tool_index: 1,
+            }),
+            false,
+            0,
+            80,
+            &Theme::default(),
+        );
+
+        let text = plain.join("\n");
+        assert_eq!(text.matches("Exploring").count(), 1);
+        assert!(text.contains("Read src/lib.rs"));
+        assert!(text.contains("Searched ToolCallInfo"));
+        assert!(text.contains("selected"));
+        assert!(text.contains("3 matches"));
     }
 }

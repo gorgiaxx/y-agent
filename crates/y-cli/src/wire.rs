@@ -45,7 +45,19 @@ pub async fn wire(config: &YAgentConfig) -> Result<AppServices> {
         ..Default::default()
     };
 
-    AppServices::from_config(&service_config).await
+    let services = AppServices::from_config(&service_config).await?;
+    if let Some(config_dir) = crate::config::dirs_user_config() {
+        let workspaces = y_service::WorkspaceService::new(&config_dir);
+        if let Err(error) = y_service::SessionService::backfill_legacy_assignments(
+            &services.session_manager,
+            &workspaces,
+        )
+        .await
+        {
+            tracing::warn!(%error, "failed to backfill legacy session workspace assignments");
+        }
+    }
+    Ok(services)
 }
 
 #[cfg(test)]

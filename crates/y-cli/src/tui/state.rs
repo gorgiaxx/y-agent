@@ -43,10 +43,14 @@ pub enum InteractionMode {
     Command,
     /// Search mode: incremental search overlay visible.
     Search,
-    /// Select mode: navigating chat messages for yank/branch/copy.
+    /// Select mode: choosing an earlier user prompt for a non-destructive branch.
     Select,
     /// Help mode: help overlay is visible.
     Help,
+    /// Full-screen copy target selector.
+    Copy,
+    /// Full-screen session resume selector.
+    Resume,
 }
 
 /// Service-owned orchestration mode selected by the TUI operator.
@@ -105,14 +109,66 @@ pub enum MessageRole {
 // ---------------------------------------------------------------------------
 
 /// Structured record of an executed tool call for rendering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallStatus {
+    Running,
+    Succeeded,
+    Failed,
+}
+
+/// Amount of detail rendered for a tool call card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallDisplayMode {
+    Collapsed,
+    Preview,
+    Expanded,
+}
+
+/// Address of a tool call inside the visible transcript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolSelection {
+    pub message_index: usize,
+    pub tool_index: usize,
+}
+
+/// Structured record of a tool call for rendering and copy selection.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToolCallInfo {
+    /// Stable service-owned tool call correlation ID.
+    pub tool_call_id: String,
     /// Tool name (e.g. "`WebSearch`").
     pub name: String,
-    /// Whether the tool call succeeded.
-    pub success: bool,
-    /// Execution duration in milliseconds.
-    pub duration_ms: u64,
+    /// Current execution status.
+    pub status: ToolCallStatus,
+    /// Execution duration in milliseconds once complete.
+    pub duration_ms: Option<u64>,
+    /// Bounded serialized tool arguments supplied by the service.
+    pub input_preview: String,
+    /// Bounded tool result supplied by the service.
+    pub result_preview: String,
+    /// Agent responsible for the call.
+    pub agent_name: String,
+    /// Optional URL metadata for browser and web tools.
+    pub url_meta: Option<String>,
+    /// Optional tool-specific structured metadata.
+    pub metadata: Option<serde_json::Value>,
+    /// Current detail level selected by the operator.
+    pub display_mode: ToolCallDisplayMode,
+}
+
+impl ToolCallInfo {
+    pub fn is_complete(&self) -> bool {
+        self.status != ToolCallStatus::Running
+    }
+
+    pub fn cycle_display_mode(&mut self) -> ToolCallDisplayMode {
+        self.display_mode = match self.display_mode {
+            ToolCallDisplayMode::Collapsed => ToolCallDisplayMode::Preview,
+            ToolCallDisplayMode::Preview => ToolCallDisplayMode::Expanded,
+            ToolCallDisplayMode::Expanded => ToolCallDisplayMode::Collapsed,
+        };
+        self.display_mode
+    }
 }
 
 /// A segment in the event-ordered display stream.
@@ -125,8 +181,10 @@ pub struct ToolCallInfo {
 pub enum StreamSegment {
     /// Accumulated text content (one or more `StreamDelta` events merged).
     Text(String),
-    /// A tool call execution result.
-    ToolCall(ToolCallInfo),
+    /// Accumulated reasoning content at its event-ordered timeline position.
+    Reasoning { content: String, is_complete: bool },
+    /// Index into the owning message's `tool_calls` vector.
+    ToolCall(usize),
 }
 
 /// A single message in the conversation transcript (display model).
@@ -142,7 +200,7 @@ pub struct ChatMessage {
     pub is_streaming: bool,
     /// Whether this message was cancelled mid-stream.
     pub is_cancelled: bool,
-    /// Accumulated reasoning/thinking content from streaming reasoning deltas.
+    /// Aggregate reasoning content retained for historical-message compatibility.
     pub reasoning_content: String,
     /// Whether the reasoning phase is complete.
     pub reasoning_complete: bool,
@@ -276,6 +334,10 @@ pub struct AppState {
     toast_counter: u64,
     /// Current text selection in the chat panel.
     pub selection: TextSelection,
+    /// Tool card selected for expansion or direct copy.
+    pub selected_tool: Option<ToolSelection>,
+    /// Transcript index of the user prompt selected for backtracking.
+    pub selected_message: Option<usize>,
     /// Recent session list (sorted by `updated_at` desc).
     pub sessions: Vec<SessionListItem>,
     /// Active session ID for the current chat.
@@ -324,6 +386,8 @@ impl Default for AppState {
             toasts: VecDeque::new(),
             toast_counter: 0,
             selection: TextSelection::default(),
+            selected_tool: None,
+            selected_message: None,
             sessions: Vec::new(),
             current_session_id: None,
             user_message_count: 0,
@@ -372,13 +436,20 @@ impl AppState {
                     | InteractionMode::Search
                     | InteractionMode::Select
                     | InteractionMode::Help
+                    | InteractionMode::Copy
+                    | InteractionMode::Resume
                     | InteractionMode::Normal
             ) | (
                 InteractionMode::Command
                     | InteractionMode::Search
                     | InteractionMode::Select
-                    | InteractionMode::Help,
+                    | InteractionMode::Help
+                    | InteractionMode::Copy
+                    | InteractionMode::Resume,
                 InteractionMode::Normal
+            ) | (
+                InteractionMode::Command,
+                InteractionMode::Copy | InteractionMode::Resume
             )
         );
 
@@ -455,6 +526,133 @@ impl AppState {
             PanelFocus::Chat => PanelFocus::Input,
         };
         self.focus
+    }
+
+    /// Select the next tool call in transcript order.
+    pub fn select_next_tool(&mut self) -> Option<ToolSelection> {
+        let positions = self.tool_positions();
+        if positions.is_empty() {
+            self.selected_tool = None;
+            return None;
+        }
+        let next_index = self
+            .selected_tool
+            .and_then(|selected| positions.iter().position(|position| *position == selected))
+            .map_or(0, |index| (index + 1) % positions.len());
+        let selection = positions[next_index];
+        self.selected_tool = Some(selection);
+        Some(selection)
+    }
+
+    /// Select the previous tool call in transcript order.
+    pub fn select_previous_tool(&mut self) -> Option<ToolSelection> {
+        let positions = self.tool_positions();
+        if positions.is_empty() {
+            self.selected_tool = None;
+            return None;
+        }
+        let previous_index = self
+            .selected_tool
+            .and_then(|selected| positions.iter().position(|position| *position == selected))
+            .map_or(positions.len() - 1, |index| {
+                index.checked_sub(1).unwrap_or(positions.len() - 1)
+            });
+        let selection = positions[previous_index];
+        self.selected_tool = Some(selection);
+        Some(selection)
+    }
+
+    /// Return the currently selected tool call if the selection remains valid.
+    pub fn selected_tool(&self) -> Option<&ToolCallInfo> {
+        let selection = self.selected_tool?;
+        self.messages
+            .get(selection.message_index)?
+            .tool_calls
+            .get(selection.tool_index)
+    }
+
+    /// Cycle the selected tool between preview, expanded, and collapsed modes.
+    pub fn cycle_selected_tool_display(&mut self) -> Option<ToolCallDisplayMode> {
+        let selection = self.selected_tool?;
+        self.messages
+            .get_mut(selection.message_index)?
+            .tool_calls
+            .get_mut(selection.tool_index)
+            .map(ToolCallInfo::cycle_display_mode)
+    }
+
+    fn tool_positions(&self) -> Vec<ToolSelection> {
+        self.messages
+            .iter()
+            .enumerate()
+            .flat_map(|(message_index, message)| {
+                (0..message.tool_calls.len()).map(move |tool_index| ToolSelection {
+                    message_index,
+                    tool_index,
+                })
+            })
+            .collect()
+    }
+
+    /// Begin backtrack selection at the most recent user prompt.
+    pub fn begin_backtrack_selection(&mut self) -> Option<usize> {
+        let selected = self.user_message_positions().last().copied();
+        self.selected_message = selected;
+        selected
+    }
+
+    /// Move backtrack selection to the previous user prompt, clamping at the oldest.
+    pub fn select_previous_user_message(&mut self) -> Option<usize> {
+        let positions = self.user_message_positions();
+        if positions.is_empty() {
+            self.selected_message = None;
+            return None;
+        }
+
+        let current_position = self
+            .selected_message
+            .and_then(|selected| positions.iter().position(|position| *position == selected))
+            .unwrap_or(positions.len() - 1);
+        let selected = positions[current_position.saturating_sub(1)];
+        self.selected_message = Some(selected);
+        Some(selected)
+    }
+
+    /// Move backtrack selection to the next user prompt, clamping at the newest.
+    pub fn select_next_user_message(&mut self) -> Option<usize> {
+        let positions = self.user_message_positions();
+        if positions.is_empty() {
+            self.selected_message = None;
+            return None;
+        }
+
+        let current_position = self
+            .selected_message
+            .and_then(|selected| positions.iter().position(|position| *position == selected))
+            .unwrap_or(positions.len() - 1);
+        let selected = positions[(current_position + 1).min(positions.len() - 1)];
+        self.selected_message = Some(selected);
+        Some(selected)
+    }
+
+    /// Return the selected user prompt if the transcript has not invalidated it.
+    pub fn selected_user_message(&self) -> Option<&ChatMessage> {
+        self.selected_message
+            .and_then(|index| self.messages.get(index))
+            .filter(|message| message.role == MessageRole::User)
+    }
+
+    /// Clear any active prompt backtrack selection.
+    pub fn clear_backtrack_selection(&mut self) {
+        self.selected_message = None;
+    }
+
+    fn user_message_positions(&self) -> Vec<usize> {
+        self.messages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| (message.role == MessageRole::User).then_some(index))
+            .collect()
     }
 
     /// Label the active session for compact status rendering.
@@ -663,6 +861,32 @@ mod tests {
     }
 
     #[test]
+    fn test_backtrack_selection_navigates_only_user_messages() {
+        let mut state = AppState::new();
+        let mut user_one = ChatMessage::system("first prompt".into());
+        user_one.role = MessageRole::User;
+        let mut assistant = ChatMessage::system("answer".into());
+        assistant.role = MessageRole::Assistant;
+        let mut user_two = ChatMessage::system("second prompt".into());
+        user_two.role = MessageRole::User;
+        state.messages = vec![user_one, assistant, user_two];
+
+        assert_eq!(state.begin_backtrack_selection(), Some(2));
+        assert_eq!(state.select_previous_user_message(), Some(0));
+        assert_eq!(state.select_previous_user_message(), Some(0));
+        assert_eq!(state.select_next_user_message(), Some(2));
+        assert_eq!(
+            state
+                .selected_user_message()
+                .map(|message| message.content.as_str()),
+            Some("second prompt")
+        );
+
+        state.clear_backtrack_selection();
+        assert_eq!(state.selected_message, None);
+    }
+
+    #[test]
     fn test_turn_mode_maps_to_service_plan_mode() {
         assert_eq!(TurnMode::Fast.plan_mode(), None);
         assert_eq!(TurnMode::Auto.plan_mode(), Some("auto"));
@@ -844,13 +1068,79 @@ mod tests {
     #[test]
     fn test_tool_call_info_creation() {
         let tc = ToolCallInfo {
+            tool_call_id: "call-search-1".into(),
             name: "WebSearch".into(),
-            success: true,
-            duration_ms: 120,
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(120),
+            input_preview: r#"{"query":"ratatui"}"#.into(),
+            result_preview: "3 results".into(),
+            agent_name: "chat-turn".into(),
+            url_meta: Some("https://example.com".into()),
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
         };
         assert_eq!(tc.name, "WebSearch");
-        assert!(tc.success);
-        assert_eq!(tc.duration_ms, 120);
+        assert_eq!(tc.status, ToolCallStatus::Succeeded);
+        assert_eq!(tc.duration_ms, Some(120));
+        assert_eq!(tc.input_preview, r#"{"query":"ratatui"}"#);
+        assert_eq!(tc.result_preview, "3 results");
+        assert!(tc.is_complete());
+    }
+
+    #[test]
+    fn test_tool_call_display_mode_cycles_all_states() {
+        let mut tool = ToolCallInfo {
+            tool_call_id: "call-shell-1".into(),
+            name: "ShellExec".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(10),
+            input_preview: String::new(),
+            result_preview: String::new(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        };
+
+        assert_eq!(tool.cycle_display_mode(), ToolCallDisplayMode::Expanded);
+        assert_eq!(tool.cycle_display_mode(), ToolCallDisplayMode::Collapsed);
+        assert_eq!(tool.cycle_display_mode(), ToolCallDisplayMode::Preview);
+    }
+
+    #[test]
+    fn test_app_state_selects_tools_in_transcript_order_and_toggles_selected() {
+        let mut state = AppState::default();
+        let make_tool = |name: &str| ToolCallInfo {
+            tool_call_id: format!("call-{name}"),
+            name: name.into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(1),
+            input_preview: String::new(),
+            result_preview: String::new(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        };
+        let mut first = ChatMessage::system(String::new());
+        first.role = MessageRole::Assistant;
+        first.tool_calls.push(make_tool("ReadFile"));
+        let mut second = ChatMessage::system(String::new());
+        second.role = MessageRole::Assistant;
+        second.tool_calls.push(make_tool("ShellExec"));
+        state.messages = vec![first, second];
+
+        assert_eq!(state.select_next_tool().unwrap().message_index, 0);
+        assert_eq!(state.select_next_tool().unwrap().message_index, 1);
+        assert_eq!(state.select_previous_tool().unwrap().message_index, 0);
+        assert_eq!(
+            state.cycle_selected_tool_display(),
+            Some(ToolCallDisplayMode::Expanded)
+        );
+        assert_eq!(
+            state.selected_tool().unwrap().display_mode,
+            ToolCallDisplayMode::Expanded
+        );
     }
 
     // T-STATE-MSG-01: ChatMessage::system() helper.

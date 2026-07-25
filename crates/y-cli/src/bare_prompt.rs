@@ -20,7 +20,9 @@ fn is_registered_subcommand(name: &str) -> bool {
 /// - Otherwise (bare prompt) → prepend `["chat", "--"]` so the rest is
 ///   captured as the chat prompt. `--` ensures a prompt starting with `-` is
 ///   treated as a positional.
-/// - If there are no tokens → pass through unchanged (clap shows help).
+/// - If there are no tokens → pass through unchanged. `main` then launches
+///   the TUI in an interactive terminal (or prints the version banner when
+///   stdin is piped / `--no-tui` is set).
 pub fn resolve(raw: &[String]) -> Vec<String> {
     let Some(first) = raw.first() else {
         return raw.to_vec();

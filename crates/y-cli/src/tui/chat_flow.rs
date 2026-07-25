@@ -5,11 +5,13 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use y_core::session::{CreateSessionOptions, SessionType};
-use y_core::types::{Message, Role, SessionId};
+use y_core::types::SessionId;
+use y_service::{PrepareTurnRequest, PreparedTurn};
 
-use crate::orchestrator::{self, ChatService, TurnCancellationToken, TurnError, TurnInput};
+use crate::orchestrator::{self, ChatService, TurnCancellationToken, TurnError};
 use crate::tui::state::{
-    AppState, ChatMessage, MessageRole, SessionListItem, StreamSegment, ToolCallInfo, TurnMode,
+    AppState, ChatMessage, MessageRole, SessionListItem, StreamSegment, ToolCallDisplayMode,
+    ToolCallInfo, ToolCallStatus, TurnMode,
 };
 use crate::wire::AppServices;
 
@@ -29,11 +31,24 @@ pub enum ChatEvent {
         /// Cost in USD for this turn.
         cost_usd: f64,
     },
-    /// A tool call was executed during the LLM turn.
-    ToolCallExecuted {
+    /// A tool call started during the LLM turn.
+    ToolCallStarted {
+        tool_call_id: String,
+        name: String,
+        input_preview: String,
+        agent_name: String,
+    },
+    /// A tool call completed during the LLM turn.
+    ToolCallCompleted {
+        tool_call_id: String,
         name: String,
         success: bool,
         duration_ms: u64,
+        input_preview: String,
+        result_preview: String,
+        agent_name: String,
+        url_meta: Option<String>,
+        metadata: Option<serde_json::Value>,
     },
     /// Incremental text delta from the LLM stream.
     StreamDelta { content: String },
@@ -139,38 +154,7 @@ pub fn submit_message_with_mode(
     // Clone the Arc for the spawned task.
     let services = Arc::clone(services);
 
-    // Build conversation history as y_core Messages for the LLM.
-    let history: Vec<Message> = state
-        .messages
-        .iter()
-        .map(|m| Message {
-            message_id: y_core::types::generate_message_id(),
-            role: match m.role {
-                MessageRole::User => Role::User,
-                MessageRole::Assistant => Role::Assistant,
-                MessageRole::System => Role::System,
-                MessageRole::Tool => Role::Tool,
-            },
-            content: m.content.clone(),
-            tool_call_id: None,
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: serde_json::Value::Null,
-        })
-        .collect();
-
-    // Persist user message to session.
     let session_id_opt = state.current_session_id.clone();
-    let user_msg = Message {
-        message_id: y_core::types::generate_message_id(),
-        role: Role::User,
-        content: trimmed.to_string(),
-        tool_call_id: None,
-        tool_calls: vec![],
-        timestamp: y_core::types::now(),
-        metadata: serde_json::Value::Null,
-    };
-
     let trimmed_owned = trimmed.to_string();
     let selected_provider_id = state.selected_provider_id.clone();
 
@@ -201,47 +185,33 @@ pub fn submit_message_with_mode(
     let task_cancellation = cancellation.clone();
 
     tokio::spawn(async move {
-        // Lazy session creation: if no current session, create one now.
-        let session_id_str = if let Some(sid) = session_id_opt {
-            sid
-        } else {
-            match services
-                .session_manager
-                .create_session(CreateSessionOptions {
-                    parent_id: None,
-                    session_type: SessionType::Main,
-                    agent_id: None,
-                    title: Some("New Chat".into()),
-                })
-                .await
-            {
-                Ok(node) => {
-                    let sid = node.id.to_string();
-                    let _ = tx
-                        .send(ChatEvent::SessionCreated {
-                            id: sid.clone(),
-                            title: "New Chat".into(),
-                            updated_at: node.updated_at,
-                        })
-                        .await;
-                    sid
-                }
-                Err(e) => {
-                    warn!(error = %e, "failed to create session lazily");
-                    let _ = tx
-                        .send(ChatEvent::Error(format!("Failed to create session: {e}")))
-                        .await;
-                    return;
-                }
+        let (prepared, created_session) = match prepare_tui_turn(
+            &services,
+            session_id_opt,
+            trimmed_owned,
+            selected_provider_id,
+            turn_mode,
+        )
+        .await
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                warn!(%error, "failed to prepare TUI turn");
+                let _ = tx.send(ChatEvent::Error(error)).await;
+                return;
             }
         };
-
-        // Persist user message to session transcript.
-        let session_id = SessionId::from_string(session_id_str.clone());
-        let _ = services
-            .session_manager
-            .append_message(&session_id, &user_msg)
-            .await;
+        let session_id = prepared.session_id.clone();
+        let session_id_str = session_id.to_string();
+        if let Some(node) = created_session {
+            let _ = tx
+                .send(ChatEvent::SessionCreated {
+                    id: session_id_str.clone(),
+                    title: "New Chat".into(),
+                    updated_at: node.updated_at,
+                })
+                .await;
+        }
 
         // Fire title generation concurrently with the turn. The title only
         // consumes user messages (the just-appended one is already persisted),
@@ -294,44 +264,7 @@ pub fn submit_message_with_mode(
             });
         }
 
-        // Parse session UUID for diagnostics.
-        let session_uuid =
-            uuid::Uuid::parse_str(&session_id_str).unwrap_or_else(|_| uuid::Uuid::new_v4());
-        let working_directory = std::env::current_dir()
-            .ok()
-            .map(|path| path.to_string_lossy().to_string());
-
-        // Delegate to the shared orchestrator.
-        let turn_input = TurnInput {
-            user_input: &trimmed_owned,
-            session_id: session_id.clone(),
-            session_uuid,
-            history: &history,
-            turn_number: user_msg_count,
-            provider_id: selected_provider_id,
-            request_mode: y_core::provider::RequestMode::TextChat,
-            working_directory,
-            knowledge_collections: vec![],
-            skills: vec![],
-            thinking: None,
-            plan_mode: turn_mode.plan_mode().map(str::to_string),
-            operation_mode: y_service::chat_types::OperationMode::Default,
-            agent_name: "chat-turn".to_string(),
-            toolcall_enabled: true,
-            preferred_models: vec![],
-            provider_tags: vec![],
-            temperature: None,
-            max_completion_tokens: None,
-            max_iterations: None,
-            max_tool_calls: None,
-            trust_tier: None,
-            agent_allowed_tools: vec![],
-            prune_tool_history: false,
-            mcp_mode: None,
-            mcp_servers: vec![],
-            image_generation_options: None,
-            pre_turn_message_count: None,
-        };
+        let turn_input = prepared.as_turn_input();
 
         // Set up a progress channel to receive streaming deltas.
         let (progress_tx, mut progress_rx) = y_service::TurnEventSender::channel();
@@ -350,17 +283,43 @@ pub fn submit_message_with_mode(
                             .send(ChatEvent::StreamReasoningDelta { content })
                             .await;
                     }
+                    y_service::TurnEvent::ToolStart {
+                        tool_call_id,
+                        name,
+                        input_preview,
+                        agent_name,
+                    } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::ToolCallStarted {
+                                tool_call_id,
+                                name,
+                                input_preview,
+                                agent_name,
+                            })
+                            .await;
+                    }
                     y_service::TurnEvent::ToolResult {
+                        tool_call_id,
                         name,
                         success,
                         duration_ms,
-                        ..
+                        input_preview,
+                        result_preview,
+                        agent_name,
+                        url_meta,
+                        metadata,
                     } => {
                         let _ = tx_stream
-                            .send(ChatEvent::ToolCallExecuted {
+                            .send(ChatEvent::ToolCallCompleted {
+                                tool_call_id,
                                 name,
                                 success,
                                 duration_ms,
+                                input_preview,
+                                result_preview,
+                                agent_name,
+                                url_meta,
+                                metadata,
                             })
                             .await;
                     }
@@ -417,6 +376,55 @@ pub fn submit_message_with_mode(
     })
 }
 
+async fn create_workspace_session(
+    services: &AppServices,
+) -> Result<y_core::session::SessionNode, String> {
+    let workspace = std::env::current_dir()
+        .map_err(|error| format!("Failed to resolve current workspace: {error}"))?;
+    y_service::SessionService::create_session(
+        &services.session_manager,
+        CreateSessionOptions {
+            parent_id: None,
+            session_type: SessionType::Main,
+            agent_id: None,
+            title: Some("New Chat".into()),
+        },
+        &workspace,
+    )
+    .await
+    .map_err(|error| format!("Failed to create session: {error}"))
+}
+
+async fn prepare_tui_turn(
+    services: &AppServices,
+    session_id: Option<String>,
+    user_input: String,
+    provider_id: Option<String>,
+    turn_mode: TurnMode,
+) -> Result<(PreparedTurn, Option<y_core::session::SessionNode>), String> {
+    let (session_id, created_session) = if let Some(session_id) = session_id {
+        (SessionId::from_string(session_id), None)
+    } else {
+        let session = create_workspace_session(services).await?;
+        (session.id.clone(), Some(session))
+    };
+    let prepared = ChatService::prepare_turn(
+        services,
+        PrepareTurnRequest {
+            session_id: Some(session_id),
+            user_input,
+            provider_id,
+            request_mode: Some(y_core::provider::RequestMode::TextChat),
+            plan_mode: turn_mode.plan_mode().map(str::to_string),
+            operation_mode: Some(y_service::chat_types::OperationMode::Default),
+            ..PrepareTurnRequest::default()
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok((prepared, created_session))
+}
+
 /// Apply a `ChatEvent` to the state.
 ///
 /// Called by the main event loop when the async LLM task sends results.
@@ -434,8 +442,12 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             // Update the last (streaming) assistant message.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
-                    if last.content.is_empty() && last.segments.is_empty() {
-                        last.content = content;
+                    finish_active_reasoning(last);
+                    if last.content.is_empty() {
+                        last.content.clone_from(&content);
+                        if !last.segments.is_empty() && !content.is_empty() {
+                            last.segments.push(StreamSegment::Text(content));
+                        }
                     }
                     last.is_streaming = false;
                     last.reasoning_complete = true;
@@ -459,21 +471,63 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 state.last_cost = Some(state.last_cost.unwrap_or(0.0) + cost_usd);
             }
         }
-        ChatEvent::ToolCallExecuted {
+        ChatEvent::ToolCallStarted {
+            tool_call_id,
+            name,
+            input_preview,
+            agent_name,
+        } => {
+            if let Some(last) = state.messages.last_mut() {
+                if last.role == MessageRole::Assistant && last.is_streaming {
+                    finish_active_reasoning(last);
+                    let tool_call = ToolCallInfo {
+                        tool_call_id,
+                        name,
+                        status: ToolCallStatus::Running,
+                        duration_ms: None,
+                        input_preview,
+                        result_preview: String::new(),
+                        agent_name,
+                        url_meta: None,
+                        metadata: None,
+                        display_mode: ToolCallDisplayMode::Preview,
+                    };
+                    let tool_index = last.tool_calls.len();
+                    last.tool_calls.push(tool_call);
+                    last.segments.push(StreamSegment::ToolCall(tool_index));
+                }
+            }
+        }
+        ChatEvent::ToolCallCompleted {
+            tool_call_id,
             name,
             success,
             duration_ms,
+            input_preview,
+            result_preview,
+            agent_name,
+            url_meta,
+            metadata,
         } => {
-            // Store structured tool call info for card rendering.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
-                    let tc = ToolCallInfo {
+                    let completed = ToolCallInfo {
+                        tool_call_id,
                         name,
-                        success,
-                        duration_ms,
+                        status: if success {
+                            ToolCallStatus::Succeeded
+                        } else {
+                            ToolCallStatus::Failed
+                        },
+                        duration_ms: Some(duration_ms),
+                        input_preview,
+                        result_preview,
+                        agent_name,
+                        url_meta,
+                        metadata,
+                        display_mode: ToolCallDisplayMode::Preview,
                     };
-                    last.tool_calls.push(tc.clone());
-                    last.segments.push(StreamSegment::ToolCall(tc));
+                    complete_or_append_tool_call(last, completed);
                 }
             }
         }
@@ -481,6 +535,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             // Append incremental text to the streaming assistant message.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
+                    finish_active_reasoning(last);
                     last.content.push_str(&content);
                     // Maintain event-ordered segments for interleaved rendering.
                     if let Some(StreamSegment::Text(ref mut text)) = last.segments.last_mut() {
@@ -492,10 +547,22 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             }
         }
         ChatEvent::StreamReasoningDelta { content } => {
-            // Append incremental reasoning text to the streaming assistant message.
+            // Preserve reasoning at its event-ordered timeline position.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
                     last.reasoning_content.push_str(&content);
+                    if let Some(StreamSegment::Reasoning {
+                        content: reasoning,
+                        is_complete: false,
+                    }) = last.segments.last_mut()
+                    {
+                        reasoning.push_str(&content);
+                    } else {
+                        last.segments.push(StreamSegment::Reasoning {
+                            content,
+                            is_complete: false,
+                        });
+                    }
                 }
             }
         }
@@ -503,7 +570,12 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             // Replace the streaming message with error.
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
+                    finish_active_reasoning(last);
                     last.content = format!("Error: {msg}");
+                    if !last.segments.is_empty() {
+                        last.segments
+                            .push(StreamSegment::Text(last.content.clone()));
+                    }
                     last.is_streaming = false;
                     last.is_cancelled = true;
                 }
@@ -517,6 +589,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
         ChatEvent::FollowUpInjected { text, .. } => {
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
+                    finish_active_reasoning(last);
                     last.is_streaming = false;
                     last.reasoning_complete = true;
                 }
@@ -547,11 +620,16 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
         ChatEvent::Cancelled => {
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
+                    finish_active_reasoning(last);
                     last.is_streaming = false;
                     last.is_cancelled = true;
                     last.reasoning_complete = true;
                     if last.content.is_empty() {
                         last.content = "(cancelled)".to_string();
+                        if !last.segments.is_empty() {
+                            last.segments
+                                .push(StreamSegment::Text(last.content.clone()));
+                        }
                     }
                 }
             }
@@ -585,6 +663,32 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 },
             );
         }
+    }
+}
+
+fn complete_or_append_tool_call(message: &mut ChatMessage, completed: ToolCallInfo) {
+    let existing_index = message
+        .tool_calls
+        .iter()
+        .position(|tool| tool.tool_call_id == completed.tool_call_id);
+
+    if let Some(index) = existing_index {
+        let display_mode = message.tool_calls[index].display_mode;
+        message.tool_calls[index] = ToolCallInfo {
+            display_mode,
+            ..completed
+        };
+    } else {
+        finish_active_reasoning(message);
+        let tool_index = message.tool_calls.len();
+        message.tool_calls.push(completed);
+        message.segments.push(StreamSegment::ToolCall(tool_index));
+    }
+}
+
+fn finish_active_reasoning(message: &mut ChatMessage) {
+    if let Some(StreamSegment::Reasoning { is_complete, .. }) = message.segments.last_mut() {
+        *is_complete = true;
     }
 }
 
@@ -625,6 +729,31 @@ pub fn cancel_streaming(state: &mut AppState) {
 mod tests {
     use super::*;
     use crate::tui::state::SessionListItem;
+
+    #[tokio::test]
+    async fn prepare_tui_turn_uses_shared_service_preparation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = y_service::ServiceConfig::default();
+        config.storage = y_service::config_types::StorageConfig::in_memory();
+        config.storage.transcript_dir = temp.path().join("transcripts");
+        let services = AppServices::from_config(&config).await.unwrap();
+
+        let (prepared, created_session) = prepare_tui_turn(
+            &services,
+            None,
+            "edit the file".into(),
+            None,
+            TurnMode::Fast,
+        )
+        .await
+        .unwrap();
+
+        assert!(created_session.is_some());
+        assert_eq!(prepared.history.last().unwrap().content, "edit the file");
+        let managers = services.file_history_managers.read().await;
+        let manager = managers.get(&prepared.session_id).unwrap();
+        assert_eq!(manager.snapshots().len(), 1);
+    }
 
     // T-TUI-05-01: User message appended to history.
     #[test]
@@ -876,9 +1005,9 @@ mod tests {
         assert_eq!(state.sessions[0].title, "Original");
     }
 
-    // T-TUI-TOOL-01: ToolCallExecuted events stored as structured data.
+    // T-TUI-TOOL-01: rich tool events update one event-ordered card in place.
     #[test]
-    fn test_apply_tool_call_executed() {
+    fn test_apply_tool_start_and_result_preserve_details() {
         let mut state = AppState::default();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
@@ -894,10 +1023,26 @@ mod tests {
         });
 
         apply_chat_event(
-            ChatEvent::ToolCallExecuted {
+            ChatEvent::ToolCallStarted {
+                tool_call_id: "call-search-1".into(),
+                name: "WebSearch".into(),
+                input_preview: r#"{"query":"ratatui"}"#.into(),
+                agent_name: "chat-turn".into(),
+            },
+            &mut state,
+        );
+
+        apply_chat_event(
+            ChatEvent::ToolCallCompleted {
+                tool_call_id: "call-search-1".into(),
                 name: "WebSearch".into(),
                 success: true,
                 duration_ms: 120,
+                input_preview: r#"{"query":"ratatui"}"#.into(),
+                result_preview: "3 results".into(),
+                agent_name: "chat-turn".into(),
+                url_meta: Some("https://example.com".into()),
+                metadata: Some(serde_json::json!({"result_count": 3})),
             },
             &mut state,
         );
@@ -905,8 +1050,17 @@ mod tests {
         let last = state.messages.last().unwrap();
         assert_eq!(last.tool_calls.len(), 1);
         assert_eq!(last.tool_calls[0].name, "WebSearch");
-        assert!(last.tool_calls[0].success);
-        assert_eq!(last.tool_calls[0].duration_ms, 120);
+        assert_eq!(last.tool_calls[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(last.tool_calls[0].duration_ms, Some(120));
+        assert_eq!(last.tool_calls[0].result_preview, "3 results");
+        assert_eq!(last.segments.len(), 1);
+        let StreamSegment::ToolCall(tool_index) = &last.segments[0] else {
+            panic!("expected tool call segment");
+        };
+        assert_eq!(*tool_index, 0);
+        let tool = &last.tool_calls[*tool_index];
+        assert_eq!(tool.status, ToolCallStatus::Succeeded);
+        assert_eq!(tool.input_preview, r#"{"query":"ratatui"}"#);
     }
 
     // T-TUI-TOOL-02: Multiple tool calls accumulate.
@@ -927,18 +1081,30 @@ mod tests {
         });
 
         apply_chat_event(
-            ChatEvent::ToolCallExecuted {
+            ChatEvent::ToolCallCompleted {
+                tool_call_id: "call-search-1".into(),
                 name: "WebSearch".into(),
                 success: true,
                 duration_ms: 120,
+                input_preview: String::new(),
+                result_preview: "results".into(),
+                agent_name: "chat-turn".into(),
+                url_meta: None,
+                metadata: None,
             },
             &mut state,
         );
         apply_chat_event(
-            ChatEvent::ToolCallExecuted {
+            ChatEvent::ToolCallCompleted {
+                tool_call_id: "call-shell-1".into(),
                 name: "ShellExec".into(),
                 success: false,
                 duration_ms: 50,
+                input_preview: r#"{"command":"false"}"#.into(),
+                result_preview: "exit code 1".into(),
+                agent_name: "chat-turn".into(),
+                url_meta: None,
+                metadata: None,
             },
             &mut state,
         );
@@ -947,7 +1113,56 @@ mod tests {
         assert_eq!(last.tool_calls.len(), 2);
         assert_eq!(last.tool_calls[0].name, "WebSearch");
         assert_eq!(last.tool_calls[1].name, "ShellExec");
-        assert!(!last.tool_calls[1].success);
+        assert_eq!(last.tool_calls[1].status, ToolCallStatus::Failed);
+    }
+
+    #[test]
+    fn test_same_name_tool_results_complete_by_tool_call_id() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+        });
+
+        for tool_call_id in ["call-a", "call-b"] {
+            apply_chat_event(
+                ChatEvent::ToolCallStarted {
+                    tool_call_id: tool_call_id.into(),
+                    name: "FileRead".into(),
+                    input_preview: format!(r#"{{"path":"{tool_call_id}"}}"#),
+                    agent_name: "chat-turn".into(),
+                },
+                &mut state,
+            );
+        }
+        apply_chat_event(
+            ChatEvent::ToolCallCompleted {
+                tool_call_id: "call-a".into(),
+                name: "FileRead".into(),
+                success: true,
+                duration_ms: 3,
+                input_preview: r#"{"path":"call-a"}"#.into(),
+                result_preview: "first result".into(),
+                agent_name: "chat-turn".into(),
+                url_meta: None,
+                metadata: None,
+            },
+            &mut state,
+        );
+
+        let tools = &state.messages.last().unwrap().tool_calls;
+        assert_eq!(tools[0].tool_call_id, "call-a");
+        assert_eq!(tools[0].status, ToolCallStatus::Succeeded);
+        assert_eq!(tools[1].tool_call_id, "call-b");
+        assert_eq!(tools[1].status, ToolCallStatus::Running);
     }
 
     // T-TUI-REASON-01: StreamReasoningDelta accumulates reasoning content.
@@ -983,6 +1198,70 @@ mod tests {
         let last = state.messages.last().unwrap();
         assert_eq!(last.reasoning_content, "Let me think about this...");
         assert!(!last.reasoning_complete);
+    }
+
+    // T-TUI-REASON-03: reasoning remains in event order around tool calls.
+    #[test]
+    fn test_reasoning_segments_preserve_tool_timeline_order() {
+        let mut state = AppState::default();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+        });
+
+        apply_chat_event(
+            ChatEvent::StreamReasoningDelta {
+                content: "Inspect the file".into(),
+            },
+            &mut state,
+        );
+        apply_chat_event(
+            ChatEvent::ToolCallStarted {
+                tool_call_id: "call-read".into(),
+                name: "FileRead".into(),
+                input_preview: r#"{"path":"src/lib.rs"}"#.into(),
+                agent_name: "chat-turn".into(),
+            },
+            &mut state,
+        );
+        apply_chat_event(
+            ChatEvent::StreamReasoningDelta {
+                content: "Now verify the result".into(),
+            },
+            &mut state,
+        );
+        apply_chat_event(
+            ChatEvent::StreamDelta {
+                content: "The result is valid.".into(),
+            },
+            &mut state,
+        );
+
+        let segments = &state.messages.last().unwrap().segments;
+        assert_eq!(segments.len(), 4);
+        assert!(matches!(
+            &segments[0],
+            StreamSegment::Reasoning { content, is_complete: true }
+                if content == "Inspect the file"
+        ));
+        assert!(matches!(segments[1], StreamSegment::ToolCall(0)));
+        assert!(matches!(
+            &segments[2],
+            StreamSegment::Reasoning { content, is_complete: true }
+                if content == "Now verify the result"
+        ));
+        assert!(matches!(
+            &segments[3],
+            StreamSegment::Text(content) if content == "The result is valid."
+        ));
     }
 
     // T-TUI-REASON-02: reasoning_complete set on Response.

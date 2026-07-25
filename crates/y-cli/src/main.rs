@@ -60,6 +60,14 @@ struct Cli {
     /// Can also be set via the `Y_AGENT_PROFILE` environment variable.
     #[arg(long, global = true)]
     profile: Option<String>,
+
+    /// Skip the default TUI launch when no subcommand is given.
+    ///
+    /// By default, running `y-agent` with no subcommand in an interactive
+    /// terminal launches the TUI. Pass this flag (or pipe stdin) to fall
+    /// back to printing the version banner instead.
+    #[arg(long, global = true, default_value_t = false)]
+    no_tui: bool,
 }
 
 #[tokio::main]
@@ -117,11 +125,24 @@ async fn main() -> Result<()> {
     config::validate_config(&config)?;
 
     // Determine if we are entering TUI mode.
+    //
+    // The TUI launches when:
+    //   - the `tui` feature is enabled, AND
+    //   - the user explicitly invoked `tui`/`resume`/`fork`, OR
+    //   - no subcommand was given, `--no-tui` was not passed, and stdin is a
+    //     TTY (interactive terminal). Piped/non-interactive invocations fall
+    //     back to the version banner so scripts and CI keep working.
     #[cfg(feature = "tui")]
-    let is_tui = matches!(
-        cli.command,
-        Some(Commands::Tui { .. } | Commands::Resume { .. } | Commands::Fork { .. })
-    );
+    let is_tui = {
+        let explicit_tui = matches!(
+            cli.command,
+            Some(Commands::Tui { .. } | Commands::Resume { .. } | Commands::Fork { .. })
+        );
+        let default_tui = cli.command.is_none()
+            && !cli.no_tui
+            && std::io::IsTerminal::is_terminal(&std::io::stdin());
+        explicit_tui || default_tui
+    };
     #[cfg(not(feature = "tui"))]
     let is_tui = false;
 
@@ -374,6 +395,14 @@ async fn main() -> Result<()> {
             commands::capability_pack::run(action, &services, mode).await?;
         }
         None => {
+            // No subcommand given.
+            #[cfg(feature = "tui")]
+            if is_tui {
+                let services = wire::wire(&config).await?;
+                let exit_info = commands::tui_cmd::run(services, Some(toast_rx), None).await?;
+                print_exit_summary(&exit_info);
+                return Ok(());
+            }
             println!("y-agent v{}", env!("CARGO_PKG_VERSION"));
             println!("Use --help for available commands.");
         }
@@ -444,23 +473,26 @@ async fn resolve_resume_session(
     session: Option<String>,
     services: &wire::AppServices,
 ) -> Option<String> {
-    use y_core::session::SessionFilter;
-
-    if session.is_some() {
-        return session;
-    }
-
-    // Find the most recent session.
-    match services
-        .session_manager
-        .list_sessions(&SessionFilter::default())
+    let workspace = std::env::current_dir().ok()?;
+    match session {
+        Some(target) => y_service::SessionService::resolve_resume_target(
+            &services.session_manager,
+            &workspace,
+            None,
+            &target,
+        )
         .await
-    {
-        Ok(mut nodes) => {
-            nodes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-            nodes.first().map(|n| n.id.to_string())
-        }
-        Err(_) => None,
+        .ok()
+        .flatten()
+        .map(|node| node.id.to_string()),
+        None => y_service::SessionService::list_resumable_sessions(
+            &services.session_manager,
+            &workspace,
+            None,
+        )
+        .await
+        .ok()
+        .and_then(|nodes| nodes.first().map(|node| node.id.to_string())),
     }
 }
 
@@ -550,5 +582,39 @@ mod tests {
             let personal = profile_path("personal").unwrap();
             assert_ne!(work, personal);
         }
+    }
+
+    // T-CLI-DEFAULT-TUI-01: no subcommand and no args parses to `command: None`,
+    // which `main` turns into the default TUI launch (or version banner when
+    // stdin is not a TTY / `--no-tui` is set).
+    #[test]
+    fn test_no_subcommand_parses_to_none() {
+        let cli = Cli::parse_from(["y-agent"]);
+        assert!(cli.command.is_none(), "no args -> command should be None");
+    }
+
+    // T-CLI-DEFAULT-TUI-02: `--no-tui` parses to `true` and does not require a
+    // subcommand.
+    #[test]
+    fn test_no_tui_flag_parses_true_without_subcommand() {
+        let cli = Cli::parse_from(["y-agent", "--no-tui"]);
+        assert!(cli.no_tui, "--no-tui should set the flag to true");
+        assert!(cli.command.is_none(), "--no-tui alone keeps command None");
+    }
+
+    // T-CLI-DEFAULT-TUI-03: without `--no-tui`, the flag defaults to `false`.
+    #[test]
+    fn test_no_tui_flag_defaults_false() {
+        let cli = Cli::parse_from(["y-agent", "status"]);
+        assert!(!cli.no_tui, "default value of --no-tui must be false");
+    }
+
+    // T-CLI-DEFAULT-TUI-04: `--no-tui` is treated as a flag (starts with `-`),
+    // so `bare_prompt::resolve` passes it through unchanged rather than
+    // forwarding it to `chat`.
+    #[test]
+    fn test_bare_prompt_passes_through_no_tui_flag() {
+        let raw = vec!["--no-tui".to_string()];
+        assert_eq!(bare_prompt::resolve(&raw), raw);
     }
 }

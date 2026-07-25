@@ -31,6 +31,8 @@ pub enum CommandResult {
     SetTurnMode(TurnMode),
     /// Copy selected conversation content to the system clipboard.
     Copy(CopyTarget),
+    /// Open the full-screen copy target selector.
+    OpenCopyPicker,
 }
 
 /// Deferred async commands that require `AppServices` access.
@@ -80,6 +82,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
 
         "clear" => {
             state.messages.clear();
+            state.selected_tool = None;
             state.scroll_offset = 0;
             CommandResult::Ok(Some("Chat cleared.".into()))
         }
@@ -99,6 +102,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             // Reset chat state for a fresh session.
             // Actual DB session creation is deferred to first message (lazy).
             state.messages.clear();
+            state.selected_tool = None;
             state.scroll_offset = 0;
             state.current_session_id = None;
             state.user_message_count = 0;
@@ -107,6 +111,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
 
         "reset" => {
             state.messages.clear();
+            state.selected_tool = None;
             state.scroll_offset = 0;
             CommandResult::Ok(Some("Session reset.".into()))
         }
@@ -230,6 +235,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             CommandResult::Ok(None)
         }
 
+        "copy" if args.trim().is_empty() => CommandResult::OpenCopyPicker,
         "copy" => match copy::parse_target(args) {
             Ok(target) => CommandResult::Copy(target),
             Err(message) => CommandResult::Error(message),
@@ -314,7 +320,7 @@ fn generate_shortcuts_text() -> String {
     Tab                       Cycle focus (Input -> Chat)
     /                         Open command palette (on empty input)
     :                         Open command palette (vim-style)
-    Esc                       Cancel active response / return to normal\n\n",
+    Esc                       Cancel response / select prompt history\n\n",
     );
 
     text.push_str(
@@ -322,7 +328,16 @@ fn generate_shortcuts_text() -> String {
     j / Down / PageDown       Scroll down
     k / Up / PageUp           Scroll up
     i                         Return focus to input
-    Tab                       Cycle focus\n\n",
+    Tab                       Cycle focus
+    Esc                       Select prompt history\n\n",
+    );
+
+    text.push_str(
+        "  [Prompt Backtrack]
+    Esc / Up / k              Select an older user prompt
+    Down / j                  Select a newer user prompt
+    Enter                     Branch before the prompt and edit it
+    q / i                     Close without branching\n\n",
     );
 
     text.push_str(
@@ -356,7 +371,7 @@ fn generate_shortcuts_text() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::state::MessageRole;
+    use crate::tui::state::{MessageRole, ToolSelection};
     use chrono::Utc;
 
     // T-TUI-04-04: /clear clears messages.
@@ -374,10 +389,15 @@ mod tests {
             tool_calls: Vec::new(),
             segments: Vec::new(),
         });
+        state.selected_tool = Some(ToolSelection {
+            message_index: 0,
+            tool_index: 0,
+        });
 
         let result = execute("clear", &mut state);
         assert!(matches!(result, CommandResult::Ok(Some(ref msg)) if msg.contains("cleared")));
         assert!(state.messages.is_empty());
+        assert!(state.selected_tool.is_none());
     }
 
     // T-TUI-04-05: /new resets state and returns NewSession.
@@ -397,12 +417,17 @@ mod tests {
             tool_calls: Vec::new(),
             segments: Vec::new(),
         });
+        state.selected_tool = Some(ToolSelection {
+            message_index: 0,
+            tool_index: 0,
+        });
 
         let result = execute("new", &mut state);
         assert!(matches!(result, CommandResult::NewSession));
         assert!(state.messages.is_empty());
         assert!(state.current_session_id.is_none());
         assert_eq!(state.user_message_count, 0);
+        assert!(state.selected_tool.is_none());
     }
 
     // T-TUI-04-06: unknown command returns error.
@@ -597,7 +622,7 @@ mod tests {
         let mut state = AppState::default();
         assert!(matches!(
             execute("copy", &mut state),
-            CommandResult::Copy(super::copy::CopyTarget::AssistantResponse(1))
+            CommandResult::OpenCopyPicker
         ));
         assert!(matches!(
             execute("copy 3", &mut state),

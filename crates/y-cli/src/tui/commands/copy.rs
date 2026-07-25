@@ -1,6 +1,27 @@
 //! Copy-target parsing and transcript extraction for the TUI.
 
-use crate::tui::state::{ChatMessage, MessageRole};
+use std::fmt::Write as _;
+
+use crate::tui::state::{ChatMessage, MessageRole, ToolCallInfo, ToolCallStatus};
+
+/// Semantic category shown in the copy selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyItemKind {
+    AssistantResponse,
+    CodeBlock,
+    ToolInput,
+    ToolResult,
+    Transcript,
+}
+
+/// Clipboard-ready item displayed by the full-screen copy selector.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyItem {
+    pub kind: CopyItemKind,
+    pub label: String,
+    pub detail: String,
+    pub content: String,
+}
 
 /// Conversation content selected by `/copy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +67,87 @@ pub fn resolve_target(messages: &[ChatMessage], target: CopyTarget) -> Result<St
     }
 }
 
+/// Build searchable copy targets from the visible conversation.
+pub fn discover_copy_items(messages: &[ChatMessage]) -> Vec<CopyItem> {
+    let mut items = Vec::new();
+
+    for (recent_index, message) in messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == MessageRole::Assistant)
+        .enumerate()
+    {
+        let response_number = recent_index + 1;
+        if !message.content.trim().is_empty() {
+            items.push(CopyItem {
+                kind: CopyItemKind::AssistantResponse,
+                label: format!("Assistant response {response_number}"),
+                detail: first_non_empty_line(&message.content),
+                content: message.content.clone(),
+            });
+        }
+
+        for (block_index, block) in fenced_blocks(&message.content).into_iter().enumerate() {
+            items.push(CopyItem {
+                kind: CopyItemKind::CodeBlock,
+                label: format!("Code block {}", block_index + 1),
+                detail: format!("From assistant response {response_number}"),
+                content: block,
+            });
+        }
+
+        for tool in message.tool_calls.iter().rev() {
+            if !tool.input_preview.trim().is_empty() {
+                items.push(CopyItem {
+                    kind: CopyItemKind::ToolInput,
+                    label: format!("{} input", tool.name),
+                    detail: format!("Tool call in response {response_number}"),
+                    content: tool.input_preview.clone(),
+                });
+            }
+            if !tool.result_preview.trim().is_empty() {
+                items.push(CopyItem {
+                    kind: CopyItemKind::ToolResult,
+                    label: format!("{} result", tool.name),
+                    detail: format!("Tool call in response {response_number}"),
+                    content: tool.result_preview.clone(),
+                });
+            }
+        }
+    }
+
+    if !messages.is_empty() {
+        items.push(CopyItem {
+            kind: CopyItemKind::Transcript,
+            label: "Complete transcript".into(),
+            detail: format!("{} visible messages", messages.len()),
+            content: format_transcript(messages),
+        });
+    }
+
+    items
+}
+
+/// Format one tool call as a self-contained clipboard record.
+pub fn format_tool_call_for_copy(tool: &ToolCallInfo) -> String {
+    let status = match tool.status {
+        ToolCallStatus::Running => "running",
+        ToolCallStatus::Succeeded => "succeeded",
+        ToolCallStatus::Failed => "failed",
+    };
+    let timing = tool
+        .duration_ms
+        .map_or_else(String::new, |duration| format!(", {duration}ms"));
+    let mut output = format!("[Tool: {}] ({status}{timing})", tool.name);
+    if !tool.input_preview.trim().is_empty() {
+        let _ = write!(output, "\nInput:\n{}", tool.input_preview);
+    }
+    if !tool.result_preview.trim().is_empty() {
+        let _ = write!(output, "\nResult:\n{}", tool.result_preview);
+    }
+    output
+}
+
 fn copy_usage() -> String {
     "Usage: /copy [N|code|transcript]".to_string()
 }
@@ -70,6 +172,13 @@ fn last_code_block(messages: &[ChatMessage]) -> Option<String> {
 }
 
 fn last_fenced_block(content: &str) -> Option<String> {
+    fenced_blocks(content)
+        .into_iter()
+        .rev()
+        .find(|block| !block.trim().is_empty())
+}
+
+fn fenced_blocks(content: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut current: Option<Vec<&str>> = None;
 
@@ -86,9 +195,6 @@ fn last_fenced_block(content: &str) -> Option<String> {
     }
 
     blocks
-        .into_iter()
-        .rev()
-        .find(|block| !block.trim().is_empty())
 }
 
 fn format_transcript(messages: &[ChatMessage]) -> String {
@@ -101,10 +207,32 @@ fn format_transcript(messages: &[ChatMessage]) -> String {
                 MessageRole::System => "System",
                 MessageRole::Tool => "Tool",
             };
-            format!("[{role}]\n{}", message.content)
+            let mut section = format!("[{role}]\n{}", message.content);
+            for tool in &message.tool_calls {
+                let status = match tool.status {
+                    ToolCallStatus::Running => "running",
+                    ToolCallStatus::Succeeded => "succeeded",
+                    ToolCallStatus::Failed => "failed",
+                };
+                let _ = write!(section, "\n\n[Tool: {}] ({status})", tool.name);
+                if !tool.input_preview.trim().is_empty() {
+                    let _ = write!(section, "\nInput:\n{}", tool.input_preview);
+                }
+                if !tool.result_preview.trim().is_empty() {
+                    let _ = write!(section, "\nResult:\n{}", tool.result_preview);
+                }
+            }
+            section
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn first_non_empty_line(content: &str) -> String {
+    content
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map_or_else(String::new, |line| line.trim().chars().take(80).collect())
 }
 
 #[cfg(test)]
@@ -112,6 +240,7 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
+    use crate::tui::state::ToolCallDisplayMode;
 
     fn message(role: MessageRole, content: &str) -> ChatMessage {
         ChatMessage {
@@ -163,5 +292,83 @@ mod tests {
             resolve_target(&messages, CopyTarget::LastCodeBlock).unwrap(),
             "cargo test"
         );
+    }
+
+    #[test]
+    fn test_discover_copy_items_includes_tool_inputs_results_and_transcript() {
+        let mut assistant = message(MessageRole::Assistant, "Run this:\n```sh\ncargo test\n```");
+        assistant.tool_calls.push(ToolCallInfo {
+            tool_call_id: "call-shell-1".into(),
+            name: "ShellExec".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(30),
+            input_preview: r#"{"command":"cargo test"}"#.into(),
+            result_preview: "42 passed".into(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        });
+        let messages = vec![message(MessageRole::User, "test it"), assistant];
+
+        let items = discover_copy_items(&messages);
+
+        assert!(items.iter().any(|item| {
+            item.kind == CopyItemKind::ToolInput && item.content.contains("cargo test")
+        }));
+        assert!(items
+            .iter()
+            .any(|item| { item.kind == CopyItemKind::ToolResult && item.content == "42 passed" }));
+        assert!(items
+            .iter()
+            .any(|item| { item.kind == CopyItemKind::CodeBlock && item.content == "cargo test" }));
+        assert!(items
+            .iter()
+            .any(|item| item.kind == CopyItemKind::Transcript));
+    }
+
+    #[test]
+    fn test_transcript_copy_includes_tool_details() {
+        let mut assistant = message(MessageRole::Assistant, "Done");
+        assistant.tool_calls.push(ToolCallInfo {
+            tool_call_id: "call-edit-1".into(),
+            name: "FileEdit".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(12),
+            input_preview: r#"{"path":"src/main.rs"}"#.into(),
+            result_preview: "updated src/main.rs".into(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        });
+
+        let transcript = resolve_target(&[assistant], CopyTarget::Transcript).unwrap();
+
+        assert!(transcript.contains("[Tool: FileEdit]"));
+        assert!(transcript.contains("src/main.rs"));
+        assert!(transcript.contains("updated src/main.rs"));
+    }
+
+    #[test]
+    fn test_format_tool_call_for_copy_includes_input_and_result() {
+        let tool = ToolCallInfo {
+            tool_call_id: "call-shell-1".into(),
+            name: "ShellExec".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(14),
+            input_preview: r#"{"command":"cargo test"}"#.into(),
+            result_preview: "42 passed".into(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        };
+
+        let copied = format_tool_call_for_copy(&tool);
+
+        assert!(copied.contains("[Tool: ShellExec]"));
+        assert!(copied.contains("cargo test"));
+        assert!(copied.contains("42 passed"));
     }
 }

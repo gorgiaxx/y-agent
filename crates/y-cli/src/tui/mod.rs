@@ -9,6 +9,7 @@
 #![allow(dead_code)]
 
 pub mod chat_flow;
+pub mod clipboard;
 pub mod commands;
 pub mod events;
 pub mod keys;
@@ -19,6 +20,7 @@ pub mod panels;
 pub mod selection;
 pub mod state;
 pub mod theme;
+pub mod tool_renderers;
 pub mod tracing_bridge;
 
 use std::fmt::Write as _;
@@ -48,6 +50,8 @@ use events::{AppEvent, EventLoop};
 use keys::KeyAction;
 use layout::LayoutChunks;
 use overlays::command_palette::CommandPaletteState;
+use overlays::copy_picker::CopyPickerState;
+use overlays::session_picker::SessionPickerState;
 use state::{
     AppState, ChatMessage, InteractionMode, MessageRole, PanelFocus, SessionListItem, Toast,
     ToastLevel,
@@ -76,6 +80,10 @@ pub struct TuiApp {
     textarea: TextArea<'static>,
     /// Command palette state (active in Command mode).
     palette: CommandPaletteState,
+    /// Full-screen copy target selector state.
+    copy_picker: CopyPickerState,
+    /// Full-screen session resume selector state.
+    session_picker: SessionPickerState,
     /// Application services (LLM, session, etc.).
     services: Arc<AppServices>,
     /// Active service turn, including progress events and cancellation.
@@ -108,6 +116,8 @@ impl TuiApp {
         let events = EventLoop::new(Duration::from_millis(250));
         let textarea = TextArea::default();
         let palette = CommandPaletteState::new();
+        let copy_picker = CopyPickerState::default();
+        let session_picker = SessionPickerState::default();
 
         Ok(Self {
             terminal,
@@ -115,6 +125,8 @@ impl TuiApp {
             events,
             textarea,
             palette,
+            copy_picker,
+            session_picker,
             services,
             active_chat: None,
             toast_rx,
@@ -128,34 +140,30 @@ impl TuiApp {
     /// Called from `tui_cmd::run` when the user passes `--session` or uses
     /// the `resume` subcommand.
     pub async fn resume_session(&mut self, target: &str) {
-        use y_core::session::SessionFilter;
-
-        let nodes = match self
-            .services
-            .session_manager
-            .list_sessions(&SessionFilter::default())
-            .await
-        {
-            Ok(n) => n,
+        let workspace = match std::env::current_dir() {
+            Ok(path) => path,
             Err(e) => {
-                warn!(error = %e, "failed to list sessions for resume");
+                warn!(error = %e, "failed to resolve current workspace for resume");
                 return;
             }
         };
-
-        let target_lower = target.to_lowercase();
-        let matched = nodes.iter().find(|n| {
-            n.id.to_string().starts_with(target)
-                || n.title
-                    .as_ref()
-                    .is_some_and(|t| t.to_lowercase().contains(&target_lower))
-        });
-
-        if let Some(node) = matched {
-            self.state.current_session_id = Some(node.id.to_string());
-            self.load_session_transcript(&node.id).await;
-        } else {
-            warn!(target = target, "no session matching resume target");
+        match y_service::SessionService::resolve_resume_target(
+            &self.services.session_manager,
+            &workspace,
+            None,
+            target,
+        )
+        .await
+        {
+            Ok(Some(node)) => {
+                self.state.current_session_id = Some(node.id.to_string());
+                self.load_session_transcript(&node.id).await;
+            }
+            Ok(None) => warn!(
+                target,
+                "no session matching resume target in current workspace"
+            ),
+            Err(error) => warn!(%error, "failed to resolve workspace-scoped resume target"),
         }
     }
 
@@ -203,7 +211,29 @@ impl TuiApp {
         match action {
             KeyAction::Quit => return true,
             KeyAction::Submit => {
-                if self.state.mode == InteractionMode::Command {
+                if self.state.mode == InteractionMode::Resume {
+                    let Some(session_id) = self
+                        .session_picker
+                        .selected_session()
+                        .map(|session| session.id.clone())
+                    else {
+                        self.state
+                            .push_toast("No session selected.".into(), ToastLevel::Info);
+                        return false;
+                    };
+                    self.cmd_switch_session(&session_id).await;
+                    self.state.set_mode(InteractionMode::Normal);
+                    self.state.set_focus(PanelFocus::Input);
+                } else if self.state.mode == InteractionMode::Copy {
+                    let Some(item) = self.copy_picker.selected_item().cloned() else {
+                        self.state
+                            .push_toast("No copy target selected.".into(), ToastLevel::Info);
+                        return false;
+                    };
+                    self.deliver_copy(&item.content, &item.label);
+                    self.state.set_mode(InteractionMode::Normal);
+                    self.state.set_focus(PanelFocus::Input);
+                } else if self.state.mode == InteractionMode::Command {
                     if self.palette.in_arg_mode() {
                         let cmd = self.palette.arg_command.clone().unwrap_or_default();
                         let arg = self
@@ -289,7 +319,19 @@ impl TuiApp {
                 }
             }
             KeyAction::InputPassthrough => {
-                if self.state.mode == InteractionMode::Command {
+                if self.state.mode == InteractionMode::Resume {
+                    if let crossterm::event::KeyCode::Char(ch) = key.code {
+                        self.session_picker.push_char(ch);
+                    } else if key.code == crossterm::event::KeyCode::Backspace {
+                        self.session_picker.pop_char();
+                    }
+                } else if self.state.mode == InteractionMode::Copy {
+                    if let crossterm::event::KeyCode::Char(ch) = key.code {
+                        self.copy_picker.push_char(ch);
+                    } else if key.code == crossterm::event::KeyCode::Backspace {
+                        self.copy_picker.pop_char();
+                    }
+                } else if self.state.mode == InteractionMode::Command {
                     if let crossterm::event::KeyCode::Char(ch) = key.code {
                         self.palette.push_char(ch);
                     } else if key.code == crossterm::event::KeyCode::Backspace {
@@ -316,26 +358,54 @@ impl TuiApp {
                 self.state.cycle_focus_forward();
             }
             KeyAction::ScrollUp => {
-                if self.state.mode == InteractionMode::Command {
+                if self.state.mode == InteractionMode::Resume {
+                    self.session_picker.select_prev();
+                } else if self.state.mode == InteractionMode::Copy {
+                    self.copy_picker.select_prev();
+                } else if self.state.mode == InteractionMode::Command {
                     self.palette.select_prev();
                 } else {
                     self.state.scroll_offset = self.state.scroll_offset.saturating_add(3);
                 }
             }
             KeyAction::ScrollDown => {
-                if self.state.mode == InteractionMode::Command {
+                if self.state.mode == InteractionMode::Resume {
+                    self.session_picker.select_next();
+                } else if self.state.mode == InteractionMode::Copy {
+                    self.copy_picker.select_next();
+                } else if self.state.mode == InteractionMode::Command {
                     self.palette.select_next();
                 } else {
                     self.state.scroll_offset = self.state.scroll_offset.saturating_sub(3);
                 }
             }
             KeyAction::PageScrollUp => {
-                let page = self.state.page_height.max(1);
-                self.state.scroll_offset = self.state.scroll_offset.saturating_add(page);
+                if self.state.mode == InteractionMode::Resume {
+                    for _ in 0..10 {
+                        self.session_picker.select_prev();
+                    }
+                } else if self.state.mode == InteractionMode::Copy {
+                    for _ in 0..10 {
+                        self.copy_picker.select_prev();
+                    }
+                } else {
+                    let page = self.state.page_height.max(1);
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_add(page);
+                }
             }
             KeyAction::PageScrollDown => {
-                let page = self.state.page_height.max(1);
-                self.state.scroll_offset = self.state.scroll_offset.saturating_sub(page);
+                if self.state.mode == InteractionMode::Resume {
+                    for _ in 0..10 {
+                        self.session_picker.select_next();
+                    }
+                } else if self.state.mode == InteractionMode::Copy {
+                    for _ in 0..10 {
+                        self.copy_picker.select_next();
+                    }
+                } else {
+                    let page = self.state.page_height.max(1);
+                    self.state.scroll_offset = self.state.scroll_offset.saturating_sub(page);
+                }
             }
             KeyAction::ScrollToTop => {
                 // Set a very large offset to scroll to the beginning.
@@ -354,10 +424,12 @@ impl TuiApp {
             }
             KeyAction::ShowHelp => {
                 if self.state.mode == InteractionMode::Help {
+                    self.state.clear_backtrack_selection();
                     self.state.set_mode(InteractionMode::Normal);
                 } else {
                     // Close any other overlay first, then show help.
                     if self.state.mode != InteractionMode::Normal {
+                        self.state.clear_backtrack_selection();
                         self.state.set_mode(InteractionMode::Normal);
                     }
                     self.state.set_mode(InteractionMode::Help);
@@ -366,8 +438,23 @@ impl TuiApp {
             KeyAction::EnterCommandMode => {
                 self.state.set_mode(InteractionMode::Command);
                 self.palette = CommandPaletteState::new();
+                self.copy_picker = CopyPickerState::default();
+                self.session_picker = SessionPickerState::default();
+            }
+            KeyAction::EnterBacktrack => {
+                self.open_backtrack_picker();
+            }
+            KeyAction::BacktrackPrevious => {
+                self.state.select_previous_user_message();
+            }
+            KeyAction::BacktrackNext => {
+                self.state.select_next_user_message();
+            }
+            KeyAction::ConfirmBacktrack => {
+                self.confirm_backtrack_selection().await;
             }
             KeyAction::ReturnToNormal => {
+                self.state.clear_backtrack_selection();
                 self.state.set_mode(InteractionMode::Normal);
                 self.state.set_focus(PanelFocus::Input);
                 self.palette = CommandPaletteState::new();
@@ -418,14 +505,65 @@ impl TuiApp {
                     }
                 }
             }
+            action @ (KeyAction::SelectNextTool
+            | KeyAction::SelectPreviousTool
+            | KeyAction::ToggleSelectedTool
+            | KeyAction::CopySelectedTool) => self.handle_tool_action(action),
             KeyAction::Consumed | KeyAction::Unhandled => {}
         }
         false
     }
 
+    fn handle_tool_action(&mut self, action: KeyAction) {
+        match action {
+            KeyAction::SelectNextTool => {
+                if self.state.select_next_tool().is_none() {
+                    self.state.push_toast(
+                        "No tool calls in this conversation.".into(),
+                        ToastLevel::Info,
+                    );
+                }
+            }
+            KeyAction::SelectPreviousTool => {
+                if self.state.select_previous_tool().is_none() {
+                    self.state.push_toast(
+                        "No tool calls in this conversation.".into(),
+                        ToastLevel::Info,
+                    );
+                }
+            }
+            KeyAction::ToggleSelectedTool => {
+                if self.state.cycle_selected_tool_display().is_none() {
+                    self.state.push_toast(
+                        "Select a tool card with [ or ] first.".into(),
+                        ToastLevel::Info,
+                    );
+                }
+            }
+            KeyAction::CopySelectedTool => {
+                let Some(tool) = self.state.selected_tool().cloned() else {
+                    self.state.push_toast(
+                        "Select a tool card with [ or ] first.".into(),
+                        ToastLevel::Info,
+                    );
+                    return;
+                };
+                let content = commands::copy::format_tool_call_for_copy(&tool);
+                self.deliver_copy(&content, &format!("{} tool call", tool.name));
+            }
+            _ => {}
+        }
+    }
+
     /// Process a mouse event.
     fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) {
         use crossterm::event::{MouseButton, MouseEventKind};
+        if matches!(
+            self.state.mode,
+            InteractionMode::Copy | InteractionMode::Resume | InteractionMode::Select
+        ) {
+            return;
+        }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(ref chunks) = self.last_chunks {
@@ -462,10 +600,7 @@ impl TuiApp {
                         let text =
                             selection::extract_text(&self.chat_plain_lines, &self.state.selection);
                         if !text.is_empty() {
-                            #[cfg(feature = "tui")]
-                            if let Ok(mut clip) = arboard::Clipboard::new() {
-                                let _ = clip.set_text(&text);
-                            }
+                            self.deliver_copy(&text, "selection");
                         }
                     }
                 }
@@ -582,6 +717,18 @@ impl TuiApp {
                 overlays::command_palette::render(frame, area, palette, &state.theme);
             }
 
+            if state.mode == InteractionMode::Copy {
+                overlays::copy_picker::render(frame, area, &self.copy_picker, &state.theme);
+            }
+
+            if state.mode == InteractionMode::Resume {
+                overlays::session_picker::render(frame, area, &self.session_picker, &state.theme);
+            }
+
+            if state.mode == InteractionMode::Select {
+                overlays::backtrack_picker::render(frame, area, state, &state.theme);
+            }
+
             // Render help overlay if in Help mode.
             if state.mode == InteractionMode::Help {
                 overlays::help::render(frame, area);
@@ -639,15 +786,7 @@ impl TuiApp {
                 true
             }
             "copy" => {
-                self.palette.enter_arg_mode(
-                    "copy".into(),
-                    vec![
-                        ("1".into(), "Latest assistant response".into()),
-                        ("2".into(), "Second-latest assistant response".into()),
-                        ("code".into(), "Latest fenced code block".into()),
-                        ("transcript".into(), "Complete visible transcript".into()),
-                    ],
-                );
+                self.open_copy_picker();
                 true
             }
             _ => false,
@@ -703,6 +842,7 @@ impl TuiApp {
                     .push_toast(format!("Turn mode: {}", mode.label()), ToastLevel::Success);
             }
             CommandResult::Copy(target) => self.copy_to_clipboard(target),
+            CommandResult::OpenCopyPicker => self.open_copy_picker(),
         }
         false
     }
@@ -736,7 +876,7 @@ impl TuiApp {
     // Async command implementations
     // -----------------------------------------------------------------------
 
-    /// Open a command-palette session picker populated from recent sessions.
+    /// Open a full-screen session picker populated from recent sessions.
     async fn open_session_picker(&mut self) -> bool {
         self.load_sessions().await;
         if self.state.sessions.is_empty() {
@@ -745,35 +885,93 @@ impl TuiApp {
             return false;
         }
 
-        let current_id = self.state.current_session_id.as_deref();
-        let completions = self
-            .state
-            .sessions
-            .iter()
-            .map(|session| {
-                let short_id: String = session.id.chars().take(8).collect();
-                let title = if session.title.trim().is_empty() {
-                    "Untitled session"
-                } else {
-                    session.title.as_str()
-                };
-                let current = if current_id == Some(session.id.as_str()) {
-                    " · current"
-                } else {
-                    ""
-                };
-                (
-                    short_id,
-                    format!("{title} · {} messages{current}", session.message_count),
-                )
-            })
-            .collect();
-
-        if self.state.mode != InteractionMode::Command {
-            let _ = self.state.set_mode(InteractionMode::Command);
-        }
-        self.palette.enter_arg_mode("resume".into(), completions);
+        self.session_picker = SessionPickerState::new(
+            self.state.sessions.clone(),
+            self.state.current_session_id.as_deref(),
+        );
+        self.state.set_mode(InteractionMode::Resume);
+        self.state.set_focus(PanelFocus::Chat);
         true
+    }
+
+    /// Open the Codex-style prompt backtrack selector for the active session.
+    fn open_backtrack_picker(&mut self) {
+        if self.state.current_session_id.is_none() {
+            self.state
+                .push_toast("No active session to backtrack.".into(), ToastLevel::Info);
+            return;
+        }
+        if self.state.begin_backtrack_selection().is_none() {
+            self.state
+                .push_toast("No user prompts to backtrack to.".into(), ToastLevel::Info);
+            return;
+        }
+
+        self.state.set_mode(InteractionMode::Select);
+        self.state.set_focus(PanelFocus::Chat);
+    }
+
+    /// Branch before the selected prompt and restore it to the input editor.
+    async fn confirm_backtrack_selection(&mut self) {
+        let Some(message_index) = self.state.selected_message else {
+            self.state
+                .push_toast("No prompt selected.".into(), ToastLevel::Info);
+            return;
+        };
+        let Some(prompt) = self
+            .state
+            .selected_user_message()
+            .map(|message| message.content.clone())
+        else {
+            self.state.clear_backtrack_selection();
+            self.state.set_mode(InteractionMode::Normal);
+            self.state.set_focus(PanelFocus::Input);
+            self.state.push_toast(
+                "The selected prompt is no longer available.".into(),
+                ToastLevel::Warning,
+            );
+            return;
+        };
+        let Some(current_id) = self.state.current_session_id.clone() else {
+            self.state
+                .push_toast("No active session to backtrack.".into(), ToastLevel::Error);
+            return;
+        };
+
+        let session_id = y_core::types::SessionId::from_string(current_id);
+        let title = backtrack_branch_title(&prompt);
+        match y_service::SessionService::branch_before_message(
+            &self.services.session_manager,
+            &session_id,
+            message_index,
+            Some(title),
+        )
+        .await
+        {
+            Ok(branch) => {
+                self.state.current_session_id = Some(branch.id.to_string());
+                self.load_session_transcript(&branch.id).await;
+                self.load_sessions().await;
+                self.textarea = if prompt.is_empty() {
+                    TextArea::default()
+                } else {
+                    TextArea::new(prompt.split('\n').map(String::from).collect())
+                };
+                self.state.history_index = None;
+                self.state.input_draft = None;
+                self.state.clear_backtrack_selection();
+                self.state.set_mode(InteractionMode::Normal);
+                self.state.set_focus(PanelFocus::Input);
+                self.state.push_toast(
+                    "Created a branch before the selected prompt. Edit it and press Enter.".into(),
+                    ToastLevel::Success,
+                );
+            }
+            Err(error) => {
+                self.state
+                    .push_toast(format!("Backtrack failed: {error}"), ToastLevel::Error);
+            }
+        }
     }
 
     /// Resolve a copy target and place it on the system clipboard.
@@ -786,49 +984,54 @@ impl TuiApp {
             }
         };
 
-        #[cfg(feature = "tui")]
-        {
-            match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(&text)) {
-                Ok(()) => {
-                    let label = match target {
-                        commands::copy::CopyTarget::AssistantResponse(nth) => {
-                            format!("assistant response {nth}")
-                        }
-                        commands::copy::CopyTarget::LastCodeBlock => "code block".to_string(),
-                        commands::copy::CopyTarget::Transcript => "transcript".to_string(),
-                    };
-                    self.state
-                        .push_toast(format!("Copied {label}."), ToastLevel::Success);
-                }
-                Err(error) => {
-                    self.state
-                        .push_toast(format!("Clipboard error: {error}"), ToastLevel::Error);
-                }
+        let label = match target {
+            commands::copy::CopyTarget::AssistantResponse(nth) => {
+                format!("assistant response {nth}")
             }
-        }
+            commands::copy::CopyTarget::LastCodeBlock => "code block".to_string(),
+            commands::copy::CopyTarget::Transcript => "transcript".to_string(),
+        };
+        self.deliver_copy(&text, &label);
+    }
 
-        #[cfg(not(feature = "tui"))]
-        {
-            let _ = text;
-            self.state.push_toast(
-                "Clipboard not available without TUI feature.".into(),
-                ToastLevel::Error,
-            );
+    fn open_copy_picker(&mut self) {
+        let items = commands::copy::discover_copy_items(&self.state.messages);
+        if items.is_empty() {
+            self.state
+                .push_toast("No conversation content to copy.".into(), ToastLevel::Info);
+            return;
         }
+        self.copy_picker = CopyPickerState::new(items);
+        self.state.set_mode(InteractionMode::Copy);
+        self.state.set_focus(PanelFocus::Chat);
+    }
+
+    fn deliver_copy(&mut self, text: &str, label: &str) {
+        match clipboard::copy_text(text) {
+            Ok(clipboard::ClipboardDelivery::Native) => self
+                .state
+                .push_toast(format!("Copied {label}."), ToastLevel::Success),
+            Ok(clipboard::ClipboardDelivery::Osc52) => self.state.push_toast(
+                format!("Copied {label} through the terminal."),
+                ToastLevel::Success,
+            ),
+            Ok(clipboard::ClipboardDelivery::FallbackFile(path)) => self.state.push_toast(
+                format!(
+                    "Clipboard unavailable; saved {label} to {}.",
+                    path.display()
+                ),
+                ToastLevel::Warning,
+            ),
+            Err(error) => self
+                .state
+                .push_toast(format!("Copy failed: {error}"), ToastLevel::Error),
+        };
     }
 
     /// `/list` -- list all sessions.
     async fn cmd_list_sessions(&mut self) {
-        use y_core::session::SessionFilter;
-
-        match self
-            .services
-            .session_manager
-            .list_sessions(&SessionFilter::default())
-            .await
-        {
-            Ok(mut nodes) => {
-                nodes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        match self.workspace_sessions().await {
+            Ok(nodes) => {
                 if nodes.is_empty() {
                     self.state
                         .push_toast("No sessions found.".into(), ToastLevel::Info);
@@ -862,14 +1065,7 @@ impl TuiApp {
 
     /// `/switch <target>` -- switch to another session by ID prefix or title.
     async fn cmd_switch_session(&mut self, target: &str) {
-        use y_core::session::SessionFilter;
-
-        let nodes = match self
-            .services
-            .session_manager
-            .list_sessions(&SessionFilter::default())
-            .await
-        {
+        let nodes = match self.workspace_sessions().await {
             Ok(n) => n,
             Err(e) => {
                 self.state
@@ -1044,39 +1240,8 @@ impl TuiApp {
             md
         };
 
-        #[cfg(feature = "tui")]
-        {
-            match arboard::Clipboard::new() {
-                Ok(mut clipboard) => match clipboard.set_text(&content) {
-                    Ok(()) => {
-                        self.state.push_toast(
-                            format!(
-                                "Exported {} messages ({fmt}) to clipboard.",
-                                self.state.messages.len()
-                            ),
-                            ToastLevel::Info,
-                        );
-                    }
-                    Err(e) => {
-                        self.state
-                            .push_toast(format!("Clipboard error: {e}"), ToastLevel::Error);
-                    }
-                },
-                Err(e) => {
-                    self.state
-                        .push_toast(format!("Clipboard error: {e}"), ToastLevel::Error);
-                }
-            }
-        }
-
-        #[cfg(not(feature = "tui"))]
-        {
-            let _ = content;
-            self.state.push_toast(
-                "Clipboard not available without TUI feature.".into(),
-                ToastLevel::Error,
-            );
-        }
+        let label = format!("{fmt} export ({} messages)", self.state.messages.len());
+        self.deliver_copy(&content, &label);
     }
 
     /// `/stats` -- show token/cost statistics.
@@ -1347,18 +1512,8 @@ impl TuiApp {
 
     /// Load session list from storage into state.
     async fn load_sessions(&mut self) {
-        use y_core::session::SessionFilter;
-
-        match self
-            .services
-            .session_manager
-            .list_sessions(&SessionFilter::default())
-            .await
-        {
-            Ok(mut nodes) => {
-                // Sort by updated_at descending (most recent first).
-                nodes.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
+        match self.workspace_sessions().await {
+            Ok(nodes) => {
                 self.state.sessions = nodes
                     .into_iter()
                     .map(|n| SessionListItem {
@@ -1373,6 +1528,16 @@ impl TuiApp {
                 warn!(error = %e, "failed to load session list");
             }
         }
+    }
+
+    async fn workspace_sessions(&self) -> anyhow::Result<Vec<y_core::session::SessionNode>> {
+        let workspace = std::env::current_dir()?;
+        y_service::SessionService::list_resumable_sessions(
+            &self.services.session_manager,
+            &workspace,
+            None,
+        )
+        .await
     }
 
     /// Ensure there is a current session. On fresh startup, we do NOT resume
@@ -1393,6 +1558,8 @@ impl TuiApp {
         {
             Ok(messages) => {
                 // Reset cumulative status bar counters before re-accumulating.
+                self.state.selected_tool = None;
+                self.state.clear_backtrack_selection();
                 self.state.cumulative_input_tokens = 0;
                 self.state.cumulative_output_tokens = 0;
                 self.state.last_cost = None;
@@ -1470,6 +1637,24 @@ fn contains(rect: ratatui::layout::Rect, x: u16, y: u16) -> bool {
     x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
 }
 
+fn backtrack_branch_title(prompt: &str) -> String {
+    let normalized = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return "Backtrack branch".to_string();
+    }
+
+    let mut chars = normalized.chars();
+    let summary: String = chars.by_ref().take(48).collect();
+    if chars.next().is_some() {
+        format!(
+            "Backtrack: {}...",
+            summary.chars().take(45).collect::<String>()
+        )
+    } else {
+        format!("Backtrack: {summary}")
+    }
+}
+
 /// Ensure terminal is restored even if `TuiApp` is dropped without calling
 /// `restore_terminal` (e.g., on panic).
 impl Drop for TuiApp {
@@ -1495,8 +1680,13 @@ fn extract_tool_calls_from_metadata(metadata: &serde_json::Value) -> Vec<state::
     };
     results
         .iter()
-        .filter_map(|entry| {
+        .enumerate()
+        .filter_map(|(index, entry)| {
             let name = entry.get("name")?.as_str()?.to_string();
+            let tool_call_id = entry
+                .get("tool_call_id")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(|| format!("legacy-tool-{index}"), str::to_string);
             let success = entry
                 .get("success")
                 .and_then(serde_json::Value::as_bool)
@@ -1505,13 +1695,42 @@ fn extract_tool_calls_from_metadata(metadata: &serde_json::Value) -> Vec<state::
                 .get("duration_ms")
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
+            let input_preview = metadata_value_as_text(entry.get("arguments"));
+            let result_preview = metadata_value_as_text(entry.get("result_preview"));
+            let url_meta = entry.get("url_meta").map(metadata_value_to_text);
             Some(state::ToolCallInfo {
+                tool_call_id,
                 name,
-                success,
-                duration_ms,
+                status: if success {
+                    state::ToolCallStatus::Succeeded
+                } else {
+                    state::ToolCallStatus::Failed
+                },
+                duration_ms: Some(duration_ms),
+                input_preview,
+                result_preview,
+                agent_name: entry
+                    .get("agent_name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                url_meta,
+                metadata: entry.get("metadata").cloned(),
+                display_mode: state::ToolCallDisplayMode::Preview,
             })
         })
         .collect()
+}
+
+fn metadata_value_as_text(value: Option<&serde_json::Value>) -> String {
+    value.map_or_else(String::new, metadata_value_to_text)
+}
+
+fn metadata_value_to_text(value: &serde_json::Value) -> String {
+    value.as_str().map_or_else(
+        || serde_json::to_string(value).unwrap_or_default(),
+        str::to_string,
+    )
 }
 
 /// Build event-ordered segments from content text and tool calls.
@@ -1529,8 +1748,8 @@ fn build_segments_from_content(
     if !content.is_empty() {
         segments.push(state::StreamSegment::Text(content.to_string()));
     }
-    for tc in tool_calls {
-        segments.push(state::StreamSegment::ToolCall(tc.clone()));
+    for tool_index in 0..tool_calls.len() {
+        segments.push(state::StreamSegment::ToolCall(tool_index));
     }
     segments
 }
@@ -1591,5 +1810,70 @@ fn restore_status_from_metadata(metadata: &serde_json::Value, state: &mut state:
         if cost > 0.0 {
             state.last_cost = Some(state.last_cost.unwrap_or(0.0) + cost);
         }
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_tool_calls_from_metadata_preserves_rich_fields() {
+        let metadata = serde_json::json!({
+            "tool_results": [{
+                "tool_call_id": "call-edit-1",
+                "name": "FileEdit",
+                "arguments": {"path": "src/main.rs", "old": "a", "new": "b"},
+                "success": true,
+                "duration_ms": 17,
+                "result_preview": "updated src/main.rs",
+                "url_meta": {"url": "https://example.com"},
+                "metadata": {"changed_lines": 1}
+            }]
+        });
+
+        let calls = extract_tool_calls_from_metadata(&metadata);
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool_call_id, "call-edit-1");
+        assert_eq!(calls[0].status, state::ToolCallStatus::Succeeded);
+        assert_eq!(calls[0].duration_ms, Some(17));
+        assert!(calls[0].input_preview.contains("src/main.rs"));
+        assert_eq!(calls[0].result_preview, "updated src/main.rs");
+        assert!(calls[0]
+            .url_meta
+            .as_deref()
+            .is_some_and(|value| value.contains("url")));
+        assert_eq!(
+            calls[0].metadata,
+            Some(serde_json::json!({"changed_lines": 1}))
+        );
+    }
+
+    #[test]
+    fn test_extract_legacy_tool_metadata_assigns_presentation_fallback_id() {
+        let metadata = serde_json::json!({
+            "tool_results": [{
+                "name": "FileRead",
+                "success": true,
+                "duration_ms": 1,
+                "result_preview": "contents"
+            }]
+        });
+
+        let calls = extract_tool_calls_from_metadata(&metadata);
+
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].tool_call_id.starts_with("legacy-tool-"));
+    }
+
+    #[test]
+    fn test_backtrack_branch_title_is_compact() {
+        assert_eq!(
+            backtrack_branch_title("  fix\nthis bug "),
+            "Backtrack: fix this bug"
+        );
+        assert!(backtrack_branch_title(&"x".repeat(80)).chars().count() <= 62);
+        assert_eq!(backtrack_branch_title("  "), "Backtrack branch");
     }
 }

@@ -13,7 +13,7 @@ use ratatui::Frame;
 pub fn render(frame: &mut Frame, area: Rect) {
     // Calculate popup size.
     let popup_width = area.width.clamp(30, 60);
-    let popup_height = area.height.clamp(10, 30);
+    let popup_height = area.height.clamp(10, 42);
 
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -74,7 +74,7 @@ fn help_lines() -> Vec<Line<'static>> {
         keybinding_line("  Ctrl+G    ", "Scroll to bottom", key_style, desc_style),
         keybinding_line(
             "  Esc       ",
-            "Cancel active response / normal",
+            "Cancel response / select prompt history",
             key_style,
             desc_style,
         ),
@@ -89,14 +89,37 @@ fn help_lines() -> Vec<Line<'static>> {
         ),
         keybinding_line("  Home/g    ", "Scroll to top", key_style, desc_style),
         keybinding_line("  End/G     ", "Scroll to bottom", key_style, desc_style),
+        keybinding_line(
+            "  [ / ]     ",
+            "Select previous / next tool",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
+            "  Enter / c ",
+            "Cycle details / Copy selected tool",
+            key_style,
+            desc_style,
+        ),
         keybinding_line("  ?         ", "Show help", key_style, desc_style),
         keybinding_line("  i         ", "Return to input", key_style, desc_style),
         keybinding_line(
             "  Esc       ",
-            "Cancel streaming / input",
+            "Cancel response / select prompt history",
             key_style,
             desc_style,
         ),
+        Line::from(""),
+        Line::from(Span::styled("  Prompt Backtrack", header_style)),
+        keybinding_line("  Esc/Up   ", "Select older prompt", key_style, desc_style),
+        keybinding_line("  Down     ", "Select newer prompt", key_style, desc_style),
+        keybinding_line(
+            "  Enter     ",
+            "Branch before prompt and edit it",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line("  q / i    ", "Close selector", key_style, desc_style),
         Line::from(""),
         Line::from(Span::styled("  Command Mode", header_style)),
         keybinding_line("  Enter     ", "Execute command", key_style, desc_style),
@@ -168,5 +191,9 @@ mod tests {
         assert!(text.contains("Ctrl+Q"));
         assert!(text.contains("Enter"));
         assert!(text.contains("Tab"));
+        assert!(text.contains("[ / ]"));
+        assert!(text.contains("Copy selected tool"));
+        assert!(text.contains("Prompt Backtrack"));
+        assert!(text.contains("Branch before prompt"));
     }
 }

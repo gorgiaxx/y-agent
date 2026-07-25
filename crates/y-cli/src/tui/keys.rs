@@ -43,10 +43,26 @@ pub enum KeyAction {
     EnterCommandMode,
     /// Return to normal mode.
     ReturnToNormal,
+    /// Enter prompt backtrack selection from the current session.
+    EnterBacktrack,
+    /// Select the previous user prompt in backtrack mode.
+    BacktrackPrevious,
+    /// Select the next user prompt in backtrack mode.
+    BacktrackNext,
+    /// Branch before the selected prompt and restore it to the composer.
+    ConfirmBacktrack,
     /// Navigate to previous input history entry.
     HistoryPrev,
     /// Navigate to next input history entry.
     HistoryNext,
+    /// Select the next tool card in transcript order.
+    SelectNextTool,
+    /// Select the previous tool card in transcript order.
+    SelectPreviousTool,
+    /// Cycle the selected tool card detail level.
+    ToggleSelectedTool,
+    /// Copy the selected tool card.
+    CopySelectedTool,
 }
 
 /// Dispatch a key event against the current state.
@@ -65,6 +81,7 @@ pub fn dispatch(key: KeyEvent, state: &AppState) -> KeyAction {
         InteractionMode::Search => dispatch_search(key),
         InteractionMode::Select => dispatch_select(key),
         InteractionMode::Help => dispatch_help(key),
+        InteractionMode::Copy | InteractionMode::Resume => dispatch_picker(key),
     }
 }
 
@@ -116,14 +133,14 @@ fn dispatch_input_normal(key: KeyEvent, state: &AppState) -> KeyAction {
         }
         // ':' prefix enters command mode.
         KeyCode::Char(':') => KeyAction::EnterCommandMode,
-        // Escape cancels streaming if active, otherwise returns to normal.
+        // Escape cancels streaming if active, otherwise opens prompt backtracking.
         KeyCode::Esc => {
             if state.is_cancelling {
                 KeyAction::Consumed
             } else if state.is_streaming {
                 KeyAction::CancelStreaming
             } else {
-                KeyAction::ReturnToNormal
+                KeyAction::EnterBacktrack
             }
         }
         // Everything else passes through to textarea.
@@ -134,6 +151,10 @@ fn dispatch_input_normal(key: KeyEvent, state: &AppState) -> KeyAction {
 /// Normal mode, Chat panel focused.
 fn dispatch_chat_normal(key: KeyEvent, state: &AppState) -> KeyAction {
     match key.code {
+        KeyCode::Char(']') => KeyAction::SelectNextTool,
+        KeyCode::Char('[') => KeyAction::SelectPreviousTool,
+        KeyCode::Enter => KeyAction::ToggleSelectedTool,
+        KeyCode::Char('c') => KeyAction::CopySelectedTool,
         // Line scroll.
         KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
         KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
@@ -147,14 +168,14 @@ fn dispatch_chat_normal(key: KeyEvent, state: &AppState) -> KeyAction {
         KeyCode::Tab => KeyAction::CycleFocus,
         // '?' shows help.
         KeyCode::Char('?') => KeyAction::ShowHelp,
-        // Escape cancels streaming if active, otherwise returns to input.
+        // Escape cancels streaming if active, otherwise opens prompt backtracking.
         KeyCode::Esc => {
             if state.is_cancelling {
                 KeyAction::Consumed
             } else if state.is_streaming {
                 KeyAction::CancelStreaming
             } else {
-                KeyAction::ReturnToNormal
+                KeyAction::EnterBacktrack
             }
         }
         // 'i' returns focus to input.
@@ -199,10 +220,12 @@ fn dispatch_search(key: KeyEvent) -> KeyAction {
 
 fn dispatch_select(key: KeyEvent) -> KeyAction {
     match key.code {
-        KeyCode::Esc => KeyAction::ReturnToNormal,
-        KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
-        KeyCode::Enter => KeyAction::Submit,
+        KeyCode::Esc | KeyCode::Up | KeyCode::Left | KeyCode::Char('k') => {
+            KeyAction::BacktrackPrevious
+        }
+        KeyCode::Down | KeyCode::Right | KeyCode::Char('j') => KeyAction::BacktrackNext,
+        KeyCode::Enter => KeyAction::ConfirmBacktrack,
+        KeyCode::Char('q' | 'i') => KeyAction::ReturnToNormal,
         _ => KeyAction::Unhandled,
     }
 }
@@ -215,6 +238,18 @@ fn dispatch_help(key: KeyEvent) -> KeyAction {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => KeyAction::ReturnToNormal,
         _ => KeyAction::Consumed,
+    }
+}
+
+fn dispatch_picker(key: KeyEvent) -> KeyAction {
+    match key.code {
+        KeyCode::Esc => KeyAction::ReturnToNormal,
+        KeyCode::Enter => KeyAction::Submit,
+        KeyCode::Up => KeyAction::ScrollUp,
+        KeyCode::Down | KeyCode::Tab => KeyAction::ScrollDown,
+        KeyCode::PageUp => KeyAction::PageScrollUp,
+        KeyCode::PageDown => KeyAction::PageScrollDown,
+        _ => KeyAction::InputPassthrough,
     }
 }
 
@@ -295,6 +330,16 @@ mod tests {
         assert_eq!(action, KeyAction::Consumed);
     }
 
+    #[test]
+    fn test_idle_escape_enters_backtrack_selection() {
+        let state = AppState::default();
+
+        assert_eq!(
+            dispatch(key(KeyCode::Esc), &state),
+            KeyAction::EnterBacktrack
+        );
+    }
+
     // T-TUI-03-05: j/k scroll in chat-focused normal mode.
     #[test]
     fn test_jk_scroll_chat() {
@@ -361,7 +406,48 @@ mod tests {
     fn test_select_mode_scroll() {
         let mut state = AppState::default();
         state.mode = InteractionMode::Select;
-        assert_eq!(dispatch(key(KeyCode::Up), &state), KeyAction::ScrollUp);
-        assert_eq!(dispatch(key(KeyCode::Down), &state), KeyAction::ScrollDown);
+        assert_eq!(
+            dispatch(key(KeyCode::Esc), &state),
+            KeyAction::BacktrackPrevious
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Up), &state),
+            KeyAction::BacktrackPrevious
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Down), &state),
+            KeyAction::BacktrackNext
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Enter), &state),
+            KeyAction::ConfirmBacktrack
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Char('q')), &state),
+            KeyAction::ReturnToNormal
+        );
+    }
+
+    #[test]
+    fn test_chat_focus_exposes_tool_navigation_actions() {
+        let mut state = AppState::default();
+        state.focus = PanelFocus::Chat;
+
+        assert_eq!(
+            dispatch(key(KeyCode::Char(']')), &state),
+            KeyAction::SelectNextTool
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Char('[')), &state),
+            KeyAction::SelectPreviousTool
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Enter), &state),
+            KeyAction::ToggleSelectedTool
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Char('c')), &state),
+            KeyAction::CopySelectedTool
+        );
     }
 }
