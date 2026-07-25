@@ -61,6 +61,8 @@ pub enum AsyncCommand {
     ModelCommand(Option<String>),
     /// `/agent [subcommand]` -- agent management.
     ShowAgents,
+    /// `/prompt [template-id|default]` -- select or apply a session prompt template.
+    PromptTemplate(Option<String>),
 }
 
 /// Parse and execute a command string.
@@ -106,6 +108,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             state.scroll_offset = 0;
             state.current_session_id = None;
             state.user_message_count = 0;
+            state.prompt_template_status = crate::tui::state::PromptTemplateStatus::Default;
             CommandResult::NewSession
         }
 
@@ -118,10 +121,11 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
 
         "status" => {
             let msg = format!(
-                "Messages: {} | Streaming: {} | Turn mode: {} | UI mode: {:?} | Focus: {:?}",
+                "Messages: {} | Streaming: {} | Turn mode: {} | {} | UI mode: {:?} | Focus: {:?}",
                 state.messages.len(),
                 state.is_streaming,
                 state.turn_mode.label(),
+                state.prompt_template_status.label(),
                 state.mode,
                 state.focus,
             );
@@ -228,6 +232,10 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
         }
 
         "agent" => CommandResult::Async(AsyncCommand::ShowAgents),
+
+        "prompt" => CommandResult::Async(AsyncCommand::PromptTemplate(
+            (!args.is_empty()).then(|| args.to_string()),
+        )),
 
         "shortcuts" => {
             let text = generate_shortcuts_text();
@@ -354,6 +362,8 @@ fn generate_shortcuts_text() -> String {
     Scroll wheel              Scroll chat history
     Shift + drag              Native text selection (terminal)
     /resume                   Pick a recent session
+    /prompt                   Select a session prompt template
+    /prompt default           Return to the built-in prompt
     /mode auto                Use automatic orchestration for later messages
     /plan <prompt>            Switch to plan mode and submit immediately
     /copy                     Copy latest assistant response
@@ -600,6 +610,20 @@ mod tests {
             execute("resume recent work", &mut state),
             CommandResult::Async(AsyncCommand::ResumeSession(Some(ref target)))
                 if target == "recent work"
+        ));
+    }
+
+    #[test]
+    fn test_prompt_supports_picker_and_direct_target() {
+        let mut state = AppState::default();
+        assert!(matches!(
+            execute("prompt", &mut state),
+            CommandResult::Async(AsyncCommand::PromptTemplate(None))
+        ));
+        assert!(matches!(
+            execute("prompt review", &mut state),
+            CommandResult::Async(AsyncCommand::PromptTemplate(Some(ref target)))
+                if target == "review"
         ));
     }
 

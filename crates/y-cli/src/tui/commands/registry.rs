@@ -228,6 +228,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             args: "[provider-id]",
             category: CommandCategory::Model,
         },
+        CommandInfo {
+            name: "prompt",
+            alias: Some("pr"),
+            description: "Select the session prompt template",
+            args: "[template-id|default]",
+            category: CommandCategory::General,
+        },
         // Debug commands
         CommandInfo {
             name: "debug",
@@ -380,6 +387,10 @@ mod tests {
             reg.find("loop").is_some(),
             "loop command should be discoverable"
         );
+        assert!(
+            reg.find("prompt").is_some(),
+            "prompt command should be discoverable"
+        );
     }
 
     #[test]
@@ -394,6 +405,9 @@ mod tests {
 
         let copy = reg.find("copy").expect("copy command");
         assert_eq!(copy.args, "[N|code|transcript]");
+
+        let prompt = reg.find("prompt").expect("prompt command");
+        assert_eq!(prompt.args, "[template-id|default]");
     }
 
     #[test]
