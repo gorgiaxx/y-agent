@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use y_core::types::SessionId;
+use y_session::{SessionManager, SessionManagerError};
 
 const SESSION_PROMPT_CONFIG_PREFIX: &str = "__Y_AGENT_SESSION_PROMPT_CONFIG_V1__\n";
 const PROMPT_TEMPLATES_FILE: &str = "prompt_templates.toml";
@@ -45,6 +47,53 @@ pub enum PromptTemplateError {
 struct PromptTemplateFile {
     #[serde(default)]
     templates: Vec<UserPromptTemplate>,
+}
+
+/// Service-owned per-session prompt-template operations shared by all clients.
+pub struct PromptTemplateService;
+
+impl PromptTemplateService {
+    /// Read and decode a session's prompt composition configuration.
+    pub async fn get_session_config(
+        manager: &SessionManager,
+        session_id: &SessionId,
+    ) -> Result<SessionPromptConfig, SessionManagerError> {
+        let stored = manager.get_custom_system_prompt(session_id).await?;
+        Ok(decode_session_prompt_config(stored))
+    }
+
+    /// Persist a complete session prompt composition configuration.
+    pub async fn set_session_config(
+        manager: &SessionManager,
+        session_id: &SessionId,
+        config: &SessionPromptConfig,
+    ) -> Result<(), SessionManagerError> {
+        manager
+            .set_custom_system_prompt(session_id, encode_session_prompt_config(config))
+            .await
+    }
+
+    /// Apply a user prompt template to one session.
+    pub async fn apply_template(
+        manager: &SessionManager,
+        session_id: &SessionId,
+        template: &UserPromptTemplate,
+    ) -> Result<(), SessionManagerError> {
+        let config = SessionPromptConfig {
+            system_prompt: Some(template.system_prompt.clone()),
+            prompt_section_ids: template.prompt_section_ids.clone(),
+            template_id: Some(template.id.clone()),
+        };
+        Self::set_session_config(manager, session_id, &config).await
+    }
+
+    /// Clear a session prompt configuration and return to the built-in default.
+    pub async fn clear_session_config(
+        manager: &SessionManager,
+        session_id: &SessionId,
+    ) -> Result<(), SessionManagerError> {
+        Self::set_session_config(manager, session_id, &SessionPromptConfig::default()).await
+    }
 }
 
 pub fn decode_session_prompt_config(stored: Option<String>) -> SessionPromptConfig {
@@ -203,7 +252,30 @@ fn unique_non_empty(values: Vec<String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use y_core::session::{CreateSessionOptions, SessionType};
+    use y_session::{SessionConfig, SessionManager};
+
     use super::*;
+
+    async fn setup_manager() -> (SessionManager, tempfile::TempDir) {
+        let storage = y_storage::StorageConfig::in_memory();
+        let pool = y_storage::create_pool(&storage).await.unwrap();
+        y_storage::migration::run_embedded_migrations(&pool)
+            .await
+            .unwrap();
+        let transcript_dir = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(
+            Arc::new(y_storage::SqliteSessionStore::new(pool)),
+            Arc::new(y_storage::JsonlTranscriptStore::new(transcript_dir.path())),
+            Arc::new(y_storage::JsonlDisplayTranscriptStore::new(
+                transcript_dir.path(),
+            )),
+            SessionConfig::default(),
+        );
+        (manager, transcript_dir)
+    }
 
     #[test]
     fn test_session_prompt_config_roundtrips_sections_and_template_id() {
@@ -265,5 +337,46 @@ mod tests {
         assert!(load_user_prompt_templates(dir.path())
             .expect("reload templates")
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_prompt_template_service_applies_reads_and_clears_session_config() {
+        let (manager, _transcript_dir) = setup_manager().await;
+        let session = manager
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+        let template = UserPromptTemplate {
+            id: " review ".into(),
+            name: " Reviewer ".into(),
+            description: None,
+            system_prompt: " Review carefully. ".into(),
+            prompt_section_ids: vec!["core.datetime".into(), "core.datetime".into()],
+        };
+
+        PromptTemplateService::apply_template(&manager, &session.id, &template)
+            .await
+            .unwrap();
+        let config = PromptTemplateService::get_session_config(&manager, &session.id)
+            .await
+            .unwrap();
+        assert_eq!(config.system_prompt.as_deref(), Some("Review carefully."));
+        assert_eq!(config.prompt_section_ids, vec!["core.datetime"]);
+        assert_eq!(config.template_id.as_deref(), Some("review"));
+
+        PromptTemplateService::clear_session_config(&manager, &session.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            PromptTemplateService::get_session_config(&manager, &session.id)
+                .await
+                .unwrap(),
+            SessionPromptConfig::default()
+        );
     }
 }

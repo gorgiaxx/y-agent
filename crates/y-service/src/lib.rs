@@ -121,7 +121,7 @@ pub use observability::{
 pub use prompt_templates::{
     decode_session_prompt_config, delete_user_prompt_template, encode_session_prompt_config,
     load_user_prompt_templates, save_user_prompt_template, session_prompt_config_has_content,
-    SessionPromptConfig, UserPromptTemplate,
+    PromptTemplateService, SessionPromptConfig, UserPromptTemplate,
 };
 pub use rewind::{FileHistoryManagers, RewindError, RewindPointInfo, RewindResult, RewindService};
 pub use scheduler_service::{
