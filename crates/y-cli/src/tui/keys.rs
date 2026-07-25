@@ -81,7 +81,9 @@ pub fn dispatch(key: KeyEvent, state: &AppState) -> KeyAction {
         InteractionMode::Search => dispatch_search(key),
         InteractionMode::Select => dispatch_select(key),
         InteractionMode::Help => dispatch_help(key),
-        InteractionMode::Copy | InteractionMode::Resume => dispatch_picker(key),
+        InteractionMode::Copy | InteractionMode::Resume | InteractionMode::Prompt => {
+            dispatch_picker(key)
+        }
     }
 }
 
@@ -448,6 +450,19 @@ mod tests {
         assert_eq!(
             dispatch(key(KeyCode::Char('c')), &state),
             KeyAction::CopySelectedTool
+        );
+    }
+
+    #[test]
+    fn test_prompt_picker_uses_shared_picker_keys() {
+        let mut state = AppState::default();
+        state.mode = InteractionMode::Prompt;
+
+        assert_eq!(dispatch(key(KeyCode::Enter), &state), KeyAction::Submit);
+        assert_eq!(dispatch(key(KeyCode::Up), &state), KeyAction::ScrollUp);
+        assert_eq!(
+            dispatch(key(KeyCode::Esc), &state),
+            KeyAction::ReturnToNormal
         );
     }
 }
