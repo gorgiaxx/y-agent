@@ -51,6 +51,8 @@ pub enum InteractionMode {
     Copy,
     /// Full-screen session resume selector.
     Resume,
+    /// Full-screen session prompt-template selector.
+    Prompt,
 }
 
 /// Service-owned orchestration mode selected by the TUI operator.
@@ -91,6 +93,37 @@ impl TurnMode {
             Self::Auto => Some("auto"),
             Self::Plan => Some("plan"),
             Self::Loop => Some("loop"),
+        }
+    }
+}
+
+/// Prompt-template state currently persisted for the active session.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum PromptTemplateStatus {
+    /// Built-in prompt composition with no session override.
+    #[default]
+    Default,
+    /// A named user prompt template is active.
+    Template { id: String, name: String },
+    /// A custom session prompt exists without a template identity.
+    Custom,
+}
+
+impl PromptTemplateStatus {
+    /// Compact label for the TUI status bar.
+    pub fn label(&self) -> String {
+        match self {
+            Self::Default => "prompt:default".to_string(),
+            Self::Template { name, .. } => format!("prompt:{name}"),
+            Self::Custom => "prompt:custom".to_string(),
+        }
+    }
+
+    /// Active template ID, if the prompt came from a named template.
+    pub fn template_id(&self) -> Option<&str> {
+        match self {
+            Self::Template { id, .. } => Some(id),
+            Self::Default | Self::Custom => None,
         }
     }
 }
@@ -328,6 +361,8 @@ pub struct AppState {
     pub status_tokens: String,
     /// Orchestration mode used for subsequent turns in this session.
     pub turn_mode: TurnMode,
+    /// Active per-session prompt-template state.
+    pub prompt_template_status: PromptTemplateStatus,
     /// Active toast notifications (most recent at back).
     pub toasts: VecDeque<Toast>,
     /// Monotonic counter for unique toast IDs.
@@ -383,6 +418,7 @@ impl Default for AppState {
             status_model: String::new(),
             status_tokens: String::new(),
             turn_mode: TurnMode::Fast,
+            prompt_template_status: PromptTemplateStatus::Default,
             toasts: VecDeque::new(),
             toast_counter: 0,
             selection: TextSelection::default(),
@@ -420,10 +456,10 @@ impl AppState {
     /// Set the interaction mode.
     ///
     /// Enforces the design state machine:
-    /// - `Normal` → `Command` | `Search` | `Select`
+    /// - `Normal` → `Command` | `Search` | `Select` | picker modes
     /// - `Command` → `Normal`
     /// - `Search` → `Normal`
-    /// - `Select` → `Normal`
+    /// - `Select` and picker modes → `Normal`
     ///
     /// Returns `true` if the transition was accepted.
     pub fn set_mode(&mut self, mode: InteractionMode) -> bool {
@@ -438,6 +474,7 @@ impl AppState {
                     | InteractionMode::Help
                     | InteractionMode::Copy
                     | InteractionMode::Resume
+                    | InteractionMode::Prompt
                     | InteractionMode::Normal
             ) | (
                 InteractionMode::Command
@@ -445,11 +482,12 @@ impl AppState {
                     | InteractionMode::Select
                     | InteractionMode::Help
                     | InteractionMode::Copy
-                    | InteractionMode::Resume,
+                    | InteractionMode::Resume
+                    | InteractionMode::Prompt,
                 InteractionMode::Normal
             ) | (
                 InteractionMode::Command,
-                InteractionMode::Copy | InteractionMode::Resume
+                InteractionMode::Copy | InteractionMode::Resume | InteractionMode::Prompt
             )
         );
 
@@ -754,6 +792,20 @@ mod tests {
         assert!(!state.is_streaming);
         assert!(!state.is_cancelling);
         assert_eq!(state.turn_mode, TurnMode::Fast);
+        assert_eq!(state.prompt_template_status, PromptTemplateStatus::Default);
+        assert_eq!(state.prompt_template_status.label(), "prompt:default");
+    }
+
+    #[test]
+    fn test_prompt_template_status_labels_template_and_custom_configs() {
+        let template = PromptTemplateStatus::Template {
+            id: "daily-driver".into(),
+            name: "Daily Driver".into(),
+        };
+        assert_eq!(template.label(), "prompt:Daily Driver");
+        assert_eq!(template.template_id(), Some("daily-driver"));
+        assert_eq!(PromptTemplateStatus::Custom.label(), "prompt:custom");
+        assert_eq!(PromptTemplateStatus::Default.template_id(), None);
     }
 
     // T-TUI-01-02: set_focus() transitions update focus field.
@@ -794,6 +846,12 @@ mod tests {
         assert_eq!(state.mode, InteractionMode::Select);
 
         // Select → Normal
+        assert!(state.set_mode(InteractionMode::Normal));
+        assert_eq!(state.mode, InteractionMode::Normal);
+
+        // Normal → Prompt picker → Normal
+        assert!(state.set_mode(InteractionMode::Prompt));
+        assert_eq!(state.mode, InteractionMode::Prompt);
         assert!(state.set_mode(InteractionMode::Normal));
         assert_eq!(state.mode, InteractionMode::Normal);
     }
