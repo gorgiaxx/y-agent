@@ -51,10 +51,11 @@ use keys::KeyAction;
 use layout::LayoutChunks;
 use overlays::command_palette::CommandPaletteState;
 use overlays::copy_picker::CopyPickerState;
+use overlays::prompt_picker::{PromptPickerSelection, PromptPickerState};
 use overlays::session_picker::SessionPickerState;
 use state::{
-    AppState, ChatMessage, InteractionMode, MessageRole, PanelFocus, SessionListItem, Toast,
-    ToastLevel,
+    AppState, ChatMessage, InteractionMode, MessageRole, PanelFocus, PromptTemplateStatus,
+    SessionListItem, Toast, ToastLevel,
 };
 use y_core::provider::ProviderPool as _;
 
@@ -84,6 +85,8 @@ pub struct TuiApp {
     copy_picker: CopyPickerState,
     /// Full-screen session resume selector state.
     session_picker: SessionPickerState,
+    /// Full-screen session prompt-template selector state.
+    prompt_picker: PromptPickerState,
     /// Application services (LLM, session, etc.).
     services: Arc<AppServices>,
     /// Active service turn, including progress events and cancellation.
@@ -118,6 +121,7 @@ impl TuiApp {
         let palette = CommandPaletteState::new();
         let copy_picker = CopyPickerState::default();
         let session_picker = SessionPickerState::default();
+        let prompt_picker = PromptPickerState::default();
 
         Ok(Self {
             terminal,
@@ -127,6 +131,7 @@ impl TuiApp {
             palette,
             copy_picker,
             session_picker,
+            prompt_picker,
             services,
             active_chat: None,
             toast_rx,
@@ -233,6 +238,13 @@ impl TuiApp {
                     self.deliver_copy(&item.content, &item.label);
                     self.state.set_mode(InteractionMode::Normal);
                     self.state.set_focus(PanelFocus::Input);
+                } else if self.state.mode == InteractionMode::Prompt {
+                    let Some(selection) = self.prompt_picker.selected_choice() else {
+                        self.state
+                            .push_toast("No prompt template selected.".into(), ToastLevel::Info);
+                        return false;
+                    };
+                    self.apply_prompt_selection(selection).await;
                 } else if self.state.mode == InteractionMode::Command {
                     if self.palette.in_arg_mode() {
                         let cmd = self.palette.arg_command.clone().unwrap_or_default();
@@ -319,40 +331,7 @@ impl TuiApp {
                 }
             }
             KeyAction::InputPassthrough => {
-                if self.state.mode == InteractionMode::Resume {
-                    if let crossterm::event::KeyCode::Char(ch) = key.code {
-                        self.session_picker.push_char(ch);
-                    } else if key.code == crossterm::event::KeyCode::Backspace {
-                        self.session_picker.pop_char();
-                    }
-                } else if self.state.mode == InteractionMode::Copy {
-                    if let crossterm::event::KeyCode::Char(ch) = key.code {
-                        self.copy_picker.push_char(ch);
-                    } else if key.code == crossterm::event::KeyCode::Backspace {
-                        self.copy_picker.pop_char();
-                    }
-                } else if self.state.mode == InteractionMode::Command {
-                    if let crossterm::event::KeyCode::Char(ch) = key.code {
-                        self.palette.push_char(ch);
-                    } else if key.code == crossterm::event::KeyCode::Backspace {
-                        if self.palette.in_arg_mode() && self.palette.input.is_empty() {
-                            self.palette = CommandPaletteState::new();
-                        } else {
-                            self.palette.pop_char();
-                        }
-                    }
-                } else if key.code == crossterm::event::KeyCode::Char('/')
-                    && self
-                        .textarea
-                        .lines()
-                        .iter()
-                        .all(std::string::String::is_empty)
-                {
-                    self.state.set_mode(InteractionMode::Command);
-                    self.palette = CommandPaletteState::new();
-                } else {
-                    self.textarea.input(key);
-                }
+                self.handle_input_passthrough(key);
             }
             KeyAction::CycleFocus => {
                 self.state.cycle_focus_forward();
@@ -362,6 +341,8 @@ impl TuiApp {
                     self.session_picker.select_prev();
                 } else if self.state.mode == InteractionMode::Copy {
                     self.copy_picker.select_prev();
+                } else if self.state.mode == InteractionMode::Prompt {
+                    self.prompt_picker.select_prev();
                 } else if self.state.mode == InteractionMode::Command {
                     self.palette.select_prev();
                 } else {
@@ -373,6 +354,8 @@ impl TuiApp {
                     self.session_picker.select_next();
                 } else if self.state.mode == InteractionMode::Copy {
                     self.copy_picker.select_next();
+                } else if self.state.mode == InteractionMode::Prompt {
+                    self.prompt_picker.select_next();
                 } else if self.state.mode == InteractionMode::Command {
                     self.palette.select_next();
                 } else {
@@ -388,6 +371,10 @@ impl TuiApp {
                     for _ in 0..10 {
                         self.copy_picker.select_prev();
                     }
+                } else if self.state.mode == InteractionMode::Prompt {
+                    for _ in 0..10 {
+                        self.prompt_picker.select_prev();
+                    }
                 } else {
                     let page = self.state.page_height.max(1);
                     self.state.scroll_offset = self.state.scroll_offset.saturating_add(page);
@@ -401,6 +388,10 @@ impl TuiApp {
                 } else if self.state.mode == InteractionMode::Copy {
                     for _ in 0..10 {
                         self.copy_picker.select_next();
+                    }
+                } else if self.state.mode == InteractionMode::Prompt {
+                    for _ in 0..10 {
+                        self.prompt_picker.select_next();
                     }
                 } else {
                     let page = self.state.page_height.max(1);
@@ -440,6 +431,7 @@ impl TuiApp {
                 self.palette = CommandPaletteState::new();
                 self.copy_picker = CopyPickerState::default();
                 self.session_picker = SessionPickerState::default();
+                self.prompt_picker = PromptPickerState::default();
             }
             KeyAction::EnterBacktrack => {
                 self.open_backtrack_picker();
@@ -514,6 +506,49 @@ impl TuiApp {
         false
     }
 
+    fn handle_input_passthrough(&mut self, key: crossterm::event::KeyEvent) {
+        if self.state.mode == InteractionMode::Resume {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.session_picker.push_char(character);
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                self.session_picker.pop_char();
+            }
+        } else if self.state.mode == InteractionMode::Copy {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.copy_picker.push_char(character);
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                self.copy_picker.pop_char();
+            }
+        } else if self.state.mode == InteractionMode::Prompt {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.prompt_picker.push_char(character);
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                self.prompt_picker.pop_char();
+            }
+        } else if self.state.mode == InteractionMode::Command {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.palette.push_char(character);
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                if self.palette.in_arg_mode() && self.palette.input.is_empty() {
+                    self.palette = CommandPaletteState::new();
+                } else {
+                    self.palette.pop_char();
+                }
+            }
+        } else if key.code == crossterm::event::KeyCode::Char('/')
+            && self
+                .textarea
+                .lines()
+                .iter()
+                .all(std::string::String::is_empty)
+        {
+            self.state.set_mode(InteractionMode::Command);
+            self.palette = CommandPaletteState::new();
+        } else {
+            self.textarea.input(key);
+        }
+    }
+
     fn handle_tool_action(&mut self, action: KeyAction) {
         match action {
             KeyAction::SelectNextTool => {
@@ -560,7 +595,10 @@ impl TuiApp {
         use crossterm::event::{MouseButton, MouseEventKind};
         if matches!(
             self.state.mode,
-            InteractionMode::Copy | InteractionMode::Resume | InteractionMode::Select
+            InteractionMode::Copy
+                | InteractionMode::Resume
+                | InteractionMode::Select
+                | InteractionMode::Prompt
         ) {
             return;
         }
@@ -729,6 +767,10 @@ impl TuiApp {
                 overlays::backtrack_picker::render(frame, area, state, &state.theme);
             }
 
+            if state.mode == InteractionMode::Prompt {
+                overlays::prompt_picker::render(frame, area, &self.prompt_picker, &state.theme);
+            }
+
             // Render help overlay if in Help mode.
             if state.mode == InteractionMode::Help {
                 overlays::help::render(frame, area);
@@ -787,6 +829,13 @@ impl TuiApp {
             }
             "copy" => {
                 self.open_copy_picker();
+                true
+            }
+            "prompt" => {
+                if !self.open_prompt_picker() {
+                    self.state.set_mode(InteractionMode::Normal);
+                    self.state.set_focus(PanelFocus::Input);
+                }
                 true
             }
             _ => false,
@@ -869,6 +918,12 @@ impl TuiApp {
                 self.cmd_model(provider_id.clone()).await;
             }
             AsyncCommand::ShowAgents => self.cmd_show_agents().await,
+            AsyncCommand::PromptTemplate(target) => match target {
+                Some(target) => self.apply_prompt_target(&target).await,
+                None => {
+                    self.open_prompt_picker();
+                }
+            },
         }
     }
 
@@ -892,6 +947,153 @@ impl TuiApp {
         self.state.set_mode(InteractionMode::Resume);
         self.state.set_focus(PanelFocus::Chat);
         true
+    }
+
+    fn open_prompt_picker(&mut self) -> bool {
+        if self.state.is_streaming {
+            self.state.push_toast(
+                "Wait for the active response before changing the prompt template.".into(),
+                ToastLevel::Warning,
+            );
+            return false;
+        }
+
+        let templates = match load_prompt_templates() {
+            Ok(templates) => templates,
+            Err(error) => {
+                self.state.push_toast(error, ToastLevel::Error);
+                return false;
+            }
+        };
+        self.prompt_picker =
+            PromptPickerState::new(templates, self.state.prompt_template_status.template_id());
+        self.state.set_mode(InteractionMode::Prompt);
+        self.state.set_focus(PanelFocus::Chat);
+        true
+    }
+
+    async fn apply_prompt_target(&mut self, target: &str) {
+        if matches!(
+            target.trim().to_ascii_lowercase().as_str(),
+            "default" | "clear"
+        ) {
+            self.apply_prompt_selection(PromptPickerSelection::Default)
+                .await;
+            return;
+        }
+
+        let templates = match load_prompt_templates() {
+            Ok(templates) => templates,
+            Err(error) => {
+                self.state.push_toast(error, ToastLevel::Error);
+                return;
+            }
+        };
+        let target_lower = target.trim().to_ascii_lowercase();
+        let Some(template) = templates.into_iter().find(|template| {
+            template.id.to_ascii_lowercase() == target_lower
+                || template.name.to_ascii_lowercase() == target_lower
+        }) else {
+            self.state.push_toast(
+                format!("No prompt template matching '{target}'."),
+                ToastLevel::Error,
+            );
+            return;
+        };
+        self.apply_prompt_selection(PromptPickerSelection::Template(template))
+            .await;
+    }
+
+    async fn apply_prompt_selection(&mut self, selection: PromptPickerSelection) {
+        if self.state.is_streaming {
+            self.state.push_toast(
+                "Wait for the active response before changing the prompt template.".into(),
+                ToastLevel::Warning,
+            );
+            return;
+        }
+
+        match selection {
+            PromptPickerSelection::Default => {
+                if let Some(current_id) = self.state.current_session_id.clone() {
+                    let session_id = y_core::types::SessionId::from_string(current_id);
+                    if let Err(error) = y_service::PromptTemplateService::clear_session_config(
+                        &self.services.session_manager,
+                        &session_id,
+                    )
+                    .await
+                    {
+                        self.state.push_toast(
+                            format!("Failed to clear prompt template: {error}"),
+                            ToastLevel::Error,
+                        );
+                        return;
+                    }
+                }
+                self.state.prompt_template_status = PromptTemplateStatus::Default;
+                self.finish_prompt_selection("Using the default prompt.");
+            }
+            PromptPickerSelection::Template(template) => {
+                let session_id = match self.ensure_prompt_session().await {
+                    Ok(session_id) => session_id,
+                    Err(error) => {
+                        self.state.push_toast(error, ToastLevel::Error);
+                        return;
+                    }
+                };
+                if let Err(error) = y_service::PromptTemplateService::apply_template(
+                    &self.services.session_manager,
+                    &session_id,
+                    &template,
+                )
+                .await
+                {
+                    self.state.push_toast(
+                        format!("Failed to apply prompt template: {error}"),
+                        ToastLevel::Error,
+                    );
+                    return;
+                }
+                let message = format!("Prompt template: {}", template.name);
+                self.state.prompt_template_status = PromptTemplateStatus::Template {
+                    id: template.id,
+                    name: template.name,
+                };
+                self.finish_prompt_selection(&message);
+            }
+        }
+    }
+
+    async fn ensure_prompt_session(&mut self) -> Result<y_core::types::SessionId, String> {
+        if let Some(current_id) = self.state.current_session_id.clone() {
+            return Ok(y_core::types::SessionId::from_string(current_id));
+        }
+
+        let workspace = std::env::current_dir()
+            .map_err(|error| format!("Failed to resolve current workspace: {error}"))?;
+        let session = y_service::SessionService::create_session(
+            &self.services.session_manager,
+            y_core::session::CreateSessionOptions {
+                parent_id: None,
+                session_type: y_core::session::SessionType::Main,
+                agent_id: None,
+                title: Some("New Chat".into()),
+            },
+            &workspace,
+        )
+        .await
+        .map_err(|error| format!("Failed to create session: {error}"))?;
+        self.state.current_session_id = Some(session.id.to_string());
+        self.load_sessions().await;
+        Ok(session.id)
+    }
+
+    fn finish_prompt_selection(&mut self, message: &str) {
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Input);
+        self.prompt_picker = PromptPickerState::default();
+        self.state
+            .push_toast(message.to_string(), ToastLevel::Success);
     }
 
     /// Open the Codex-style prompt backtrack selector for the active session.
@@ -1150,6 +1352,7 @@ impl TuiApp {
                             self.state.messages.clear();
                             self.state.current_session_id = None;
                             self.state.user_message_count = 0;
+                            self.state.prompt_template_status = PromptTemplateStatus::Default;
                         }
                     }
                     Err(e) => {
@@ -1607,11 +1810,58 @@ impl TuiApp {
                         .count(),
                 )
                 .unwrap_or(0);
+                self.load_session_prompt_status(session_id).await;
             }
             Err(e) => {
                 warn!(error = %e, "failed to load transcript");
             }
         }
+    }
+
+    async fn load_session_prompt_status(&mut self, session_id: &y_core::types::SessionId) {
+        let config = match y_service::PromptTemplateService::get_session_config(
+            &self.services.session_manager,
+            session_id,
+        )
+        .await
+        {
+            Ok(config) => config,
+            Err(error) => {
+                warn!(%error, "failed to load session prompt config");
+                self.state.prompt_template_status = PromptTemplateStatus::Default;
+                return;
+            }
+        };
+        let templates = load_prompt_templates().unwrap_or_default();
+        self.state.prompt_template_status = resolve_prompt_template_status(&config, &templates);
+    }
+}
+
+fn load_prompt_templates() -> Result<Vec<y_service::UserPromptTemplate>, String> {
+    let config_dir = crate::config::dirs_user_config()
+        .ok_or_else(|| "User config directory is unavailable.".to_string())?;
+    y_service::load_user_prompt_templates(&config_dir)
+        .map_err(|error| format!("Failed to load prompt templates: {error}"))
+}
+
+fn resolve_prompt_template_status(
+    config: &y_service::SessionPromptConfig,
+    templates: &[y_service::UserPromptTemplate],
+) -> PromptTemplateStatus {
+    if let Some(template_id) = config.template_id.as_deref() {
+        let name = templates
+            .iter()
+            .find(|template| template.id == template_id)
+            .map_or_else(|| template_id.to_string(), |template| template.name.clone());
+        return PromptTemplateStatus::Template {
+            id: template_id.to_string(),
+            name,
+        };
+    }
+    if y_service::session_prompt_config_has_content(config) {
+        PromptTemplateStatus::Custom
+    } else {
+        PromptTemplateStatus::Default
     }
 }
 
@@ -1875,5 +2125,42 @@ mod transcript_tests {
         );
         assert!(backtrack_branch_title(&"x".repeat(80)).chars().count() <= 62);
         assert_eq!(backtrack_branch_title("  "), "Backtrack branch");
+    }
+
+    #[test]
+    fn test_resolve_prompt_template_status_handles_default_template_and_custom() {
+        let templates = vec![y_service::UserPromptTemplate {
+            id: "review".into(),
+            name: "Reviewer".into(),
+            description: None,
+            system_prompt: "Review carefully.".into(),
+            prompt_section_ids: Vec::new(),
+        }];
+        let template_config = y_service::SessionPromptConfig {
+            system_prompt: Some("Review carefully.".into()),
+            prompt_section_ids: Vec::new(),
+            template_id: Some("review".into()),
+        };
+        assert_eq!(
+            resolve_prompt_template_status(&template_config, &templates),
+            PromptTemplateStatus::Template {
+                id: "review".into(),
+                name: "Reviewer".into(),
+            }
+        );
+
+        let custom_config = y_service::SessionPromptConfig {
+            system_prompt: Some("Custom".into()),
+            prompt_section_ids: Vec::new(),
+            template_id: None,
+        };
+        assert_eq!(
+            resolve_prompt_template_status(&custom_config, &templates),
+            PromptTemplateStatus::Custom
+        );
+        assert_eq!(
+            resolve_prompt_template_status(&y_service::SessionPromptConfig::default(), &templates),
+            PromptTemplateStatus::Default
+        );
     }
 }
