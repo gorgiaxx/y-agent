@@ -148,6 +148,34 @@ impl WorkspaceService {
         self.read_session_workspaces().assignments
     }
 
+    /// Resolve all legacy session assignments to their recorded workspace paths.
+    pub fn session_workspace_paths(&self) -> HashMap<String, String> {
+        let workspaces: HashMap<String, String> = self
+            .read_workspaces()
+            .workspaces
+            .into_iter()
+            .map(|workspace| (workspace.id, workspace.path))
+            .collect();
+        self.read_session_workspaces()
+            .assignments
+            .into_iter()
+            .filter_map(|(session_id, workspace_id)| {
+                workspaces
+                    .get(&workspace_id)
+                    .cloned()
+                    .map(|path| (session_id, path))
+            })
+            .collect()
+    }
+
+    /// Resolve a workspace record by ID.
+    pub fn get(&self, id: &str) -> Option<WorkspaceRecord> {
+        self.read_workspaces()
+            .workspaces
+            .into_iter()
+            .find(|workspace| workspace.id == id)
+    }
+
     /// Assign a session to a workspace (overwrites any previous assignment).
     pub fn assign_session(&self, workspace_id: String, session_id: String) -> anyhow::Result<()> {
         let mut sw = self.read_session_workspaces_result()?;
@@ -350,7 +378,7 @@ impl WorkspaceService {
     }
 }
 
-fn canonical_workspace_path(path: &Path) -> anyhow::Result<String> {
+pub(crate) fn canonical_workspace_path(path: &Path) -> anyhow::Result<String> {
     if !path.is_dir() {
         anyhow::bail!(
             "workspace path is not an existing directory: {}",

@@ -174,6 +174,7 @@ impl SessionStore for MockSessionStore {
             manual_title: None,
             channel: None,
             label: None,
+            workspace_path: None,
             token_count: 0,
             message_count: 0,
             last_compaction: None,

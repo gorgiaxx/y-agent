@@ -7,6 +7,7 @@ import { TodoQueue } from '../components/chat-panel/TodoQueue';
 import { StatusBar } from '../components/chat-panel/StatusBar';
 import { WorkspaceDialog } from '../components/chat-panel/WorkspaceDialog';
 import { RewindPanel } from '../components/chat-panel/RewindPanel';
+import { ResumeSessionDialog } from '../components/chat-panel/ResumeSessionDialog';
 import { useRewind } from '../hooks/useRewind';
 import { useMcpServers } from '../hooks/useMcpServers';
 import { useToast } from '../hooks/useToast';
@@ -31,6 +32,7 @@ import {
 } from '../hooks/sessionInputState';
 import { STORAGE_KEYS } from '../constants/storageKeys';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
+import { resolveCurrentWorkspacePath } from '../hooks/workspaceSessionScope';
 import type { ThinkingEffort, PlanMode, McpMode, RequestMode, TodoItem } from '../types';
 
 export function ChatView() {
@@ -76,8 +78,11 @@ export function ChatView() {
       setSessionProvider(previous, sessionInputKey, providerId)
     ));
   }, [sessionInputKey, setSessionInputStates]);
-  const createSessionWithInputState = useCallback(async (title?: string) => {
-    const session = await createSession(title);
+  const createSessionWithInputState = useCallback(async (
+    title?: string,
+    options?: { workspacePath?: string | null },
+  ) => {
+    const session = await createSession(title, options);
     if (session) {
       setSessionInputStates((previous) => (
         setSessionProvider(previous, session.id, activeInputState.providerId)
@@ -85,6 +90,22 @@ export function ChatView() {
     }
     return session;
   }, [activeInputState.providerId, createSession, setSessionInputStates]);
+
+  const currentWorkspacePath = resolveCurrentWorkspacePath({
+    activeSessionId: sessionHooks.activeSessionId,
+    sessions: sessionHooks.sessions,
+    welcomeWorkspaceId: viewRouting.welcomeWorkspaceId,
+    workspaces: workspaceHooks.workspaces,
+  });
+  const currentWorkspaceId = sessionHooks.activeSessionId
+    ? workspaceHooks.sessionWorkspaceMap[sessionHooks.activeSessionId] ?? null
+    : viewRouting.welcomeWorkspaceId;
+  const workspacePathForId = useCallback(
+    (workspaceId: string) => (
+      workspaceHooks.workspaces.find((workspace) => workspace.id === workspaceId)?.path ?? null
+    ),
+    [workspaceHooks.workspaces],
+  );
 
   const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort | null>(null);
   const [planMode, setPlanMode] = useState<PlanMode>(() => {
@@ -164,6 +185,7 @@ export function ChatView() {
     handleClearSession,
     handleCreateWorkspace,
     handleCommand,
+    resumeDialog,
   } = useChatHandlers({
     session: {
       activeSessionId: sessionHooks.activeSessionId,
@@ -190,6 +212,9 @@ export function ChatView() {
     },
     workspace: {
       welcomeWorkspaceId: viewRouting.welcomeWorkspaceId,
+      currentWorkspaceId,
+      currentWorkspacePath,
+      workspacePathForId,
       assignSession: workspaceHooks.assignSession,
       refreshWorkspaces: workspaceHooks.refreshWorkspaces,
     },
@@ -457,6 +482,17 @@ export function ChatView() {
             viewRouting.setInputExpanded(false);
           },
         }}
+      />
+
+      <ResumeSessionDialog
+        open={resumeDialog.open}
+        workspacePath={resumeDialog.workspacePath}
+        currentSessionId={sessionHooks.activeSessionId}
+        sessions={resumeDialog.sessions}
+        loading={resumeDialog.loading}
+        error={resumeDialog.error}
+        onSelect={resumeDialog.select}
+        onClose={resumeDialog.close}
       />
 
       {wsDialogOpen && (

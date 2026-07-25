@@ -18,7 +18,7 @@ use crate::error::StorageError;
 /// Full DDL for a fresh database, embedded at compile time.
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// Monotonic storage schema version mirrored in `PRAGMA user_version`.
-pub const CURRENT_SCHEMA_VERSION: i64 = 2;
+pub const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 const REQUIRED_TABLES_V1: &[&str] = &[
     "session_metadata",
@@ -52,11 +52,18 @@ const REQUIRED_TABLES: &[&str] = &[
     "session_events",
 ];
 
+const REQUIRED_SESSION_COLUMNS_V2: &[&str] = &[
+    "manual_title",
+    "context_reset_index",
+    "custom_system_prompt",
+    "branch_summary",
+];
 const REQUIRED_SESSION_COLUMNS: &[&str] = &[
     "manual_title",
     "context_reset_index",
     "custom_system_prompt",
     "branch_summary",
+    "workspace_path",
 ];
 const REQUIRED_SCHEDULE_COLUMNS: &[&str] = &[
     "missed_policy",
@@ -151,6 +158,11 @@ async fn incompatibility_reason(
     let user_version = current_user_version(connection).await?;
     if user_version == 1 && schema_shape_matches_v1(connection, &table_names).await? {
         upgrade_v1_to_v2(connection).await?;
+        upgrade_v2_to_v3(connection).await?;
+        return Ok(None);
+    }
+    if user_version == 2 && schema_shape_matches_v2(connection, &table_names).await? {
+        upgrade_v2_to_v3(connection).await?;
         return Ok(None);
     }
     let schema_matches = schema_shape_matches(connection, &table_names).await?;
@@ -194,7 +206,21 @@ async fn schema_shape_matches(
         return Ok(false);
     }
 
-    schema_shape_matches_v1(connection, table_names).await
+    schema_shape_matches_common(connection, REQUIRED_SESSION_COLUMNS).await
+}
+
+async fn schema_shape_matches_v2(
+    connection: &mut SqliteConnection,
+    table_names: &BTreeSet<String>,
+) -> Result<bool, StorageError> {
+    if REQUIRED_TABLES
+        .iter()
+        .any(|table| !table_names.contains(*table))
+    {
+        return Ok(false);
+    }
+
+    schema_shape_matches_common(connection, REQUIRED_SESSION_COLUMNS_V2).await
 }
 
 async fn schema_shape_matches_v1(
@@ -208,7 +234,14 @@ async fn schema_shape_matches_v1(
         return Ok(false);
     }
 
-    if !table_has_columns(connection, "session_metadata", REQUIRED_SESSION_COLUMNS).await? {
+    schema_shape_matches_common(connection, REQUIRED_SESSION_COLUMNS_V2).await
+}
+
+async fn schema_shape_matches_common(
+    connection: &mut SqliteConnection,
+    required_session_columns: &[&str],
+) -> Result<bool, StorageError> {
+    if !table_has_columns(connection, "session_metadata", required_session_columns).await? {
         return Ok(false);
     }
 
@@ -258,8 +291,24 @@ async fn upgrade_v1_to_v2(connection: &mut SqliteConnection) -> Result<(), Stora
     .map_err(|error| StorageError::Migration {
         message: format!("failed to upgrade schema v1 to v2: {error}"),
     })?;
-    set_user_version(connection, CURRENT_SCHEMA_VERSION).await?;
+    set_user_version(connection, 2).await?;
     info!("upgraded SQLite schema from v1 to v2");
+    Ok(())
+}
+
+async fn upgrade_v2_to_v3(connection: &mut SqliteConnection) -> Result<(), StorageError> {
+    sqlx::raw_sql(
+        r"ALTER TABLE session_metadata ADD COLUMN workspace_path TEXT;
+        CREATE INDEX IF NOT EXISTS idx_session_workspace_updated
+            ON session_metadata(workspace_path, updated_at DESC);",
+    )
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| StorageError::Migration {
+        message: format!("failed to upgrade schema v2 to v3: {error}"),
+    })?;
+    set_user_version(connection, CURRENT_SCHEMA_VERSION).await?;
+    info!("upgraded SQLite schema from v2 to v3");
     Ok(())
 }
 
@@ -592,6 +641,14 @@ mod tests {
         std::fs::create_dir_all(&config.transcript_dir).unwrap();
         let pool = create_pool(&config).await.unwrap();
         run_embedded_migrations(&pool).await.unwrap();
+        sqlx::query("DROP INDEX IF EXISTS idx_session_workspace_updated")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE session_metadata DROP COLUMN workspace_path")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("DROP TABLE session_events")
             .execute(&pool)
             .await
@@ -631,7 +688,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(version, 2);
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
         assert_eq!(preserved.0, 1);
         assert_eq!(event_table.0, 1);
         assert!(!std::fs::read_dir(temp_dir.path()).unwrap().any(|entry| {
@@ -639,5 +696,61 @@ mod tests {
                 .ok()
                 .is_some_and(|entry| entry.file_name().to_string_lossy().contains("incompatible"))
         }));
+    }
+
+    #[tokio::test]
+    async fn test_prepare_database_upgrades_v2_workspace_identity_without_data_loss() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("v2.db");
+        let config = StorageConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            pool_size: 1,
+            wal_enabled: true,
+            busy_timeout_ms: 5000,
+            transcript_dir: temp_dir.path().join("transcripts"),
+        };
+        std::fs::create_dir_all(&config.transcript_dir).unwrap();
+        let pool = create_pool(&config).await.unwrap();
+        run_embedded_migrations(&pool).await.unwrap();
+        sqlx::query("DROP INDEX IF EXISTS idx_session_workspace_updated")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("ALTER TABLE session_metadata DROP COLUMN workspace_path")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA user_version = 2")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            r"INSERT INTO session_metadata
+               (id, root_id, path, session_type, transcript_path)
+               VALUES ('preserved-v2-session', 'preserved-v2-session', '[]', 'main', '/tmp/transcript')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        prepare_database(&config).await.unwrap();
+        let upgraded = create_pool(&config).await.unwrap();
+        run_embedded_migrations(&upgraded).await.unwrap();
+
+        let preserved: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM session_metadata WHERE id = 'preserved-v2-session'",
+        )
+        .fetch_one(&upgraded)
+        .await
+        .unwrap();
+        let columns: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM pragma_table_info('session_metadata')")
+                .fetch_all(&upgraded)
+                .await
+                .unwrap();
+
+        assert_eq!(preserved.0, 1);
+        assert!(columns.iter().any(|column| column.0 == "workspace_path"));
     }
 }

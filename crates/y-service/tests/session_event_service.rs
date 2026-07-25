@@ -27,6 +27,7 @@ async fn durable_turn_events_persist_before_delivery_and_ephemeral_deltas_do_not
             &session_id,
             "run-1",
             &TurnEvent::ToolStart {
+                tool_call_id: "call-read-1".into(),
                 name: "FileRead".into(),
                 input_preview: "{}".into(),
                 agent_name: "root".into(),
@@ -58,6 +59,7 @@ async fn durable_turn_events_persist_before_delivery_and_ephemeral_deltas_do_not
         .unwrap();
     assert_eq!(replay.len(), 1);
     assert_eq!(replay[0].kind, SessionEventKind::ChatProgress);
+    assert_eq!(replay[0].payload["event"]["tool_call_id"], "call-read-1");
 }
 
 #[tokio::test]

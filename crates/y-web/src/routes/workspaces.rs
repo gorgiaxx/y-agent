@@ -109,7 +109,18 @@ async fn assign_session(
     State(state): State<AppState>,
     Json(body): Json<AssignSessionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    svc(&state)
+    let service = svc(&state);
+    let workspace = service
+        .get(&body.workspace_id)
+        .ok_or_else(|| ApiError::NotFound(format!("workspace {} not found", body.workspace_id)))?;
+    y_service::SessionService::assign_workspace(
+        &state.container.session_manager,
+        &y_core::types::SessionId::from_string(body.session_id.clone()),
+        std::path::Path::new(&workspace.path),
+    )
+    .await
+    .map_err(|e| ApiError::BadRequest(format!("Failed to assign session workspace: {e}")))?;
+    service
         .assign_session(body.workspace_id, body.session_id)
         .map_err(|e| ApiError::Internal(format!("Failed to assign session: {e}")))?;
     Ok(Json(serde_json::json!({"message": "assigned"})))
@@ -120,6 +131,12 @@ async fn unassign_session(
     State(state): State<AppState>,
     Json(body): Json<UnassignSessionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    y_service::SessionService::unassign_workspace(
+        &state.container.session_manager,
+        &y_core::types::SessionId::from_string(body.session_id.clone()),
+    )
+    .await
+    .map_err(|e| ApiError::BadRequest(format!("Failed to clear session workspace: {e}")))?;
     svc(&state)
         .unassign_session(&body.session_id)
         .map_err(|e| ApiError::Internal(format!("Failed to unassign session: {e}")))?;

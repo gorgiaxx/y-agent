@@ -37,6 +37,9 @@ pub struct SessionNode {
     pub channel: Option<String>,
     /// User-defined label for categorization.
     pub label: Option<String>,
+    /// Canonical filesystem workspace identity used for scoped history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
     pub token_count: u32,
     pub message_count: u32,
     /// When the last compaction was performed.
@@ -125,6 +128,8 @@ pub struct SessionFilter {
     pub session_type: Option<SessionType>,
     pub agent_id: Option<AgentId>,
     pub root_id: Option<SessionId>,
+    /// Match one canonical filesystem workspace identity exactly.
+    pub workspace_path: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +167,22 @@ pub enum SessionError {
 pub trait SessionStore: Send + Sync {
     /// Create a new session, returning the created node.
     async fn create(&self, options: CreateSessionOptions) -> Result<SessionNode, SessionError>;
+
+    /// Create a session with an optional canonical workspace identity.
+    ///
+    /// Stores that do not override this method use a create-then-update
+    /// fallback. Durable stores should override it when atomic creation is
+    /// available.
+    async fn create_in_workspace(
+        &self,
+        options: CreateSessionOptions,
+        workspace_path: Option<&str>,
+    ) -> Result<SessionNode, SessionError> {
+        let node = self.create(options).await?;
+        self.set_workspace_path(&node.id, workspace_path.map(str::to_string))
+            .await?;
+        self.get(&node.id).await
+    }
 
     /// Get a session by ID.
     async fn get(&self, id: &SessionId) -> Result<SessionNode, SessionError>;
@@ -210,6 +231,18 @@ pub trait SessionStore: Send + Sync {
         id: &SessionId,
         summary: Option<String>,
     ) -> Result<(), SessionError>;
+
+    /// Set or clear the canonical workspace identity for a session.
+    async fn set_workspace_path(
+        &self,
+        id: &SessionId,
+        workspace_path: Option<String>,
+    ) -> Result<(), SessionError> {
+        let _ = (id, workspace_path);
+        Err(SessionError::Other {
+            message: "session store does not support workspace identity".into(),
+        })
+    }
 
     /// Hard-delete a session and all its data from storage.
     ///

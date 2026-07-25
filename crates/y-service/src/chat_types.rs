@@ -89,6 +89,7 @@ pub struct CompactResult {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ToolCallRecord {
+    pub tool_call_id: String,
     pub name: String,
     pub arguments: String,
     pub success: bool,
@@ -126,11 +127,13 @@ pub enum TurnEvent {
         agent_name: String,
     },
     ToolStart {
+        tool_call_id: String,
         name: String,
         input_preview: String,
         agent_name: String,
     },
     ToolResult {
+        tool_call_id: String,
         name: String,
         success: bool,
         duration_ms: u64,
@@ -214,6 +217,10 @@ pub enum TurnEvent {
         follow_up_id: String,
         text: String,
     },
+}
+
+pub(crate) fn synthetic_tool_call_id(scope: &str) -> String {
+    format!("{scope}:{}", Uuid::new_v4())
 }
 
 /// Sender for streaming turn events, tagging each event with an optional

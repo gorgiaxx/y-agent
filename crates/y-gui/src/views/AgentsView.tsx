@@ -19,6 +19,7 @@ import { useChatHandlers } from '../hooks/useChatHandlers';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useSessionInteractions } from '../hooks/useSessionInteractions';
 import { PlanReviewProvider } from '../components/chat-panel/PlanReviewContext';
+import { ResumeSessionDialog } from '../components/chat-panel/ResumeSessionDialog';
 import { useStatusBarMeta } from '../hooks/useStatusBarMeta';
 import { getVisiblePendingEdit } from '../hooks/chatEditState';
 import { useAgentEditor } from '../hooks/useAgentEditor';
@@ -26,6 +27,7 @@ import type { AgentDetail } from '../hooks/useAgents';
 import type { PlanMode, ThinkingEffort, McpMode } from '../types';
 import { useMcpServers } from '../hooks/useMcpServers';
 import { DEFAULT_ROOT_AGENT_NAME } from '../constants/agents';
+import { resolveCurrentWorkspacePath } from '../hooks/workspaceSessionScope';
 import './AgentsView.css';
 
 export function AgentsView() {
@@ -242,6 +244,21 @@ export function AgentsView() {
   const isAgentUserSession = agentSessions.some(
     (s) => s.id === sessionHooks.activeSessionId,
   );
+  const currentWorkspacePath = resolveCurrentWorkspacePath({
+    activeSessionId: sessionHooks.activeSessionId,
+    sessions: agentSessions,
+    welcomeWorkspaceId: null,
+    workspaces: workspaceHooks.workspaces,
+  });
+  const currentWorkspaceId = sessionHooks.activeSessionId
+    ? workspaceHooks.sessionWorkspaceMap[sessionHooks.activeSessionId] ?? null
+    : null;
+  const workspacePathForId = useCallback(
+    (workspaceId: string) => (
+      workspaceHooks.workspaces.find((workspace) => workspace.id === workspaceId)?.path ?? null
+    ),
+    [workspaceHooks.workspaces],
+  );
 
   const chatHandlers = useChatHandlers({
     session: {
@@ -269,6 +286,9 @@ export function AgentsView() {
     },
     workspace: {
       welcomeWorkspaceId: null,
+      currentWorkspaceId,
+      currentWorkspacePath,
+      workspacePathForId,
       assignSession: async () => {},
       refreshWorkspaces: async () => {},
     },
@@ -473,6 +493,16 @@ export function AgentsView() {
         </div>
       )}
     </div>
+    <ResumeSessionDialog
+      open={chatHandlers.resumeDialog.open}
+      workspacePath={chatHandlers.resumeDialog.workspacePath}
+      currentSessionId={sessionHooks.activeSessionId}
+      sessions={chatHandlers.resumeDialog.sessions}
+      loading={chatHandlers.resumeDialog.loading}
+      error={chatHandlers.resumeDialog.error}
+      onSelect={chatHandlers.resumeDialog.select}
+      onClose={chatHandlers.resumeDialog.close}
+    />
     </PlanReviewProvider>
   );
 }

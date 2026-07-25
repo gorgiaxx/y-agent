@@ -79,6 +79,33 @@ impl SessionManager {
         Ok(node)
     }
 
+    /// Create a session with a canonical workspace identity.
+    #[instrument(skip(self), fields(workspace_path))]
+    pub async fn create_session_in_workspace(
+        &self,
+        options: CreateSessionOptions,
+        workspace_path: Option<&str>,
+    ) -> Result<SessionNode, SessionManagerError> {
+        if let Some(ref parent_id) = options.parent_id {
+            let parent = self.session_store.get(parent_id).await?;
+            let max_depth = self
+                .config
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .max_depth;
+            if parent.depth >= max_depth {
+                return Err(SessionManagerError::Config {
+                    message: format!("maximum tree depth {max_depth} exceeded"),
+                });
+            }
+        }
+
+        Ok(self
+            .session_store
+            .create_in_workspace(options, workspace_path)
+            .await?)
+    }
+
     /// Get a session by ID.
     #[instrument(skip(self), fields(session_id = %id))]
     pub async fn get_session(&self, id: &SessionId) -> Result<SessionNode, SessionManagerError> {
@@ -91,6 +118,18 @@ impl SessionManager {
         filter: &SessionFilter,
     ) -> Result<Vec<SessionNode>, SessionManagerError> {
         Ok(self.session_store.list(filter).await?)
+    }
+
+    /// Set or clear a session's canonical workspace identity.
+    pub async fn set_workspace_path(
+        &self,
+        id: &SessionId,
+        workspace_path: Option<String>,
+    ) -> Result<(), SessionManagerError> {
+        Ok(self
+            .session_store
+            .set_workspace_path(id, workspace_path)
+            .await?)
     }
 
     /// Transition a session's state, validating the transition.
@@ -655,6 +694,26 @@ impl SessionManager {
         Ok(updated)
     }
 
+    /// Fork a session immediately before the message at `message_index`.
+    ///
+    /// The selected message is excluded from the child transcript, which lets
+    /// callers restore that prompt to an editor and continue along a new branch.
+    /// The source session and its transcript are never modified.
+    pub async fn fork_session_before_message(
+        &self,
+        source_id: &SessionId,
+        message_index: usize,
+        title: Option<String>,
+    ) -> Result<SessionNode, SessionManagerError> {
+        if message_index > 0 {
+            return self.fork_session(source_id, message_index - 1, title).await;
+        }
+
+        let source = self.session_store.get(source_id).await?;
+        let branch_title = title.or_else(|| source.title.map(|value| format!("{value} (Branch)")));
+        self.branch(source_id, branch_title).await
+    }
+
     /// Get a snapshot of the session configuration.
     pub fn config(&self) -> SessionConfig {
         self.config
@@ -992,6 +1051,55 @@ mod tests {
         assert_eq!(fork_msgs.len(), 1);
         assert_eq!(fork_msgs[0].content, "first");
         assert_eq!(fork.title, Some("Just first".into()));
+    }
+
+    #[tokio::test]
+    async fn test_fork_session_before_message_preserves_source() {
+        let mgr = setup().await;
+        let session = mgr
+            .create_session(CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Original".into()),
+            })
+            .await
+            .unwrap();
+        for i in 0..4 {
+            mgr.append_message(&session.id, &test_msg(&format!("msg-{i}")))
+                .await
+                .unwrap();
+        }
+
+        let middle = mgr
+            .fork_session_before_message(&session.id, 2, Some("Before third".into()))
+            .await
+            .unwrap();
+        let middle_messages = mgr.read_display_transcript(&middle.id).await.unwrap();
+        assert_eq!(
+            middle_messages
+                .iter()
+                .map(|message| message.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["msg-0", "msg-1"]
+        );
+
+        let before_first = mgr
+            .fork_session_before_message(&session.id, 0, Some("Before first".into()))
+            .await
+            .unwrap();
+        assert!(mgr
+            .read_display_transcript(&before_first.id)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            mgr.read_display_transcript(&session.id)
+                .await
+                .unwrap()
+                .len(),
+            4
+        );
     }
 
     #[tokio::test]

@@ -158,11 +158,32 @@ export function MainLayout() {
           streamingSessionIds: chatHooks.streamingSessionIds,
           sessionWorkspaceMap: workspaceHooks.sessionWorkspaceMap,
           onNewChat: async () => {
-             const newSession = await sessionHooks.createSession();
-             if (newSession) sessionHooks.selectSession(newSession.id);
+             const activeWorkspacePath = sessionHooks.sessions.find(
+               (session) => session.id === sessionHooks.activeSessionId,
+             )?.workspace_path;
+             const welcomeWorkspacePath = workspaceHooks.workspaces.find(
+               (workspace) => workspace.id === viewRouting.welcomeWorkspaceId,
+             )?.path;
+             const newSession = await sessionHooks.createSession(undefined, {
+               workspacePath: activeWorkspacePath ?? welcomeWorkspacePath ?? null,
+             });
+             if (newSession) {
+               const workspaceId = sessionHooks.activeSessionId
+                 ? workspaceHooks.sessionWorkspaceMap[sessionHooks.activeSessionId]
+                 : viewRouting.welcomeWorkspaceId;
+               if (workspaceId) {
+                 await workspaceHooks.assignSession(workspaceId, newSession.id);
+               }
+               sessionHooks.selectSession(newSession.id);
+             }
           },
           onNewChatInWorkspace: async (workspaceId: string) => {
-             const newSession = await sessionHooks.createSession();
+             const workspacePath = workspaceHooks.workspaces.find(
+               (workspace) => workspace.id === workspaceId,
+             )?.path;
+             const newSession = await sessionHooks.createSession(undefined, {
+               workspacePath: workspacePath ?? null,
+             });
              if (newSession) {
                await workspaceHooks.assignSession(workspaceId, newSession.id);
                sessionHooks.selectSession(newSession.id);

@@ -357,7 +357,15 @@ describe('HttpTransport contract mapping', () => {
     const { calls } = installFetchMock({ ok: true });
     const transport = new HttpTransport('http://localhost:3000');
 
-    await transport.invoke('session_create', { title: 'Daily', agentId: 'coder' });
+    await transport.invoke('session_list_resumable', {
+      workspacePath: '/projects/current',
+      agentId: 'coder',
+    });
+    await transport.invoke('session_create', {
+      title: 'Daily',
+      agentId: 'coder',
+      workspacePath: '/projects/current',
+    });
     await transport.invoke('session_fork', {
       sessionId: 's1',
       messageIndex: 4,
@@ -370,13 +378,17 @@ describe('HttpTransport contract mapping', () => {
     await transport.invoke('workspace_unassign_session', { sessionId: 's1' });
 
     expect(calls.map((call) => call.url)).toEqual([
+      'http://localhost:3000/api/v1/sessions?workspace_path=%2Fprojects%2Fcurrent&agent_id=coder',
       'http://localhost:3000/api/v1/sessions',
       'http://localhost:3000/api/v1/sessions/s1/fork',
       'http://localhost:3000/api/v1/workspaces/assign',
       'http://localhost:3000/api/v1/workspaces/unassign',
     ]);
-    expect(calls.map((call) => JSON.parse(String(call.init.body)))).toEqual([
-      { title: 'Daily', agent_id: 'coder' },
+    expect(calls.map((call) => (
+      call.init.body === undefined ? null : JSON.parse(String(call.init.body))
+    ))).toEqual([
+      null,
+      { title: 'Daily', agent_id: 'coder', workspace_path: '/projects/current' },
       { message_index: 4, title: 'Branch' },
       { workspace_id: 'w1', session_id: 's1' },
       { session_id: 's1' },

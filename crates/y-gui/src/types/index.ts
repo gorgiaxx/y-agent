@@ -15,6 +15,7 @@ export interface SessionInfo {
   agent_id?: string | null;
   title: string | null;
   manual_title?: string | null;
+  workspace_path?: string | null;
   created_at: string;
   updated_at: string;
   message_count: number;
@@ -159,6 +160,7 @@ export interface LlmResponseEvent {
 
 export interface ToolStartEvent {
   type: 'tool_start';
+  tool_call_id: string;
   name: string;
   input_preview?: string;
   agent_name?: string;
@@ -166,6 +168,7 @@ export interface ToolStartEvent {
 
 export interface ToolResultEvent {
   type: 'tool_result';
+  tool_call_id: string;
   name: string;
   success: boolean;
   duration_ms: number;

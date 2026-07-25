@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS session_metadata (
     transcript_path TEXT NOT NULL,
     channel         TEXT,
     label           TEXT,
+    workspace_path  TEXT,
     last_compaction TEXT,
     compaction_count INTEGER NOT NULL DEFAULT 0,
     context_reset_index INTEGER,
@@ -44,6 +45,8 @@ CREATE INDEX IF NOT EXISTS idx_session_parent ON session_metadata(parent_id);
 CREATE INDEX IF NOT EXISTS idx_session_root   ON session_metadata(root_id);
 CREATE INDEX IF NOT EXISTS idx_session_state  ON session_metadata(state);
 CREATE INDEX IF NOT EXISTS idx_session_agent  ON session_metadata(agent_id);
+CREATE INDEX IF NOT EXISTS idx_session_workspace_updated
+    ON session_metadata(workspace_path, updated_at DESC);
 
 ------------------------------------------------------------------------
 -- 2. Orchestrator workflows and checkpoints

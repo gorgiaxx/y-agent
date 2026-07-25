@@ -175,6 +175,31 @@ through its transport command map. Presentation code may display and submit a
 decision, but it must not infer trust from operation mode or activate project
 configuration directly.
 
+## Workspace-Scoped Session Identity and Resume
+
+Every persisted user-facing session has an optional canonical workspace path in
+SQLite session metadata. New interactive root sessions persist the canonical
+path of their creation workspace before they become resumable. Branches and
+other descendants inherit the parent session's workspace identity unless an
+owning service explicitly reassigns them. Per-turn working-directory overrides
+do not mutate session identity.
+
+`y-service` owns workspace canonicalization, interactive session creation,
+workspace reassignment, resumable-session listing, and resume-target
+resolution. Presentation layers provide the current workspace and render the
+result. Ordinary `/resume` behavior is strict: it returns only active,
+user-facing sessions whose stored canonical path equals the current canonical
+workspace. It never silently widens to unassigned sessions, repository roots,
+or global history. Any future all-workspaces history view must be an explicit,
+separately labelled action.
+
+Canonical filesystem identity follows the workspace trust contract: symlinked
+paths resolving to the same directory share session history, while moving a
+workspace creates a different identity. Missing or invalid paths fail closed.
+Legacy session-to-workspace TOML assignments may backfill missing SQLite
+workspace paths after canonicalization. Sessions that cannot be mapped remain
+unassigned and are excluded from normal workspace-scoped resume results.
+
 ## Safe File Mutation Contract
 
 File mutation identity is capability metadata, not a list of tool names.
@@ -230,6 +255,18 @@ metadata, and non-reconstructable errors or lifecycle changes. Token deltas,
 reasoning deltas, partial image chunks, and heartbeats remain ephemeral. A
 durable append failure prevents the event from being advertised as replayable;
 the failure is logged and surfaced by the owning service path.
+
+Tool progress correlation uses one stable `tool_call_id` across execution,
+durable events, diagnostics, persisted assistant metadata, and presentation
+adapters. Native model tool calls reuse `ToolCallRequest.id`; service-generated
+plan or loop progress reuses the owning tool call ID. Operations without a
+model-owned call, such as presentation-triggered plan resume, generate one
+owner-scoped synthetic ID and retain it for the whole operation. `ToolStart`
+and its terminal `ToolResult` carry the same ID, and `ToolCallRecord` preserves
+it when building `metadata.tool_results`. Presentation layers update calls by
+ID, never by tool name or arrival position. Historical metadata created before
+this contract may omit the ID; readers must accept it and create
+presentation-local fallback identity without rewriting persisted history.
 
 SSE subscribers establish live buffering before querying replay. Replay emits
 events after `Last-Event-ID` or an explicit cursor in ascending global order,

@@ -57,6 +57,7 @@ pub mod prompt_templates;
 pub mod rewind;
 pub mod scheduler_service;
 pub mod session_events;
+pub mod session_service;
 pub mod skill_creation;
 pub mod skill_evolution;
 pub mod skill_evolution_refinement;
@@ -128,6 +129,7 @@ pub use scheduler_service::{
     SchedulerServiceError, UpdateScheduleRequest,
 };
 pub use session_events::SessionEventService;
+pub use session_service::SessionService;
 pub use skill_creation::{
     create_skill_from_request, CreationDecision, CreationError, CreationResult, SkillCreateOutcome,
     SkillCreationService,

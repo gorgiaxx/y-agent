@@ -18,6 +18,7 @@ export interface GuiCommandDef {
 export const GUI_COMMANDS: GuiCommandDef[] = [
   // Session commands
   { name: 'new', alias: 'n', description: 'Create new session', category: 'Session', immediate: true },
+  { name: 'resume', alias: 'r', description: 'Resume session in current workspace', category: 'Session', immediate: true },
   { name: 'export', alias: null, description: 'Export session', category: 'Session', immediate: true },
   { name: 'compact', alias: null, description: 'Compact context (prune + summarize)', category: 'Session', immediate: true },
   { name: 'rewind', alias: null, description: 'Rewind to a previous message (undo file changes)', category: 'Session', immediate: true },

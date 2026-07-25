@@ -11,7 +11,7 @@ export interface UseSessionsReturn {
   sessions: SessionInfo[];
   activeSessionId: string | null;
   loading: boolean;
-  createSession: (title?: string, options?: { agentId?: string | null }) => Promise<SessionInfo | null>;
+  createSession: (title?: string, options?: { agentId?: string | null; workspacePath?: string | null }) => Promise<SessionInfo | null>;
   selectSession: (id: string) => void;
   deleteSession: (id: string) => Promise<void>;
   refreshSessions: () => Promise<void>;
@@ -98,11 +98,12 @@ export function useSessions(agentId?: string | null): UseSessionsReturn {
   );
 
   const createSession = useCallback(
-    async (title?: string, options?: { agentId?: string | null }): Promise<SessionInfo | null> => {
+    async (title?: string, options?: { agentId?: string | null; workspacePath?: string | null }): Promise<SessionInfo | null> => {
       try {
         const session = await transport.invoke<SessionInfo>('session_create', {
           title: title ?? null,
           agentId: options?.agentId ?? agentId ?? null,
+          workspacePath: options?.workspacePath ?? null,
         });
         const sessionWithPrompt = await applyDefaultPromptTemplate(session);
         setSessions((prev) => [sessionWithPrompt, ...prev]);

@@ -93,7 +93,18 @@ pub async fn workspace_assign_session(
     workspace_id: String,
     session_id: String,
 ) -> Result<(), String> {
-    svc(&state)
+    let service = svc(&state);
+    let workspace = service
+        .get(&workspace_id)
+        .ok_or_else(|| format!("Workspace not found: {workspace_id}"))?;
+    y_service::SessionService::assign_workspace(
+        &state.container.session_manager,
+        &y_core::types::SessionId::from_string(session_id.clone()),
+        std::path::Path::new(&workspace.path),
+    )
+    .await
+    .map_err(|e| format!("Failed to assign session workspace identity: {e}"))?;
+    service
         .assign_session(workspace_id, session_id)
         .map_err(|e| format!("Failed to assign session: {e}"))
 }
@@ -104,6 +115,12 @@ pub async fn workspace_unassign_session(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
+    y_service::SessionService::unassign_workspace(
+        &state.container.session_manager,
+        &y_core::types::SessionId::from_string(session_id.clone()),
+    )
+    .await
+    .map_err(|e| format!("Failed to clear session workspace identity: {e}"))?;
     svc(&state)
         .unassign_session(&session_id)
         .map_err(|e| format!("Failed to unassign session: {e}"))

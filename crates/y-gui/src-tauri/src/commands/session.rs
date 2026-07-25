@@ -23,6 +23,7 @@ pub struct SessionInfo {
     pub agent_id: Option<String>,
     pub title: Option<String>,
     pub manual_title: Option<String>,
+    pub workspace_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub message_count: usize,
@@ -67,6 +68,13 @@ pub async fn session_list(
     state: State<'_, AppState>,
     agent_id: Option<String>,
 ) -> Result<Vec<SessionInfo>, String> {
+    let workspaces = y_service::WorkspaceService::new(&state.config_dir);
+    y_service::SessionService::backfill_legacy_assignments(
+        &state.container.session_manager,
+        &workspaces,
+    )
+    .await
+    .map_err(|error| format!("Failed to migrate session workspaces: {error}"))?;
     let filter = SessionFilter {
         agent_id: agent_id.map(y_core::types::AgentId::from_string),
         state: Some(SessionState::Active),
@@ -105,6 +113,7 @@ pub async fn session_list(
                 agent_id: s.agent_id.as_ref().map(|id| id.0.clone()),
                 title: s.title.clone(),
                 manual_title: s.manual_title.clone(),
+                workspace_path: s.workspace_path.clone(),
                 created_at: s.created_at.to_rfc3339(),
                 updated_at: s.updated_at.to_rfc3339(),
                 message_count: s.message_count as usize,
@@ -117,6 +126,60 @@ pub async fn session_list(
     infos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
     Ok(infos)
+}
+
+/// List resumable sessions in exactly one workspace, sorted by last updated.
+#[tauri::command]
+pub async fn session_list_resumable(
+    state: State<'_, AppState>,
+    workspace_path: String,
+    agent_id: Option<String>,
+) -> Result<Vec<SessionInfo>, String> {
+    let workspaces = y_service::WorkspaceService::new(&state.config_dir);
+    y_service::SessionService::backfill_legacy_assignments(
+        &state.container.session_manager,
+        &workspaces,
+    )
+    .await
+    .map_err(|error| format!("Failed to migrate session workspaces: {error}"))?;
+
+    let sessions = y_service::SessionService::list_resumable_sessions(
+        &state.container.session_manager,
+        std::path::Path::new(&workspace_path),
+        agent_id.map(y_core::types::AgentId::from_string),
+    )
+    .await
+    .map_err(|error| format!("Failed to list resumable sessions: {error}"))?;
+
+    let mut custom_prompt_ids = std::collections::HashSet::new();
+    for session in &sessions {
+        if let Ok(stored) = state
+            .container
+            .session_manager
+            .get_custom_system_prompt(&session.id)
+            .await
+        {
+            let config = decode_session_prompt_config(stored);
+            if session_prompt_config_has_content(&config) {
+                custom_prompt_ids.insert(session.id.0.clone());
+            }
+        }
+    }
+
+    Ok(sessions
+        .into_iter()
+        .map(|session| SessionInfo {
+            id: session.id.0.clone(),
+            agent_id: session.agent_id.as_ref().map(|id| id.0.clone()),
+            title: session.title.clone(),
+            manual_title: session.manual_title.clone(),
+            workspace_path: session.workspace_path.clone(),
+            created_at: session.created_at.to_rfc3339(),
+            updated_at: session.updated_at.to_rfc3339(),
+            message_count: session.message_count as usize,
+            has_custom_prompt: custom_prompt_ids.contains(&session.id.0),
+        })
+        .collect())
 }
 
 /// Child (sub-agent) session summary for drill-in into plan phase / loop round
@@ -216,24 +279,37 @@ pub async fn session_create(
     state: State<'_, AppState>,
     title: Option<String>,
     agent_id: Option<String>,
+    workspace_path: Option<String>,
 ) -> Result<SessionInfo, String> {
-    let session = state
-        .container
-        .session_manager
-        .create_session(CreateSessionOptions {
-            parent_id: None,
-            session_type: SessionType::Main,
-            agent_id: agent_id.map(y_core::types::AgentId::from_string),
-            title,
-        })
+    let options = CreateSessionOptions {
+        parent_id: None,
+        session_type: SessionType::Main,
+        agent_id: agent_id.map(y_core::types::AgentId::from_string),
+        title,
+    };
+    let session = if let Some(workspace_path) = workspace_path {
+        y_service::SessionService::create_session(
+            &state.container.session_manager,
+            options,
+            std::path::Path::new(&workspace_path),
+        )
         .await
-        .map_err(|e| format!("Failed to create session: {e}"))?;
+        .map_err(|error| format!("Failed to create session: {error}"))
+    } else {
+        state
+            .container
+            .session_manager
+            .create_session(options)
+            .await
+            .map_err(|error| format!("Failed to create session: {error}"))
+    }?;
 
     Ok(SessionInfo {
         id: session.id.0.clone(),
         agent_id: session.agent_id.as_ref().map(|id| id.0.clone()),
         title: session.title.clone(),
         manual_title: session.manual_title.clone(),
+        workspace_path: session.workspace_path.clone(),
         created_at: session.created_at.to_rfc3339(),
         updated_at: session.updated_at.to_rfc3339(),
         message_count: 0,
@@ -487,6 +563,7 @@ pub async fn session_fork(
         agent_id: fork.agent_id.as_ref().map(|id| id.0.clone()),
         title: fork.title.clone(),
         manual_title: fork.manual_title.clone(),
+        workspace_path: fork.workspace_path.clone(),
         created_at: fork.created_at.to_rfc3339(),
         updated_at: fork.updated_at.to_rfc3339(),
         message_count: fork.message_count as usize,

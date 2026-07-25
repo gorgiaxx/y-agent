@@ -25,19 +25,20 @@ impl SqliteSessionStore {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
-}
 
-#[async_trait]
-impl SessionStore for SqliteSessionStore {
-    #[instrument(skip(self), fields(session_type = ?options.session_type))]
-    async fn create(&self, options: CreateSessionOptions) -> Result<SessionNode, SessionError> {
+    async fn create_with_workspace(
+        &self,
+        options: CreateSessionOptions,
+        workspace_path: Option<&str>,
+    ) -> Result<SessionNode, SessionError> {
         let id = SessionId::new();
         let now_str = chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
 
-        // Determine root_id, depth, and path based on parent.
-        let (root_id, depth, path_json) = if let Some(ref parent_id) = options.parent_id {
+        let (root_id, depth, path_json, workspace_path) = if let Some(ref parent_id) =
+            options.parent_id
+        {
             let parent = self.get(parent_id).await?;
             let mut path = parent.path.clone();
             path.push(parent.id.clone());
@@ -46,10 +47,19 @@ impl SessionStore for SqliteSessionStore {
                 serde_json::to_string(&path_strs).map_err(|e| SessionError::StorageError {
                     message: format!("serialize path: {e}"),
                 })?;
-            (parent.root_id.clone(), parent.depth + 1, path_json)
+            (
+                parent.root_id.clone(),
+                parent.depth + 1,
+                path_json,
+                workspace_path.map(str::to_string).or(parent.workspace_path),
+            )
         } else {
-            // Root session: path is empty, root_id is self.
-            (id.clone(), 0, "[]".to_string())
+            (
+                id.clone(),
+                0,
+                "[]".to_string(),
+                workspace_path.map(str::to_string),
+            )
         };
 
         let session_type_str = session_type_to_str(options.session_type);
@@ -57,8 +67,8 @@ impl SessionStore for SqliteSessionStore {
 
         sqlx::query(
             r"INSERT INTO session_metadata
-              (id, parent_id, root_id, depth, path, session_type, state, agent_id, title, manual_title, token_count, message_count, transcript_path, created_at, updated_at)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?8, NULL, 0, 0, ?9, ?10, ?10)",
+              (id, parent_id, root_id, depth, path, session_type, state, agent_id, title, manual_title, workspace_path, token_count, message_count, transcript_path, created_at, updated_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7, ?8, NULL, ?9, 0, 0, ?10, ?11, ?11)",
         )
         .bind(id.as_str())
         .bind(options.parent_id.as_ref().map(SessionId::as_str))
@@ -68,6 +78,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(session_type_str)
         .bind(options.agent_id.as_ref().map(AgentId::as_str))
         .bind(options.title.as_deref())
+        .bind(workspace_path.as_deref())
         .bind(&transcript_path)
         .bind(&now_str)
         .execute(&self.pool)
@@ -78,12 +89,29 @@ impl SessionStore for SqliteSessionStore {
 
         self.get(&id).await
     }
+}
+
+#[async_trait]
+impl SessionStore for SqliteSessionStore {
+    #[instrument(skip(self), fields(session_type = ?options.session_type))]
+    async fn create(&self, options: CreateSessionOptions) -> Result<SessionNode, SessionError> {
+        self.create_with_workspace(options, None).await
+    }
+
+    #[instrument(skip(self), fields(session_type = ?options.session_type, workspace_path))]
+    async fn create_in_workspace(
+        &self,
+        options: CreateSessionOptions,
+        workspace_path: Option<&str>,
+    ) -> Result<SessionNode, SessionError> {
+        self.create_with_workspace(options, workspace_path).await
+    }
 
     #[instrument(skip(self), fields(session_id = %id))]
     async fn get(&self, id: &SessionId) -> Result<SessionNode, SessionError> {
         let row: Option<SessionRow> = sqlx::query_as(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
+                     agent_id, title, manual_title, workspace_path, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE id = ?1",
         )
         .bind(id.as_str())
@@ -103,7 +131,7 @@ impl SessionStore for SqliteSessionStore {
     async fn list(&self, filter: &SessionFilter) -> Result<Vec<SessionNode>, SessionError> {
         let mut sql = String::from(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
+                     agent_id, title, manual_title, workspace_path, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE 1=1",
         );
         let mut binds: Vec<String> = Vec::new();
@@ -126,6 +154,11 @@ impl SessionStore for SqliteSessionStore {
         if let Some(ref root_id) = filter.root_id {
             binds.push(root_id.as_str().to_string());
             write!(&mut sql, " AND root_id = ?{}", binds.len()).unwrap();
+        }
+
+        if let Some(ref workspace_path) = filter.workspace_path {
+            binds.push(workspace_path.clone());
+            write!(&mut sql, " AND workspace_path = ?{}", binds.len()).unwrap();
         }
 
         sql.push_str(" ORDER BY created_at ASC");
@@ -208,7 +241,7 @@ impl SessionStore for SqliteSessionStore {
     async fn children(&self, id: &SessionId) -> Result<Vec<SessionNode>, SessionError> {
         let rows: Vec<SessionRow> = sqlx::query_as(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
+                     agent_id, title, manual_title, workspace_path, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE parent_id = ?1 ORDER BY created_at ASC",
         )
         .bind(id.as_str())
@@ -235,7 +268,7 @@ impl SessionStore for SqliteSessionStore {
         let placeholders: Vec<String> = (1..=node.path.len()).map(|i| format!("?{i}")).collect();
         let sql = format!(
             r"SELECT id, parent_id, root_id, depth, path, session_type, state,
-                     agent_id, title, manual_title, token_count, message_count, branch_summary, created_at, updated_at
+                     agent_id, title, manual_title, workspace_path, token_count, message_count, branch_summary, created_at, updated_at
               FROM session_metadata WHERE id IN ({})",
             placeholders.join(", ")
         );
@@ -453,6 +486,31 @@ impl SessionStore for SqliteSessionStore {
 
         Ok(())
     }
+
+    #[instrument(skip(self), fields(session_id = %id, workspace_path = ?workspace_path))]
+    async fn set_workspace_path(
+        &self,
+        id: &SessionId,
+        workspace_path: Option<String>,
+    ) -> Result<(), SessionError> {
+        let result = sqlx::query(
+            r"UPDATE session_metadata
+              SET workspace_path = ?1
+              WHERE id = ?2",
+        )
+        .bind(workspace_path)
+        .bind(id.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| SessionError::StorageError {
+            message: e.to_string(),
+        })?;
+
+        if result.rows_affected() == 0 {
+            return Err(SessionError::NotFound { id: id.to_string() });
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +529,7 @@ struct SessionRow {
     agent_id: Option<String>,
     title: Option<String>,
     manual_title: Option<String>,
+    workspace_path: Option<String>,
     token_count: i64,
     message_count: i64,
     branch_summary: Option<String>,
@@ -508,6 +567,7 @@ impl SessionRow {
             manual_title: self.manual_title,
             channel: None,
             label: None,
+            workspace_path: self.workspace_path,
             token_count: u32::try_from(self.token_count).unwrap_or(0),
             message_count: u32::try_from(self.message_count).unwrap_or(0),
             last_compaction: None,
@@ -879,5 +939,79 @@ mod tests {
         assert_eq!(ancestors.len(), 2);
         assert_eq!(ancestors[0].id, root.id);
         assert_eq!(ancestors[1].id, child.id);
+    }
+
+    #[tokio::test]
+    async fn test_workspace_scoped_sessions_are_persisted_and_filtered() {
+        let store = setup().await;
+        let workspace_a = tempfile::tempdir().unwrap();
+        let workspace_b = tempfile::tempdir().unwrap();
+
+        let session_a = store
+            .create_in_workspace(
+                CreateSessionOptions {
+                    parent_id: None,
+                    session_type: SessionType::Main,
+                    agent_id: None,
+                    title: Some("workspace a".into()),
+                },
+                Some(workspace_a.path().to_string_lossy().as_ref()),
+            )
+            .await
+            .unwrap();
+        store
+            .create_in_workspace(
+                CreateSessionOptions {
+                    parent_id: None,
+                    session_type: SessionType::Main,
+                    agent_id: None,
+                    title: Some("workspace b".into()),
+                },
+                Some(workspace_b.path().to_string_lossy().as_ref()),
+            )
+            .await
+            .unwrap();
+
+        let listed = store
+            .list(&SessionFilter {
+                workspace_path: session_a.workspace_path.clone(),
+                ..SessionFilter::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, session_a.id);
+        assert_eq!(listed[0].workspace_path, session_a.workspace_path);
+    }
+
+    #[tokio::test]
+    async fn test_child_session_inherits_parent_workspace() {
+        let store = setup().await;
+        let workspace = tempfile::tempdir().unwrap();
+        let parent = store
+            .create_in_workspace(
+                CreateSessionOptions {
+                    parent_id: None,
+                    session_type: SessionType::Main,
+                    agent_id: None,
+                    title: None,
+                },
+                Some(workspace.path().to_string_lossy().as_ref()),
+            )
+            .await
+            .unwrap();
+
+        let child = store
+            .create(CreateSessionOptions {
+                parent_id: Some(parent.id.clone()),
+                session_type: SessionType::Branch,
+                agent_id: None,
+                title: None,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(child.workspace_path, parent.workspace_path);
     }
 }

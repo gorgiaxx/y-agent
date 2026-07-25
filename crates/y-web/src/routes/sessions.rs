@@ -30,6 +30,8 @@ pub struct ListSessionsQuery {
     pub state: Option<String>,
     /// Filter by agent ID.
     pub agent_id: Option<String>,
+    /// Restrict resumable history to one canonical workspace.
+    pub workspace_path: Option<String>,
 }
 
 /// Request body for `POST /api/v1/sessions`.
@@ -37,6 +39,7 @@ pub struct ListSessionsQuery {
 pub struct CreateSessionRequest {
     pub title: Option<String>,
     pub agent_id: Option<String>,
+    pub workspace_path: Option<String>,
 }
 
 /// Session info returned to clients.
@@ -46,6 +49,7 @@ pub struct SessionInfo {
     pub agent_id: Option<String>,
     pub title: Option<String>,
     pub manual_title: Option<String>,
+    pub workspace_path: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub message_count: usize,
@@ -151,6 +155,7 @@ fn session_to_info(s: &y_core::session::SessionNode, has_custom_prompt: bool) ->
         agent_id: s.agent_id.as_ref().map(|id| id.0.clone()),
         title: s.title.clone(),
         manual_title: s.manual_title.clone(),
+        workspace_path: s.workspace_path.clone(),
         created_at: s.created_at.to_rfc3339(),
         updated_at: s.updated_at.to_rfc3339(),
         message_count: s.message_count as usize,
@@ -167,21 +172,39 @@ async fn list_sessions(
     State(state): State<AppState>,
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
+    let workspaces = y_service::WorkspaceService::new(&state.config_dir);
+    y_service::SessionService::backfill_legacy_assignments(
+        &state.container.session_manager,
+        &workspaces,
+    )
+    .await
+    .map_err(|error| ApiError::Internal(format!("{error}")))?;
+    let agent_id = query.agent_id.map(y_core::types::AgentId::from_string);
     let filter = SessionFilter {
         state: match query.state.as_deref() {
             Some("Archived") => Some(SessionState::Archived),
             _ => Some(SessionState::Active),
         },
-        agent_id: query.agent_id.map(y_core::types::AgentId::from_string),
+        agent_id: agent_id.clone(),
         ..Default::default()
     };
 
-    let sessions = state
-        .container
-        .session_manager
-        .list_sessions(&filter)
+    let sessions = if let Some(workspace_path) = query.workspace_path {
+        y_service::SessionService::list_resumable_sessions(
+            &state.container.session_manager,
+            std::path::Path::new(&workspace_path),
+            agent_id,
+        )
         .await
-        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+        .map_err(|error| ApiError::BadRequest(format!("{error}")))?
+    } else {
+        state
+            .container
+            .session_manager
+            .list_sessions(&filter)
+            .await
+            .map_err(|e| ApiError::Internal(format!("{e}")))?
+    };
 
     // Check which sessions have custom prompt composition.
     let mut custom_prompt_ids = std::collections::HashSet::new();
@@ -219,21 +242,32 @@ async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<Option<CreateSessionRequest>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (title, agent_id) = match body {
-        Some(b) => (b.title, b.agent_id),
-        None => (None, None),
+    let (title, agent_id, workspace_path) = match body {
+        Some(b) => (b.title, b.agent_id, b.workspace_path),
+        None => (None, None, None),
     };
-    let session = state
-        .container
-        .session_manager
-        .create_session(CreateSessionOptions {
-            parent_id: None,
-            session_type: SessionType::Main,
-            agent_id: agent_id.map(y_core::types::AgentId::from_string),
-            title,
-        })
+    let options = CreateSessionOptions {
+        parent_id: None,
+        session_type: SessionType::Main,
+        agent_id: agent_id.map(y_core::types::AgentId::from_string),
+        title,
+    };
+    let session = if let Some(workspace_path) = workspace_path {
+        y_service::SessionService::create_session(
+            &state.container.session_manager,
+            options,
+            std::path::Path::new(&workspace_path),
+        )
         .await
-        .map_err(|e| ApiError::Internal(format!("{e}")))?;
+        .map_err(|error| ApiError::Internal(format!("{error}")))
+    } else {
+        state
+            .container
+            .session_manager
+            .create_session(options)
+            .await
+            .map_err(|error| ApiError::Internal(format!("{error}")))
+    }?;
 
     let info = session_to_info(&session, false);
     Ok((StatusCode::CREATED, Json(info)))

@@ -461,6 +461,7 @@ pub fn run() {
             commands::chat::resume_plan_execution,
             // Sessions
             commands::session::session_list,
+            commands::session::session_list_resumable,
             commands::session::session_list_children,
             commands::session::session_create,
             commands::session::session_get_messages,
