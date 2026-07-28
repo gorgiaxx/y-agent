@@ -148,12 +148,14 @@ pub enum Commands {
     Serve(serve::ServeArgs),
 
     /// Resume a previous session in TUI mode.
+    #[cfg(feature = "tui")]
     Resume {
         /// Session ID (or prefix) to resume. Uses the most recent if omitted.
         session: Option<String>,
     },
 
     /// Fork a previous session into a new session in TUI mode.
+    #[cfg(feature = "tui")]
     Fork {
         /// Session ID (or prefix) to fork. Uses the most recent if omitted.
         session: Option<String>,
@@ -311,6 +313,30 @@ mod tests {
             Some(super::Commands::BackgroundTask {
                 action: super::background_task::BackgroundTaskAction::Poll { .. }
             })
+        ));
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn test_parse_tui_session_argument_remains_supported() {
+        let cli = TestCli::parse_from(["y-agent", "tui", "--session", "session-1"]);
+        assert!(matches!(
+            cli.command,
+            Some(super::Commands::Tui {
+                session: Some(ref session)
+            }) if session == "session-1"
+        ));
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn test_parse_resume_session_argument_remains_supported() {
+        let cli = TestCli::parse_from(["y-agent", "resume", "session-1"]);
+        assert!(matches!(
+            cli.command,
+            Some(super::Commands::Resume {
+                session: Some(ref session)
+            }) if session == "session-1"
         ));
     }
 

@@ -68,6 +68,18 @@ struct Cli {
     /// back to printing the version banner instead.
     #[arg(long, global = true, default_value_t = false)]
     no_tui: bool,
+
+    /// Session ID or prefix to resume directly in the TUI.
+    ///
+    /// This top-level shortcut is equivalent to `y-agent resume <SESSION_ID>`.
+    #[cfg(feature = "tui")]
+    #[arg(
+        short = 's',
+        long,
+        value_name = "SESSION_ID",
+        conflicts_with = "no_tui"
+    )]
+    session: Option<String>,
 }
 
 #[tokio::main]
@@ -133,16 +145,7 @@ async fn main() -> Result<()> {
     //     TTY (interactive terminal). Piped/non-interactive invocations fall
     //     back to the version banner so scripts and CI keep working.
     #[cfg(feature = "tui")]
-    let is_tui = {
-        let explicit_tui = matches!(
-            cli.command,
-            Some(Commands::Tui { .. } | Commands::Resume { .. } | Commands::Fork { .. })
-        );
-        let default_tui = cli.command.is_none()
-            && !cli.no_tui
-            && std::io::IsTerminal::is_terminal(&std::io::stdin());
-        explicit_tui || default_tui
-    };
+    let is_tui = should_launch_tui(&cli, std::io::IsTerminal::is_terminal(&std::io::stdin()));
     #[cfg(not(feature = "tui"))]
     let is_tui = false;
 
@@ -329,8 +332,14 @@ async fn main() -> Result<()> {
         #[cfg(feature = "tui")]
         Some(Commands::Tui { session }) => {
             let services = wire::wire(&config).await?;
+            let resume_session = match session {
+                Some(target) => {
+                    Some(resolve_resume_session(Some(target.clone()), &services).await?)
+                }
+                None => None,
+            };
             let exit_info =
-                commands::tui_cmd::run(services, Some(toast_rx), session.clone()).await?;
+                commands::tui_cmd::run(services, Some(toast_rx), resume_session).await?;
             print_exit_summary(&exit_info);
         }
         Some(Commands::Init(_)) => {
@@ -355,8 +364,9 @@ async fn main() -> Result<()> {
         Some(Commands::Resume { session }) => {
             let services = wire::wire(&config).await?;
             // Resume uses the most recent session if none specified.
-            let session_id = resolve_resume_session(session.clone(), &services).await;
-            let exit_info = commands::tui_cmd::run(services, Some(toast_rx), session_id).await?;
+            let session_id = resolve_resume_session(session.clone(), &services).await?;
+            let exit_info =
+                commands::tui_cmd::run(services, Some(toast_rx), Some(session_id)).await?;
             print_exit_summary(&exit_info);
         }
         #[cfg(feature = "tui")]
@@ -399,7 +409,14 @@ async fn main() -> Result<()> {
             #[cfg(feature = "tui")]
             if is_tui {
                 let services = wire::wire(&config).await?;
-                let exit_info = commands::tui_cmd::run(services, Some(toast_rx), None).await?;
+                let resume_session = match &cli.session {
+                    Some(target) => {
+                        Some(resolve_resume_session(Some(target.clone()), &services).await?)
+                    }
+                    None => None,
+                };
+                let exit_info =
+                    commands::tui_cmd::run(services, Some(toast_rx), resume_session).await?;
                 print_exit_summary(&exit_info);
                 return Ok(());
             }
@@ -461,19 +478,31 @@ fn print_exit_summary(exit_info: &commands::tui_cmd::ExitInfo) {
     }
     if let Some(ref sid) = exit_info.session_id {
         let short_id = if sid.len() > 8 { &sid[..8] } else { sid };
-        println!("To continue this session, run: y-agent resume {short_id}");
+        println!("To continue this session, run: yagent --session {short_id}");
     }
+}
+
+#[cfg(feature = "tui")]
+fn should_launch_tui(cli: &Cli, stdin_is_terminal: bool) -> bool {
+    let explicit_tui = matches!(
+        cli.command,
+        Some(Commands::Tui { .. } | Commands::Resume { .. } | Commands::Fork { .. })
+    );
+    let top_level_resume = cli.command.is_none() && cli.session.is_some();
+    let default_tui = cli.command.is_none() && !cli.no_tui && stdin_is_terminal;
+    explicit_tui || top_level_resume || default_tui
 }
 
 /// Resolve a session ID for the resume subcommand.
 ///
-/// If `session` is `Some`, use it as-is. Otherwise, find the most recent session.
+/// If `session` is `Some`, resolve it in the current workspace. Otherwise,
+/// return the most recent resumable session. Missing targets fail closed.
 #[cfg(feature = "tui")]
 async fn resolve_resume_session(
     session: Option<String>,
     services: &wire::AppServices,
-) -> Option<String> {
-    let workspace = std::env::current_dir().ok()?;
+) -> anyhow::Result<String> {
+    let workspace = std::env::current_dir()?;
     match session {
         Some(target) => y_service::SessionService::resolve_resume_target(
             &services.session_manager,
@@ -481,18 +510,18 @@ async fn resolve_resume_session(
             None,
             &target,
         )
-        .await
-        .ok()
-        .flatten()
-        .map(|node| node.id.to_string()),
+        .await?
+        .map(|node| node.id.to_string())
+        .ok_or_else(|| anyhow::anyhow!("no session matching '{target}' in this workspace")),
         None => y_service::SessionService::list_resumable_sessions(
             &services.session_manager,
             &workspace,
             None,
         )
-        .await
-        .ok()
-        .and_then(|nodes| nodes.first().map(|node| node.id.to_string())),
+        .await?
+        .first()
+        .map(|node| node.id.to_string())
+        .ok_or_else(|| anyhow::anyhow!("no resumable sessions in this workspace")),
     }
 }
 
@@ -607,6 +636,27 @@ mod tests {
     fn test_no_tui_flag_defaults_false() {
         let cli = Cli::parse_from(["y-agent", "status"]);
         assert!(!cli.no_tui, "default value of --no-tui must be false");
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn test_top_level_session_argument_parses_without_subcommand() {
+        let cli = Cli::parse_from(["y-agent", "--session", "abc123"]);
+        assert_eq!(cli.session.as_deref(), Some("abc123"));
+        assert!(cli.command.is_none());
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn test_top_level_session_argument_forces_tui_without_tty() {
+        let cli = Cli::parse_from(["y-agent", "--session", "abc123"]);
+        assert!(should_launch_tui(&cli, false));
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn test_top_level_session_conflicts_with_no_tui() {
+        assert!(Cli::try_parse_from(["y-agent", "--session", "abc123", "--no-tui"]).is_err());
     }
 
     // T-CLI-DEFAULT-TUI-04: `--no-tui` is treated as a flag (starts with `-`),

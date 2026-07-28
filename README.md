@@ -82,6 +82,10 @@ cargo app cli -- tui
 cargo app cli --            # launches the TUI in an interactive terminal
 cargo app cli -- --no-tui   # skip the TUI and print the version banner
 
+# Resume a workspace session directly by full ID or unique prefix
+yagent --session <session-id>
+yagent -s <session-id-prefix>
+
 # REST API and optional Web UI
 cargo app cli -- serve
 
@@ -106,6 +110,7 @@ instead of a persistent session sidebar. Useful commands include:
 /plan [prompt]           select plan mode or submit a planned turn immediately
 /loop [prompt]           select loop mode or submit an iterative turn immediately
 /resume [session]        pick or resume a recent session
+/prompt [template]       select or apply a session prompt template
 /copy [N]                copy the latest or Nth-latest assistant response
 /copy code               copy the latest fenced code block
 /copy transcript         copy the complete visible transcript
