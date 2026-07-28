@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use y_core::provider::{ImageGenerationOptions, RequestMode};
 use y_core::session_event::{SessionEventKind, SessionEventRetention};
 use y_core::tool::ToolOutput;
-use y_core::types::SessionId;
+use y_core::types::{Attachment, SessionId};
 use y_service::chat_types::OperationMode;
 use y_service::chat_types::PlanReviewDecision;
 use y_service::chat_types::{
@@ -156,7 +156,7 @@ pub async fn chat_send(
     knowledge_collections: Option<Vec<String>>,
     context_start_index: Option<usize>,
     thinking_effort: Option<String>,
-    attachments: Option<Vec<serde_json::Value>>,
+    attachments: Option<Vec<Attachment>>,
     plan_mode: Option<String>,
     operation_mode: Option<OperationMode>,
     mcp_mode: Option<String>,
@@ -164,7 +164,7 @@ pub async fn chat_send(
     image_generation_options: Option<ImageGenerationOptions>,
 ) -> Result<ChatStarted, String> {
     tracing::info!(plan_mode = ?plan_mode, "chat_send: plan_mode received from frontend");
-    if message.trim().is_empty() {
+    if message.trim().is_empty() && attachments.as_ref().is_none_or(Vec::is_empty) {
         return Err("Message must not be empty".into());
     }
 
@@ -182,8 +182,7 @@ pub async fn chat_send(
 
     let run_id = uuid::Uuid::new_v4().to_string();
 
-    // Build user message metadata from attachments.
-    let user_message_metadata = attachments.map(|atts| serde_json::json!({ "attachments": atts }));
+    let attachments = attachments.unwrap_or_default();
 
     // Prepare turn: resolve/create session, persist user message, read transcript.
     let mut prepared = ChatService::prepare_turn(
@@ -196,7 +195,8 @@ pub async fn chat_send(
             skills: skills.clone(),
             knowledge_collections: knowledge_collections.clone(),
             thinking,
-            user_message_metadata,
+            user_message_metadata: None,
+            attachments,
             plan_mode,
             operation_mode,
             mcp_mode,

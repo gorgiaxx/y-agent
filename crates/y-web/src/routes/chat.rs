@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use y_core::provider::RequestMode;
 use y_core::session::ChatMessageStore;
 use y_core::session_event::{SessionEventKind, SessionEventRetention};
-use y_core::types::SessionId;
+use y_core::types::{Attachment, SessionId};
 use y_service::chat_types::PlanReviewDecision;
 use y_service::chat_types::{
     parse_thinking, ChatCheckpointInfo, CompactResult, MessageWithStatus, OperationMode,
@@ -49,7 +49,7 @@ pub struct ChatRequest {
     pub knowledge_collections: Option<Vec<String>>,
     pub context_start_index: Option<usize>,
     pub thinking_effort: Option<String>,
-    pub attachments: Option<Vec<serde_json::Value>>,
+    pub attachments: Option<Vec<Attachment>>,
     pub plan_mode: Option<String>,
     pub operation_mode: Option<OperationMode>,
     pub mcp_mode: Option<String>,
@@ -354,14 +354,12 @@ async fn chat_turn(
     State(state): State<AppState>,
     Json(body): Json<ChatRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if body.message.trim().is_empty() {
+    if body.message.trim().is_empty() && body.attachments.as_ref().is_none_or(Vec::is_empty) {
         return Err(ApiError::BadRequest("message must not be empty".into()));
     }
 
     let thinking = parse_thinking(body.thinking_effort);
-    let user_message_metadata = body
-        .attachments
-        .map(|atts| serde_json::json!({ "attachments": atts }));
+    let attachments = body.attachments.unwrap_or_default();
 
     let mut prepared = ChatService::prepare_turn(
         &state.container,
@@ -373,7 +371,8 @@ async fn chat_turn(
             skills: body.skills,
             knowledge_collections: body.knowledge_collections,
             thinking,
-            user_message_metadata,
+            user_message_metadata: None,
+            attachments,
             plan_mode: body.plan_mode,
             operation_mode: body.operation_mode,
             mcp_mode: body.mcp_mode,
@@ -452,14 +451,12 @@ async fn chat_send(
     State(state): State<AppState>,
     Json(body): Json<ChatRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if body.message.trim().is_empty() {
+    if body.message.trim().is_empty() && body.attachments.as_ref().is_none_or(Vec::is_empty) {
         return Err(ApiError::BadRequest("message must not be empty".into()));
     }
 
     let thinking = parse_thinking(body.thinking_effort);
-    let user_message_metadata = body
-        .attachments
-        .map(|atts| serde_json::json!({ "attachments": atts }));
+    let attachments = body.attachments.unwrap_or_default();
 
     let mut prepared = ChatService::prepare_turn(
         &state.container,
@@ -471,7 +468,8 @@ async fn chat_send(
             skills: body.skills,
             knowledge_collections: body.knowledge_collections,
             thinking,
-            user_message_metadata,
+            user_message_metadata: None,
+            attachments,
             plan_mode: body.plan_mode,
             operation_mode: body.operation_mode,
             mcp_mode: body.mcp_mode,
