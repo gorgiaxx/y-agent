@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 
 use crate::tui::commands::copy::{self, CopyTarget};
 use crate::tui::state::{AppState, ChatMessage, TurnMode};
+use y_core::permission_types::PermissionMode;
 
 /// Refusal message for session-destroying commands issued while a response
 /// streams. Shared with the TUI's async command paths (`/switch`, `/delete`,
@@ -35,6 +36,11 @@ pub enum CommandResult {
     SubmitTurn { input: String, mode: TurnMode },
     /// Change the orchestration mode used by subsequent normal messages.
     SetTurnMode(TurnMode),
+    /// Change the permission mode of the active session.
+    ///
+    /// Applied by the TUI event loop, which has `AppServices` access to the
+    /// session permission map.
+    SetPermissionMode(PermissionMode),
     /// Copy selected conversation content to the system clipboard.
     Copy(CopyTarget),
     /// Open the full-screen copy target selector.
@@ -59,6 +65,8 @@ pub enum AsyncCommand {
     ResumeSession(Option<String>),
     /// `/delete <id>` -- delete a session.
     DeleteSession(String),
+    /// `/rename <id> <title>` -- set a manual session title.
+    RenameSession { target: String, title: String },
     /// `/branch [label]` -- fork session from current point.
     BranchSession(Option<String>),
     /// `/export [format]` -- export session transcript.
@@ -73,6 +81,8 @@ pub enum AsyncCommand {
     ShowAgents,
     /// `/prompt [template-id|default]` -- select or apply a session prompt template.
     PromptTemplate(Option<String>),
+    /// `/attach <path>` -- add a typed file to the composer.
+    AttachFile(String),
 }
 
 /// Parse and execute a command string.
@@ -208,11 +218,45 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
         "plan" => mode_command(TurnMode::Plan, args),
         "loop" => mode_command(TurnMode::Loop, args),
 
+        "permission" => {
+            let arg = args.trim();
+            if arg.is_empty() {
+                CommandResult::Ok(Some(
+                    "Usage: /permission default|plan|accept_edits|bypass_permissions|dont_ask"
+                        .into(),
+                ))
+            } else {
+                parse_permission_mode(arg).map_or_else(
+                    || {
+                        CommandResult::Error(format!(
+                            "Unknown permission mode '{arg}'. \
+                             Valid: default, plan, accept_edits, bypass_permissions, dont_ask"
+                        ))
+                    },
+                    CommandResult::SetPermissionMode,
+                )
+            }
+        }
+
         "delete" => {
             if args.is_empty() {
                 CommandResult::Error("Usage: /delete <session-id>".into())
             } else {
                 CommandResult::Async(AsyncCommand::DeleteSession(args.to_string()))
+            }
+        }
+
+        "rename" => {
+            let mut parts = args.trim().splitn(2, char::is_whitespace);
+            let target = parts.next().unwrap_or_default().trim();
+            let title = parts.next().unwrap_or_default().trim();
+            if target.is_empty() || title.is_empty() {
+                CommandResult::Error("Usage: /rename <session-id> <title>".into())
+            } else {
+                CommandResult::Async(AsyncCommand::RenameSession {
+                    target: target.to_string(),
+                    title: title.to_string(),
+                })
             }
         }
 
@@ -253,6 +297,14 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             (!args.is_empty()).then(|| args.to_string()),
         )),
 
+        "attach" => {
+            if args.trim().is_empty() {
+                CommandResult::Error("Usage: /attach <path>".into())
+            } else {
+                CommandResult::Async(AsyncCommand::AttachFile(args.trim().to_string()))
+            }
+        }
+
         "shortcuts" => {
             let text = generate_shortcuts_text();
             state.messages.push(ChatMessage::system(text));
@@ -283,6 +335,18 @@ fn mode_command(mode: TurnMode, args: &str) -> CommandResult {
             input: args.to_string(),
             mode,
         }
+    }
+}
+
+/// Parse a permission-mode name as shown in the `/permission` picker.
+pub fn parse_permission_mode(arg: &str) -> Option<PermissionMode> {
+    match arg {
+        "default" => Some(PermissionMode::Default),
+        "plan" => Some(PermissionMode::Plan),
+        "accept_edits" => Some(PermissionMode::AcceptEdits),
+        "bypass_permissions" => Some(PermissionMode::BypassPermissions),
+        "dont_ask" => Some(PermissionMode::DontAsk),
+        _ => None,
     }
 }
 
@@ -404,6 +468,7 @@ fn generate_shortcuts_text() -> String {
     /prompt                   Select a session prompt template
     /prompt default           Return to the built-in prompt
     /mode auto                Use automatic orchestration for later messages
+    /permission plan          Read-only tools allowed, write tools ask
     /plan <prompt>            Switch to plan mode and submit immediately
     /copy                     Copy latest assistant response
     /copy code                Copy latest fenced code block
@@ -807,6 +872,32 @@ mod tests {
             execute("plan inspect the repository", &mut state),
             CommandResult::SubmitTurn { ref input, mode: TurnMode::Plan }
                 if input == "inspect the repository"
+        ));
+    }
+
+    #[test]
+    fn test_permission_command_validates_mode() {
+        let mut state = AppState::new();
+        assert!(matches!(
+            execute("permission plan", &mut state),
+            CommandResult::SetPermissionMode(PermissionMode::Plan)
+        ));
+        assert!(matches!(
+            execute("permission bypass_permissions", &mut state),
+            CommandResult::SetPermissionMode(PermissionMode::BypassPermissions)
+        ));
+        // The alias resolves to the same command.
+        assert!(matches!(
+            execute("perm dont_ask", &mut state),
+            CommandResult::SetPermissionMode(PermissionMode::DontAsk)
+        ));
+        assert!(matches!(
+            execute("permission bogus", &mut state),
+            CommandResult::Error(ref message) if message.contains("bogus")
+        ));
+        assert!(matches!(
+            execute("permission", &mut state),
+            CommandResult::Ok(Some(ref message)) if message.contains("Usage")
         ));
     }
 }

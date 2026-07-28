@@ -39,6 +39,10 @@ pub enum InteractionMode {
     Help,
     /// Full-screen copy target selector.
     Copy,
+    /// Reverse search over persisted prompt history.
+    HistorySearch,
+    /// Search the active transcript and jump to a message.
+    TranscriptSearch,
     /// Full-screen session resume selector.
     Resume,
     /// Full-screen session prompt-template selector.
@@ -426,6 +430,11 @@ pub struct SessionListItem {
     pub updated_at: DateTime<Utc>,
     /// Total messages in the session.
     pub message_count: u32,
+    pub state: y_core::session::SessionState,
+    pub parent_id: Option<String>,
+    pub depth: u32,
+    pub pinned: bool,
+    pub quick_slot: Option<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -545,6 +554,12 @@ pub struct AppState {
     /// Maintained by the chat flow; read by the input panel (queue depth in
     /// the streaming title) and the status bar (`queue: N` segment).
     pub follow_up_queue: Vec<y_service::FollowUpMessage>,
+    /// Permission mode chosen before any session exists.
+    ///
+    /// Written by `/permission` when `current_session_id` is `None`; applied
+    /// to the service-side session permission map once the next session is
+    /// created (see the `SessionCreated` handling in the event drain).
+    pub pending_permission_mode: Option<y_core::permission_types::PermissionMode>,
     /// Number of background shell tasks currently running.
     ///
     /// Maintained by the app loop's polling task; read by the status bar
@@ -591,6 +606,7 @@ impl Default for AppState {
             tick_counter: 0,
             theme: Theme::default(),
             follow_up_queue: Vec::new(),
+            pending_permission_mode: None,
             bg_task_count: 0,
             active_subagent_count: 0,
         }
@@ -626,6 +642,8 @@ impl AppState {
                     | InteractionMode::Select
                     | InteractionMode::Help
                     | InteractionMode::Copy
+                    | InteractionMode::HistorySearch
+                    | InteractionMode::TranscriptSearch
                     | InteractionMode::Resume
                     | InteractionMode::Prompt
                     | InteractionMode::Queue
@@ -636,6 +654,8 @@ impl AppState {
                     | InteractionMode::Select
                     | InteractionMode::Help
                     | InteractionMode::Copy
+                    | InteractionMode::HistorySearch
+                    | InteractionMode::TranscriptSearch
                     | InteractionMode::Resume
                     | InteractionMode::Prompt
                     | InteractionMode::Queue
@@ -644,6 +664,8 @@ impl AppState {
             ) | (
                 InteractionMode::Command,
                 InteractionMode::Copy
+                    | InteractionMode::HistorySearch
+                    | InteractionMode::TranscriptSearch
                     | InteractionMode::Resume
                     | InteractionMode::Prompt
                     | InteractionMode::Queue
@@ -861,6 +883,7 @@ impl AppState {
     }
 
     /// Push a non-empty, non-duplicate entry to input history.
+    #[cfg(test)]
     pub fn push_history(&mut self, input: &str) {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -1077,6 +1100,11 @@ mod tests {
             title: "Release work".to_string(),
             updated_at: Utc::now(),
             message_count: 3,
+            state: y_core::session::SessionState::Active,
+            parent_id: None,
+            depth: 0,
+            pinned: false,
+            quick_slot: None,
         });
         assert_eq!(state.current_session_label(), "Release work");
     }

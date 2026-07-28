@@ -1,7 +1,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
 use super::picker::{truncate, visible_range, PickerItem, PickerState};
@@ -15,6 +15,7 @@ struct SessionPickerEntry {
     session: SessionListItem,
     id_lower: String,
     title_lower: String,
+    metadata_lower: String,
 }
 
 impl SessionPickerEntry {
@@ -22,6 +23,15 @@ impl SessionPickerEntry {
         Self {
             id_lower: session.id.to_ascii_lowercase(),
             title_lower: session.title.to_ascii_lowercase(),
+            metadata_lower: format!(
+                "{:?} {} {}",
+                session.state,
+                session.parent_id.as_deref().unwrap_or_default(),
+                session
+                    .quick_slot
+                    .map_or_else(String::new, |slot| slot.to_string())
+            )
+            .to_ascii_lowercase(),
             session,
         }
     }
@@ -29,7 +39,9 @@ impl SessionPickerEntry {
 
 impl PickerItem for SessionPickerEntry {
     fn matches(&self, query_lower: &str) -> bool {
-        self.id_lower.contains(query_lower) || self.title_lower.contains(query_lower)
+        self.id_lower.contains(query_lower)
+            || self.title_lower.contains(query_lower)
+            || self.metadata_lower.contains(query_lower)
     }
 }
 
@@ -98,7 +110,7 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &SessionPickerState, theme:
             Constraint::Length(2),
             Constraint::Min(6),
             Constraint::Length(7),
-            Constraint::Length(1),
+            Constraint::Length(2),
         ])
         .split(inner);
 
@@ -125,6 +137,17 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &SessionPickerState, theme:
             } else {
                 ""
             };
+            let pinned = if session.pinned { "*" } else { " " };
+            let slot = session
+                .quick_slot
+                .map_or_else(|| " ".into(), |slot| slot.to_string());
+            let state = match session.state {
+                y_core::session::SessionState::Active => "active",
+                y_core::session::SessionState::Archived => "archive",
+                y_core::session::SessionState::Paused => "paused",
+                y_core::session::SessionState::Merged => "merged",
+                y_core::session::SessionState::Tombstone => "deleted",
+            };
             let title = if session.title.trim().is_empty() {
                 "Untitled session"
             } else {
@@ -141,10 +164,11 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &SessionPickerState, theme:
             };
             ListItem::new(Line::from(Span::styled(
                 format!(
-                    " {}  {:<28} {:>4} msgs  {short_id}{current}",
+                    "{pinned}{slot} {}  {:<24} {:>4} msgs  {:<7} {short_id}{current}",
                     session.updated_at.format("%Y-%m-%d %H:%M"),
-                    truncate(title, 28),
+                    truncate(title, 24),
                     session.message_count,
+                    state,
                 ),
                 style,
             )))
@@ -168,10 +192,13 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &SessionPickerState, theme:
                 session.title.as_str()
             };
             format!(
-                "Title: {title}\nSession: {}\nUpdated: {}\nMessages: {}{}",
+                "Title: {title}\nSession: {}\nUpdated: {}\nMessages: {}  State: {:?}\nLineage: depth {}{}{}",
                 session.id,
                 session.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
                 session.message_count,
+                session.state,
+                session.depth,
+                session.parent_id.as_ref().map_or_else(String::new, |parent| format!(", parent {parent}")),
                 if picker.selected_is_current() {
                     "\nStatus: current session"
                 } else {
@@ -192,8 +219,11 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &SessionPickerState, theme:
         rows[2],
     );
     frame.render_widget(
-        Paragraph::new(" Up/Down navigate  Type to search  Enter resume  Esc close")
-            .style(Style::default().fg(theme.muted())),
+        Paragraph::new(
+            " Enter resume  F2 rename  Ctrl+P pin  Ctrl+A archive\n Ctrl+D delete  Alt+1..5 slot  Esc close",
+        )
+        .style(Style::default().fg(theme.muted()))
+        .wrap(Wrap { trim: true }),
         rows[3],
     );
 }
@@ -214,6 +244,11 @@ mod tests {
             title: title.into(),
             updated_at: Utc::now(),
             message_count: 4,
+            state: y_core::session::SessionState::Active,
+            parent_id: None,
+            depth: 0,
+            pinned: false,
+            quick_slot: None,
         }
     }
 

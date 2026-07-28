@@ -7,7 +7,11 @@
 pub mod chat_flow;
 pub mod clipboard;
 pub mod commands;
+pub mod composer;
+pub mod drafts;
+pub mod editor;
 pub mod events;
+pub mod history;
 pub mod keys;
 pub mod layout;
 pub mod markdown;
@@ -15,16 +19,19 @@ pub mod overlays;
 pub mod panels;
 pub mod selection;
 pub mod state;
+pub mod terminal;
 pub mod theme;
 pub mod tool_renderers;
 pub mod tracing_bridge;
 
 use std::fmt::Write as _;
+use std::io::Write as _;
 use std::io::{self, Stdout};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use base64::Engine as _;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
 };
@@ -44,23 +51,43 @@ use tui_textarea::{CursorMove, TextArea};
 use crate::wire::AppServices;
 use chat_flow::{ActiveChat, InputIntent};
 use commands::handlers::{self, AsyncCommand, CommandResult};
+use composer::{ComposerDraft, PasteDisposition};
+use drafts::{DraftSnapshot, DraftStore};
 use events::{AppEvent, EventLoop};
-use keys::KeyAction;
+use history::PromptHistoryStore;
+use keys::{KeyAction, Keymap};
 use layout::LayoutChunks;
 use overlays::command_palette::CommandPaletteState;
 use overlays::copy_picker::CopyPickerState;
+use overlays::history_search::HistorySearchState;
 use overlays::prompt_picker::{PromptPickerSelection, PromptPickerState};
 use overlays::queue_picker::QueuePickerState;
 use overlays::session_picker::SessionPickerState;
 use overlays::tasks_picker::{kill_effect, KillEffect, TasksPickerState};
+use overlays::transcript_search::TranscriptSearchState;
 use state::{
     AppState, ChatMessage, ChatRenderCache, InteractionMode, MessageRole, PanelFocus,
     PromptTemplateStatus, SessionListItem, Toast, ToastLevel, ToolSelection,
 };
+use y_core::permission_types::PermissionMode;
 use y_core::provider::ProviderPool as _;
+use y_core::types::SessionId;
 
 /// Type alias for the ratatui terminal with crossterm backend.
 type Term = Terminal<CrosstermBackend<Stdout>>;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Toggle {
+    #[default]
+    Off,
+    On,
+}
+
+impl Toggle {
+    fn is_on(self) -> bool {
+        self == Self::On
+    }
+}
 
 // ---------------------------------------------------------------------------
 // TuiApp
@@ -83,6 +110,10 @@ pub struct TuiApp {
     palette: CommandPaletteState,
     /// Full-screen copy target selector state.
     copy_picker: CopyPickerState,
+    /// Reverse-search state over durable prompt history.
+    history_search: HistorySearchState,
+    /// Search state over the active display transcript.
+    transcript_search: TranscriptSearchState,
     /// Full-screen session resume selector state.
     session_picker: SessionPickerState,
     /// Full-screen session prompt-template selector state.
@@ -125,7 +156,7 @@ pub struct TuiApp {
     /// Per-message render cache for the chat panel (markdown/highlight/wrap).
     chat_render_cache: ChatRenderCache,
     /// Whether an input-composer mouse selection drag is in progress.
-    selecting_input: bool,
+    selecting_input: Toggle,
     /// Composer viewport top row, replicated each frame from tui-textarea's
     /// internal scroll rule (the crate exposes no scroll-offset getter) so
     /// mouse clicks can be mapped to buffer positions.
@@ -135,7 +166,38 @@ pub struct TuiApp {
     /// Set on any state-changing event (keys, mouse, resize, chat-stream
     /// batches, toast activity) and while animations are running. Idle ticks
     /// leave it cleared so the loop does not re-render an unchanged frame.
-    needs_redraw: bool,
+    needs_redraw: Toggle,
+    /// Active semantic keymap, shared by dispatch and generated help.
+    keymap: Keymap,
+    /// Detected host features used by input and clipboard adapters.
+    terminal_capabilities: terminal::TerminalCapabilities,
+    /// Deadline for the second `Ctrl+C` required to exit from an idle,
+    /// empty composer.
+    quit_confirmation_deadline: Option<Instant>,
+    /// Vertical scroll offset for generated keyboard help.
+    help_scroll: u16,
+    /// Bounded prompt history persisted outside session transcripts.
+    prompt_history_store: PromptHistoryStore,
+    /// Durable per-session unfinished composer drafts.
+    draft_store: DraftStore,
+    /// Hidden source text for large-paste tokens in the visible textarea.
+    composer_draft: ComposerDraft,
+    /// Whether the next bracketed paste should bypass large-paste collapsing.
+    raw_paste_armed: Toggle,
+    /// Completed native clipboard-image reads, delivered off the UI loop.
+    clipboard_image_rx:
+        tokio::sync::mpsc::UnboundedReceiver<Result<clipboard::ClipboardImage, String>>,
+    clipboard_image_tx:
+        tokio::sync::mpsc::UnboundedSender<Result<clipboard::ClipboardImage, String>>,
+    clipboard_image_in_flight: Toggle,
+    /// Exact structured draft retained until a submitted turn succeeds.
+    pending_submission: Option<(String, ComposerDraft, String)>,
+    /// Two-step guard for archive/delete operations in the session hub.
+    pending_session_confirmation: Option<(KeyAction, String, Instant)>,
+    /// Two-step guard for shell commands requiring HITL confirmation.
+    pending_shell_confirmation: Option<(String, Instant)>,
+    /// One-shot flag for commands such as `/attach` that replace the composer.
+    preserve_composer_after_command: Toggle,
 }
 
 impl TuiApp {
@@ -147,28 +209,67 @@ impl TuiApp {
         services: Arc<AppServices>,
         toast_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Toast>>,
     ) -> Result<Self> {
+        let terminal_capabilities = terminal::TerminalCapabilities::detect();
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(
-            stdout,
-            EnterAlternateScreen,
-            EnableMouseCapture,
-            EnableBracketedPaste
-        )?;
+        if terminal_capabilities.supports_bracketed_paste() {
+            execute!(
+                stdout,
+                EnterAlternateScreen,
+                EnableMouseCapture,
+                EnableBracketedPaste
+            )?;
+        } else {
+            execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        }
 
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
-        let state = AppState::new();
+        let keymap_path =
+            crate::config::dirs_user_config().map(|directory| directory.join("tui-keymap.toml"));
+        let (keymap, keymap_warning) = match keymap_path
+            .as_deref()
+            .map(|path| Keymap::load_for_terminal(path, terminal_capabilities))
+        {
+            Some(Ok(keymap)) => (keymap, None),
+            Some(Err(error)) => (Keymap::default(), Some(format!("Keymap ignored: {error}"))),
+            None => (Keymap::for_terminal(terminal_capabilities), None),
+        };
+        let prompt_history_store = PromptHistoryStore::new(
+            y_service::dirs_state().map(|directory| directory.join("tui-history.json")),
+            500,
+        );
+        let draft_store = DraftStore::new(
+            y_service::dirs_state().map(|directory| directory.join("tui-drafts.json")),
+        )
+        .unwrap_or_else(|error| {
+            warn!(%error, "composer draft store disabled");
+            DraftStore::memory_only()
+        });
+        let mut state = AppState::new();
+        if let Some(warning) = keymap_warning {
+            state.push_toast(warning, ToastLevel::Error);
+        }
+        match prompt_history_store.load() {
+            Ok(entries) => state.input_history = entries,
+            Err(error) => state.push_toast(
+                format!("Prompt history ignored: {error}"),
+                ToastLevel::Error,
+            ),
+        }
         let events = EventLoop::new(Duration::from_millis(100));
         let textarea = TextArea::default();
         let palette = CommandPaletteState::new();
         let copy_picker = CopyPickerState::default();
+        let history_search = HistorySearchState::default();
+        let transcript_search = TranscriptSearchState::default();
         let session_picker = SessionPickerState::default();
         let prompt_picker = PromptPickerState::default();
         let queue_picker = QueuePickerState::default();
         let tasks_picker = TasksPickerState::default();
         let (bg_poll_tx, bg_poll_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (clipboard_image_tx, clipboard_image_rx) = tokio::sync::mpsc::unbounded_channel();
 
         Ok(Self {
             terminal,
@@ -177,6 +278,8 @@ impl TuiApp {
             textarea,
             palette,
             copy_picker,
+            history_search,
+            transcript_search,
             session_picker,
             prompt_picker,
             queue_picker,
@@ -193,9 +296,24 @@ impl TuiApp {
             chat_plain_lines: Vec::new(),
             chat_tool_rows: Vec::new(),
             chat_render_cache: ChatRenderCache::default(),
-            selecting_input: false,
+            selecting_input: Toggle::Off,
             input_vscroll: 0,
-            needs_redraw: true,
+            needs_redraw: Toggle::On,
+            keymap,
+            terminal_capabilities,
+            quit_confirmation_deadline: None,
+            help_scroll: 0,
+            prompt_history_store,
+            draft_store,
+            composer_draft: ComposerDraft::default(),
+            raw_paste_armed: Toggle::Off,
+            clipboard_image_rx,
+            clipboard_image_tx,
+            clipboard_image_in_flight: Toggle::Off,
+            pending_submission: None,
+            pending_session_confirmation: None,
+            pending_shell_confirmation: None,
+            preserve_composer_after_command: Toggle::Off,
         })
     }
 
@@ -253,9 +371,9 @@ impl TuiApp {
 
         loop {
             // Redraw only when something changed since the last frame.
-            if self.needs_redraw {
+            if self.needs_redraw.is_on() {
                 self.draw()?;
-                self.needs_redraw = false;
+                self.needs_redraw = Toggle::Off;
             }
 
             let Some(event) = self.events.next().await else {
@@ -270,10 +388,11 @@ impl TuiApp {
             // streaming text appears immediately instead of waiting for the
             // next tick.
             if self.drain_chat_events() {
-                self.needs_redraw = true;
+                self.needs_redraw = Toggle::On;
             }
         }
 
+        self.stash_current_draft();
         self.restore_terminal()?;
         Ok(())
     }
@@ -304,18 +423,18 @@ impl TuiApp {
                             if self.handle_key_event(key).await {
                                 return true;
                             }
-                            self.needs_redraw = true;
+                            self.needs_redraw = Toggle::On;
                         }
                         AppEvent::Mouse(mouse) => {
                             self.handle_mouse_event(mouse);
-                            self.needs_redraw = true;
+                            self.needs_redraw = Toggle::On;
                         }
                         AppEvent::Paste(text) => {
                             self.handle_paste(&text);
-                            self.needs_redraw = true;
+                            self.needs_redraw = Toggle::On;
                         }
                         AppEvent::Resize(_w, _h) => {
-                            self.needs_redraw = true;
+                            self.needs_redraw = Toggle::On;
                         }
                         AppEvent::Tick => self.handle_tick(),
                     }
@@ -339,7 +458,7 @@ impl TuiApp {
     fn flush_pending_drag(&mut self, pending: &mut Option<crossterm::event::MouseEvent>) {
         if let Some(mouse) = pending.take() {
             self.handle_mouse_event(mouse);
-            self.needs_redraw = true;
+            self.needs_redraw = Toggle::On;
         }
     }
 
@@ -353,9 +472,20 @@ impl TuiApp {
         };
         let mut applied = false;
         let mut channel_closed = false;
+        let mut created_session = None;
+        let mut submission_failed = false;
+        let mut submission_finished = false;
         loop {
             match active_chat.events.try_recv() {
                 Ok(event) => {
+                    if let chat_flow::ChatEvent::SessionCreated { id, .. } = &event {
+                        created_session = Some(id.clone());
+                    }
+                    submission_failed |= matches!(&event, chat_flow::ChatEvent::Error(_));
+                    submission_finished |= matches!(
+                        &event,
+                        chat_flow::ChatEvent::Response { .. } | chat_flow::ChatEvent::Cancelled
+                    );
                     chat_flow::apply_chat_event(event, &mut self.state);
                     applied = true;
                 }
@@ -368,6 +498,29 @@ impl TuiApp {
                 }
             }
         }
+        if submission_failed {
+            self.restore_failed_submission();
+        } else if submission_finished {
+            if let Some((_, _, draft_key)) = self.pending_submission.take() {
+                if let Err(error) = self.draft_store.remove(&draft_key) {
+                    self.state.push_toast(error, ToastLevel::Error);
+                }
+            }
+        }
+        // A `/permission` selection made before any session existed applies
+        // to the session this turn just created.
+        if let (Some(id), Some(mode)) = (created_session, self.state.pending_permission_mode.take())
+        {
+            let services = Arc::clone(&self.services);
+            tokio::spawn(async move {
+                services
+                    .session_state
+                    .session_permission_modes
+                    .write()
+                    .await
+                    .insert(SessionId::from_string(id), mode);
+            });
+        }
         if channel_closed {
             handle_chat_channel_closed(&mut self.state);
             self.active_chat = None;
@@ -378,13 +531,49 @@ impl TuiApp {
 
     /// Process a key event. Returns `true` when the app should quit.
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        let action = keys::dispatch(key, &self.state);
+        let action =
+            self.keymap
+                .dispatch_with_composer(key, &self.state, textarea_is_empty(&self.textarea));
+        if action != KeyAction::ConfirmQuit {
+            self.quit_confirmation_deadline = None;
+        }
         // Any keystroke ends an in-progress composer mouse selection: the
         // highlight must not survive edits, history recalls, or mode changes
         // (all of which are key-driven).
         self.cancel_input_selection();
         match action {
             KeyAction::Quit => return true,
+            KeyAction::ConfirmQuit => {
+                let now = Instant::now();
+                if self
+                    .quit_confirmation_deadline
+                    .is_some_and(|deadline| deadline >= now)
+                {
+                    return true;
+                }
+                self.quit_confirmation_deadline = Some(now + Duration::from_secs(2));
+                self.state
+                    .push_toast("Press Ctrl+C again to quit.".into(), ToastLevel::Info);
+            }
+            KeyAction::ClearInput => {
+                self.textarea = TextArea::default();
+                self.composer_draft.clear();
+                self.state.history_index = None;
+                self.state.input_draft = None;
+                self.state
+                    .push_toast("Composer cleared.".into(), ToastLevel::Info);
+            }
+            KeyAction::PasteRaw => {
+                self.raw_paste_armed = Toggle::On;
+                self.state.push_toast(
+                    "Raw paste armed for the next paste event.".into(),
+                    ToastLevel::Info,
+                );
+            }
+            KeyAction::PasteImage => self.request_clipboard_image(),
+            KeyAction::OpenHistorySearch => self.open_history_search(),
+            KeyAction::OpenTranscriptSearch => self.open_transcript_search(),
+            KeyAction::OpenExternalEditor => self.open_external_editor(),
             KeyAction::Submit => {
                 if self.handle_submit().await {
                     return true;
@@ -397,10 +586,16 @@ impl TuiApp {
                 self.state.cycle_focus_forward();
             }
             KeyAction::ScrollUp => {
-                if self.state.mode == InteractionMode::Resume {
+                if self.state.mode == InteractionMode::Help {
+                    self.help_scroll = self.help_scroll.saturating_sub(1);
+                } else if self.state.mode == InteractionMode::Resume {
                     self.session_picker.select_prev();
                 } else if self.state.mode == InteractionMode::Copy {
                     self.copy_picker.select_prev();
+                } else if self.state.mode == InteractionMode::HistorySearch {
+                    self.history_search.select_prev();
+                } else if self.state.mode == InteractionMode::TranscriptSearch {
+                    self.transcript_search.select_prev();
                 } else if self.state.mode == InteractionMode::Prompt {
                     self.prompt_picker.select_prev();
                 } else if self.state.mode == InteractionMode::Queue {
@@ -414,10 +609,16 @@ impl TuiApp {
                 }
             }
             KeyAction::ScrollDown => {
-                if self.state.mode == InteractionMode::Resume {
+                if self.state.mode == InteractionMode::Help {
+                    self.help_scroll = self.help_scroll.saturating_add(1);
+                } else if self.state.mode == InteractionMode::Resume {
                     self.session_picker.select_next();
                 } else if self.state.mode == InteractionMode::Copy {
                     self.copy_picker.select_next();
+                } else if self.state.mode == InteractionMode::HistorySearch {
+                    self.history_search.select_next();
+                } else if self.state.mode == InteractionMode::TranscriptSearch {
+                    self.transcript_search.select_next();
                 } else if self.state.mode == InteractionMode::Prompt {
                     self.prompt_picker.select_next();
                 } else if self.state.mode == InteractionMode::Queue {
@@ -431,7 +632,9 @@ impl TuiApp {
                 }
             }
             KeyAction::PageScrollUp => {
-                if self.state.mode == InteractionMode::Resume {
+                if self.state.mode == InteractionMode::Help {
+                    self.help_scroll = self.help_scroll.saturating_sub(10);
+                } else if self.state.mode == InteractionMode::Resume {
                     for _ in 0..10 {
                         self.session_picker.select_prev();
                     }
@@ -449,7 +652,9 @@ impl TuiApp {
                 }
             }
             KeyAction::PageScrollDown => {
-                if self.state.mode == InteractionMode::Resume {
+                if self.state.mode == InteractionMode::Help {
+                    self.help_scroll = self.help_scroll.saturating_add(10);
+                } else if self.state.mode == InteractionMode::Resume {
                     for _ in 0..10 {
                         self.session_picker.select_next();
                     }
@@ -498,8 +703,10 @@ impl TuiApp {
                         self.state.set_mode(InteractionMode::Normal);
                     }
                     self.state.set_mode(InteractionMode::Help);
+                    self.help_scroll = 0;
                 }
             }
+            KeyAction::ShowRawScrollback => self.show_raw_scrollback(),
             KeyAction::EnterCommandMode => {
                 if textarea_is_empty(&self.textarea) {
                     self.state.set_mode(InteractionMode::Command);
@@ -527,6 +734,12 @@ impl TuiApp {
             KeyAction::ConfirmBacktrack => {
                 self.confirm_backtrack_selection().await;
             }
+            KeyAction::BacktrackRetry => self.retry_backtrack_selection().await,
+            KeyAction::BacktrackQuote => self.quote_backtrack_selection(),
+            KeyAction::BacktrackFork => self.fork_backtrack_selection().await,
+            KeyAction::BacktrackCopy => self.copy_backtrack_selection(),
+            KeyAction::BacktrackInspectTools => self.inspect_backtrack_tools(),
+            KeyAction::BacktrackDiff => self.inspect_backtrack_diff(),
             KeyAction::ReturnToNormal => {
                 self.state.clear_backtrack_selection();
                 self.state.set_mode(InteractionMode::Normal);
@@ -547,6 +760,7 @@ impl TuiApp {
                     }
                     if let Some(entry) = self.state.history_prev() {
                         self.textarea = TextArea::new(vec![entry.to_string()]);
+                        self.composer_draft.clear();
                     }
                 }
             }
@@ -561,19 +775,23 @@ impl TuiApp {
                     match self.state.history_next() {
                         Some(entry) => {
                             self.textarea = TextArea::new(vec![entry.to_string()]);
+                            self.composer_draft.clear();
                         }
                         None => {
                             // Restore draft if available.
                             if let Some(draft) = self.state.input_draft.take() {
                                 if draft.is_empty() {
                                     self.textarea = TextArea::default();
+                                    self.composer_draft.clear();
                                 } else {
                                     let lines: Vec<String> =
                                         draft.split('\n').map(String::from).collect();
                                     self.textarea = TextArea::new(lines);
+                                    self.composer_draft.clear();
                                 }
                             } else {
                                 self.textarea = TextArea::default();
+                                self.composer_draft.clear();
                             }
                         }
                     }
@@ -583,18 +801,30 @@ impl TuiApp {
             | KeyAction::SelectPreviousTool
             | KeyAction::ToggleSelectedTool
             | KeyAction::CopySelectedTool) => self.handle_tool_action(action),
+            KeyAction::CopyQuote => self.quote_copy_target(),
+            KeyAction::CopyOpenPath => self.open_copy_path(),
             KeyAction::QueueDelete => {
                 self.queue_delete_selected();
             }
             KeyAction::QueueSteer => {
                 self.queue_toggle_steer_selected().await;
             }
+            KeyAction::QueueRecall => self.queue_recall_selected(),
             KeyAction::TasksKill => {
                 self.tasks_kill_selected().await;
             }
             KeyAction::TasksRefresh => {
                 self.tasks_refresh().await;
             }
+            action @ (KeyAction::SessionPin
+            | KeyAction::SessionArchive
+            | KeyAction::SessionDelete
+            | KeyAction::SessionRename
+            | KeyAction::SessionSlot1
+            | KeyAction::SessionSlot2
+            | KeyAction::SessionSlot3
+            | KeyAction::SessionSlot4
+            | KeyAction::SessionSlot5) => self.handle_session_action(action).await,
             KeyAction::Consumed | KeyAction::Unhandled => {}
         }
         false
@@ -617,6 +847,17 @@ impl TuiApp {
                     .push_toast("No session selected.".into(), ToastLevel::Info);
                 return false;
             };
+            if self
+                .session_picker
+                .selected_session()
+                .is_some_and(|session| session.state != y_core::session::SessionState::Active)
+            {
+                self.state.push_toast(
+                    "Archived sessions are read-only and cannot be resumed.".into(),
+                    ToastLevel::Warning,
+                );
+                return false;
+            }
             self.cmd_switch_session(&session_id).await;
             self.state.set_mode(InteractionMode::Normal);
             self.state.set_focus(PanelFocus::Input);
@@ -629,6 +870,17 @@ impl TuiApp {
             self.deliver_copy(&item.content, &item.label);
             self.state.set_mode(InteractionMode::Normal);
             self.state.set_focus(PanelFocus::Input);
+        } else if self.state.mode == InteractionMode::HistorySearch {
+            let Some(text) = self.history_search.selected_text().map(str::to_string) else {
+                self.state
+                    .push_toast("No matching prompt selected.".into(), ToastLevel::Info);
+                return false;
+            };
+            self.replace_composer_text(&text);
+            self.state.set_mode(InteractionMode::Normal);
+            self.state.set_focus(PanelFocus::Input);
+        } else if self.state.mode == InteractionMode::TranscriptSearch {
+            self.jump_to_transcript_search();
         } else if self.state.mode == InteractionMode::Prompt {
             let Some(selection) = self.prompt_picker.selected_choice() else {
                 self.state
@@ -662,11 +914,7 @@ impl TuiApp {
                 self.state.set_mode(InteractionMode::Normal);
                 self.state.set_focus(PanelFocus::Input);
             } else {
-                let cmd_input = if let Some(selected) = self.palette.selected_command() {
-                    selected.to_string()
-                } else {
-                    self.palette.input.clone()
-                };
+                let cmd_input = resolve_palette_command(&self.palette);
                 if self.should_enter_arg_mode(&cmd_input).await {
                     // Stay in command mode with arg completions.
                 } else {
@@ -679,26 +927,142 @@ impl TuiApp {
                 }
             }
         } else {
-            let input: String = self.textarea.lines().join("\n");
-            let clear_input = match chat_flow::classify_input(&input, self.state.is_streaming) {
+            let visible_input: String = self.textarea.lines().join("\n");
+            let input = self.composer_draft.expand(&visible_input);
+            let attachments = self.composer_draft.attachments();
+            let clear_input = match chat_flow::classify_input_with_attachments(
+                &input,
+                self.state.is_streaming,
+                !attachments.is_empty(),
+            ) {
                 InputIntent::Ignore => false,
                 InputIntent::Command(command) => {
-                    self.state.push_history(input.trim());
+                    self.record_prompt_history(input.trim());
                     if self.execute_command(&command).await {
                         return true;
                     }
-                    true
+                    !std::mem::take(&mut self.preserve_composer_after_command).is_on()
+                }
+                InputIntent::ShellCommand(command) => {
+                    if self.state.is_streaming {
+                        self.state.push_toast(
+                            "Wait for the active response before running a shell command.".into(),
+                            ToastLevel::Warning,
+                        );
+                        return false;
+                    }
+                    let now = Instant::now();
+                    let confirmed = self.pending_shell_confirmation.as_ref().is_some_and(
+                        |(pending_command, deadline)| {
+                            pending_command == &command && *deadline >= now
+                        },
+                    );
+                    let session_id = self
+                        .state
+                        .current_session_id
+                        .as_deref()
+                        .map_or_else(SessionId::new, SessionId::from_string);
+                    let working_dir = std::env::current_dir()
+                        .ok()
+                        .and_then(|path| path.to_str().map(str::to_owned));
+                    match y_service::OperatorShellService::preflight(
+                        &self.services,
+                        &session_id,
+                        &command,
+                        working_dir.as_deref(),
+                        &[],
+                    )
+                    .await
+                    {
+                        y_service::OperatorShellDecision::Deny { reason } => {
+                            self.pending_shell_confirmation = None;
+                            self.state.push_toast(
+                                format!("Shell command denied: {reason}"),
+                                ToastLevel::Error,
+                            );
+                            return false;
+                        }
+                        y_service::OperatorShellDecision::Confirm { reason } if !confirmed => {
+                            self.pending_shell_confirmation =
+                                Some((command, now + Duration::from_secs(15)));
+                            self.state.push_toast(
+                                format!(
+                                    "Shell command requires approval ({reason}). Submit it again within 15 seconds to run."
+                                ),
+                                ToastLevel::Warning,
+                            );
+                            return false;
+                        }
+                        y_service::OperatorShellDecision::Allow
+                        | y_service::OperatorShellDecision::Confirm { .. } => {}
+                    }
+                    self.pending_shell_confirmation = None;
+                    self.record_prompt_history(input.trim());
+                    let draft_key = self.current_draft_key();
+                    if let Err(error) = self.draft_store.put(
+                        draft_key.clone(),
+                        DraftSnapshot {
+                            text: input.clone(),
+                            attachments: Vec::new(),
+                        },
+                    ) {
+                        self.state.push_toast(error, ToastLevel::Error);
+                    }
+                    let active_chat = chat_flow::submit_shell_command(
+                        &command,
+                        confirmed,
+                        &mut self.state,
+                        &self.services,
+                    );
+                    if active_chat.is_some() {
+                        self.pending_submission = Some((
+                            visible_input.clone(),
+                            self.composer_draft.clone(),
+                            draft_key,
+                        ));
+                    }
+                    self.active_chat = active_chat;
+                    self.active_chat.is_some()
                 }
                 InputIntent::NewTurn(text) => {
-                    self.state.push_history(&text);
-                    self.active_chat =
-                        chat_flow::submit_message(&text, &mut self.state, &self.services);
-                    true
+                    self.record_prompt_history(&text);
+                    let draft_key = self.current_draft_key();
+                    if let Err(error) = self.draft_store.put(
+                        draft_key.clone(),
+                        DraftSnapshot {
+                            text: input.clone(),
+                            attachments: attachments.clone(),
+                        },
+                    ) {
+                        self.state.push_toast(error, ToastLevel::Error);
+                    }
+                    let active_chat = chat_flow::submit_message_with_attachments(
+                        &text,
+                        attachments,
+                        &mut self.state,
+                        &self.services,
+                    );
+                    if active_chat.is_some() {
+                        self.pending_submission = Some((
+                            visible_input.clone(),
+                            self.composer_draft.clone(),
+                            draft_key,
+                        ));
+                    }
+                    self.active_chat = active_chat;
+                    self.active_chat.is_some()
                 }
                 InputIntent::FollowUp(text) => {
+                    if !attachments.is_empty() {
+                        self.state.push_toast(
+                            "Wait for the active response before sending attachments.".into(),
+                            ToastLevel::Warning,
+                        );
+                        return false;
+                    }
                     match chat_flow::enqueue_follow_up(&text, &self.state, &self.services) {
                         Ok(_) => {
-                            self.state.push_history(&text);
+                            self.record_prompt_history(&text);
                             chat_flow::refresh_follow_up_queue(&mut self.state, &self.services);
                             self.state.push_toast(
                                 "Follow-up queued for the active run.".into(),
@@ -718,9 +1082,373 @@ impl TuiApp {
             };
             if clear_input {
                 self.textarea = TextArea::default();
+                self.composer_draft.clear();
             }
         }
         false
+    }
+
+    fn record_prompt_history(&mut self, input: &str) {
+        if let Err(error) = self
+            .prompt_history_store
+            .record(&mut self.state.input_history, input)
+        {
+            self.state.push_toast(
+                format!("Prompt history not saved: {error}"),
+                ToastLevel::Error,
+            );
+        }
+        self.state.history_index = None;
+        self.state.input_draft = None;
+    }
+
+    fn open_history_search(&mut self) {
+        if self.state.input_history.is_empty() {
+            self.state
+                .push_toast("Prompt history is empty.".into(), ToastLevel::Info);
+            return;
+        }
+        self.history_search = HistorySearchState::new(&self.state.input_history);
+        self.state.set_mode(InteractionMode::HistorySearch);
+    }
+
+    fn open_transcript_search(&mut self) {
+        if self.state.messages.is_empty() {
+            self.state
+                .push_toast("The transcript is empty.".into(), ToastLevel::Info);
+            return;
+        }
+        self.transcript_search = TranscriptSearchState::new(&self.state.messages);
+        self.state.set_mode(InteractionMode::TranscriptSearch);
+    }
+
+    fn jump_to_transcript_search(&mut self) {
+        let Some((_, content)) = self.transcript_search.selected() else {
+            return;
+        };
+        let needle = content
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(content);
+        if let Some(row) = self
+            .chat_plain_lines
+            .iter()
+            .position(|line| line.contains(needle.trim()))
+        {
+            let target_from_bottom = self
+                .chat_plain_lines
+                .len()
+                .saturating_sub(row.saturating_add(self.state.page_height / 2));
+            self.state.scroll_offset = target_from_bottom;
+        }
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Chat);
+    }
+
+    fn open_external_editor(&mut self) {
+        let initial = self.textarea.lines().join("\n");
+        if let Err(error) = self.restore_terminal() {
+            self.state.push_toast(
+                format!("Could not suspend the terminal: {error}"),
+                ToastLevel::Error,
+            );
+            return;
+        }
+        let result = editor::edit(&initial);
+        let restore_result = self.activate_terminal();
+        if let Err(error) = restore_result {
+            self.state.push_toast(
+                format!("Could not restore the terminal: {error}"),
+                ToastLevel::Error,
+            );
+            return;
+        }
+        match result {
+            Ok(text) => {
+                self.composer_draft.retain_visible_tokens(&text);
+                self.textarea = textarea_from_text(&text);
+                self.state.history_index = None;
+                self.state.input_draft = None;
+            }
+            Err(error) => self.state.push_toast(error, ToastLevel::Error),
+        }
+    }
+
+    fn show_raw_scrollback(&mut self) {
+        if self.state.is_streaming {
+            self.state.push_toast(
+                "Wait for the active response before opening raw scrollback.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        }
+        let transcript = commands::copy::resolve_target(
+            &self.state.messages,
+            commands::copy::CopyTarget::Transcript,
+        )
+        .unwrap_or_else(|_| "No messages in this session.".into());
+        if let Err(error) = self.restore_terminal() {
+            self.state.push_toast(
+                format!("Could not open scrollback: {error}"),
+                ToastLevel::Error,
+            );
+            return;
+        }
+        let write_result = writeln!(
+            io::stdout().lock(),
+            "{transcript}\n\nPress Enter to return to y-agent..."
+        );
+        let mut input = String::new();
+        let read_result = std::io::stdin().read_line(&mut input);
+        let activate_result = self.activate_terminal();
+        if let Err(error) = write_result {
+            self.state.push_toast(
+                format!("Scrollback output failed: {error}"),
+                ToastLevel::Error,
+            );
+        }
+        if let Err(error) = read_result {
+            self.state.push_toast(
+                format!("Scrollback input failed: {error}"),
+                ToastLevel::Error,
+            );
+        }
+        if let Err(error) = activate_result {
+            self.state.push_toast(
+                format!("Could not restore terminal: {error}"),
+                ToastLevel::Error,
+            );
+        }
+    }
+
+    fn replace_composer_text(&mut self, text: &str) {
+        self.textarea = textarea_from_text(text);
+        self.composer_draft.clear();
+        self.state.history_index = None;
+        self.state.input_draft = None;
+    }
+
+    async fn handle_session_action(&mut self, action: KeyAction) {
+        let slot = match action {
+            KeyAction::SessionSlot1 => Some(1),
+            KeyAction::SessionSlot2 => Some(2),
+            KeyAction::SessionSlot3 => Some(3),
+            KeyAction::SessionSlot4 => Some(4),
+            KeyAction::SessionSlot5 => Some(5),
+            _ => None,
+        };
+        if self.state.mode != InteractionMode::Resume {
+            if let Some(slot) = slot {
+                let target = self
+                    .state
+                    .sessions
+                    .iter()
+                    .find(|session| {
+                        session.quick_slot == Some(slot)
+                            && session.state == y_core::session::SessionState::Active
+                    })
+                    .map(|session| session.id.clone());
+                if let Some(target) = target {
+                    self.cmd_switch_session(&target).await;
+                } else {
+                    self.state.push_toast(
+                        format!("No active session is assigned to slot {slot}."),
+                        ToastLevel::Info,
+                    );
+                }
+            }
+            return;
+        }
+
+        let Some(selected) = self.session_picker.selected_session().cloned() else {
+            return;
+        };
+        let session_id = SessionId::from_string(selected.id.clone());
+        let preferences = self.services.data_dir.join("session-hub.json");
+        let result = match action {
+            KeyAction::SessionPin => {
+                y_service::SessionService::set_pinned(&preferences, &session_id, !selected.pinned)
+                    .await
+                    .map(|()| {
+                        if selected.pinned {
+                            "Session unpinned."
+                        } else {
+                            "Session pinned."
+                        }
+                        .to_string()
+                    })
+            }
+            KeyAction::SessionArchive => {
+                if !self.confirm_session_action(action, &selected.id, "archive") {
+                    return;
+                }
+                y_service::SessionService::archive_session(
+                    &self.services.session_manager,
+                    &session_id,
+                )
+                .await
+                .map(|()| "Session archived.".to_string())
+            }
+            KeyAction::SessionDelete => {
+                if !self.confirm_session_action(action, &selected.id, "delete permanently") {
+                    return;
+                }
+                let result = y_service::SessionService::delete_session(
+                    &self.services.session_manager,
+                    &session_id,
+                )
+                .await;
+                if result.is_ok() {
+                    self.services.cleanup_session_state(&session_id).await;
+                    if let Err(error) =
+                        y_service::SessionService::remove_hub_preferences(&preferences, &session_id)
+                            .await
+                    {
+                        tracing::warn!(%error, "failed to remove deleted session hub preferences");
+                    }
+                    if let Err(error) = self.draft_store.remove(session_id.as_str()) {
+                        tracing::warn!(%error, "failed to remove deleted session draft");
+                    }
+                }
+                result.map(|()| "Session deleted.".to_string())
+            }
+            KeyAction::SessionRename => {
+                self.replace_composer_text(&format!("/rename {} ", selected.id));
+                self.state.set_mode(InteractionMode::Normal);
+                self.state.set_focus(PanelFocus::Input);
+                return;
+            }
+            _ if slot.is_some() => y_service::SessionService::assign_quick_slot(
+                &preferences,
+                slot.unwrap_or_default(),
+                &session_id,
+            )
+            .await
+            .map(|()| format!("Assigned session to slot {}.", slot.unwrap_or_default())),
+            _ => return,
+        };
+        match result {
+            Ok(message) => {
+                if matches!(action, KeyAction::SessionArchive | KeyAction::SessionDelete)
+                    && self.state.current_session_id.as_deref() == Some(selected.id.as_str())
+                {
+                    self.state.current_session_id = None;
+                    self.state.messages.clear();
+                }
+                self.load_sessions().await;
+                self.session_picker = SessionPickerState::new(
+                    self.state.sessions.clone(),
+                    self.state.current_session_id.as_deref(),
+                );
+                self.state.push_toast(message, ToastLevel::Success);
+            }
+            Err(error) => self.state.push_toast(
+                format!("Session operation failed: {error}"),
+                ToastLevel::Error,
+            ),
+        }
+    }
+
+    fn confirm_session_action(&mut self, action: KeyAction, id: &str, label: &str) -> bool {
+        let now = Instant::now();
+        let confirmed = self.pending_session_confirmation.as_ref().is_some_and(
+            |(pending_action, pending_id, deadline)| {
+                *pending_action == action && pending_id == id && *deadline >= now
+            },
+        );
+        if confirmed {
+            self.pending_session_confirmation = None;
+            return true;
+        }
+        self.pending_session_confirmation =
+            Some((action, id.to_string(), now + Duration::from_secs(10)));
+        let short_id: String = id.chars().take(8).collect();
+        self.state.push_toast(
+            format!(
+                "Press the same shortcut again within 10 seconds to {label} session {short_id}."
+            ),
+            ToastLevel::Warning,
+        );
+        false
+    }
+
+    fn restore_failed_submission(&mut self) {
+        let Some((visible_text, draft, _)) = self.pending_submission.take() else {
+            return;
+        };
+        if textarea_is_empty(&self.textarea) && self.composer_draft.is_empty() {
+            self.textarea = textarea_from_text(&visible_text);
+            self.composer_draft = draft;
+            self.state.push_toast(
+                "Failed turn restored to the composer.".into(),
+                ToastLevel::Info,
+            );
+        } else {
+            self.state.input_draft = Some(visible_text);
+            self.state.push_toast(
+                "Failed turn retained as the previous composer draft.".into(),
+                ToastLevel::Info,
+            );
+        }
+    }
+
+    fn current_draft_key(&self) -> String {
+        self.state
+            .current_session_id
+            .clone()
+            .unwrap_or_else(|| "__new_session__".into())
+    }
+
+    fn stash_current_draft(&mut self) {
+        let visible = self.textarea.lines().join("\n");
+        let attachments = self.composer_draft.attachments();
+        let key = self.current_draft_key();
+        let result = if visible.trim().is_empty() && attachments.is_empty() {
+            self.draft_store.remove(&key)
+        } else {
+            self.draft_store.put(
+                key,
+                DraftSnapshot {
+                    text: self.composer_draft.expand(&visible),
+                    attachments,
+                },
+            )
+        };
+        if let Err(error) = result {
+            self.state.push_toast(error, ToastLevel::Error);
+        }
+    }
+
+    fn restore_saved_draft(&mut self) {
+        let key = self.current_draft_key();
+        let Some(snapshot) = self.draft_store.get(&key).cloned() else {
+            return;
+        };
+        self.textarea = TextArea::default();
+        self.composer_draft.clear();
+        if !snapshot.text.is_empty() {
+            match self.composer_draft.ingest_paste(&snapshot.text) {
+                PasteDisposition::Inline(text) => self.textarea.insert_str(text),
+                PasteDisposition::Collapsed { token } => self.textarea.insert_str(token),
+            };
+        }
+        for attachment in snapshot.attachments {
+            let dimensions = attachment
+                .width
+                .zip(attachment.height)
+                .and_then(|(width, height)| {
+                    Some((usize::try_from(width).ok()?, usize::try_from(height).ok()?))
+                });
+            let token = self.composer_draft.add_attachment(attachment, dimensions);
+            if !textarea_is_empty(&self.textarea) {
+                self.textarea.insert_str("\n");
+            }
+            self.textarea.insert_str(token);
+        }
+        self.state.push_toast(
+            "Restored the saved draft for this session.".into(),
+            ToastLevel::Info,
+        );
     }
 
     fn handle_input_passthrough(&mut self, key: crossterm::event::KeyEvent) {
@@ -735,6 +1463,18 @@ impl TuiApp {
                 self.copy_picker.push_char(character);
             } else if key.code == crossterm::event::KeyCode::Backspace {
                 self.copy_picker.pop_char();
+            }
+        } else if self.state.mode == InteractionMode::HistorySearch {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.history_search.push_char(character);
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                self.history_search.pop_char();
+            }
+        } else if self.state.mode == InteractionMode::TranscriptSearch {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.transcript_search.push_char(character);
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                self.transcript_search.pop_char();
             }
         } else if self.state.mode == InteractionMode::Prompt {
             if let crossterm::event::KeyCode::Char(character) = key.code {
@@ -752,6 +1492,7 @@ impl TuiApp {
                     self.palette.pop_char();
                 }
             }
+        } else if self.handle_fragment_edit_key(key) {
         } else if key.code == crossterm::event::KeyCode::Char('/')
             && textarea_is_empty(&self.textarea)
         {
@@ -779,6 +1520,16 @@ impl TuiApp {
                     self.copy_picker.push_char(character);
                 }
             }
+            InteractionMode::HistorySearch => {
+                for character in single_line_paste_text(text).chars() {
+                    self.history_search.push_char(character);
+                }
+            }
+            InteractionMode::TranscriptSearch => {
+                for character in single_line_paste_text(text).chars() {
+                    self.transcript_search.push_char(character);
+                }
+            }
             InteractionMode::Prompt => {
                 for character in single_line_paste_text(text).chars() {
                     self.prompt_picker.push_char(character);
@@ -793,8 +1544,76 @@ impl TuiApp {
             // a paste never triggers mode switches: a leading '/' on an
             // empty draft stays literal text.
             _ => {
-                self.textarea.insert_str(text);
+                let disposition = if self.raw_paste_armed.is_on() {
+                    self.raw_paste_armed = Toggle::Off;
+                    ComposerDraft::ingest_raw_paste(text)
+                } else {
+                    self.composer_draft.ingest_paste(text)
+                };
+                match disposition {
+                    PasteDisposition::Inline(text) => {
+                        self.textarea.insert_str(text);
+                    }
+                    PasteDisposition::Collapsed { token } => {
+                        self.textarea.insert_str(&token);
+                        self.state.push_toast(
+                            "Large paste collapsed. Alt+V arms one raw paste.".into(),
+                            ToastLevel::Info,
+                        );
+                    }
+                }
             }
+        }
+    }
+
+    /// Keep registered paste tokens atomic when navigating or deleting.
+    fn handle_fragment_edit_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::KeyCode;
+
+        let (row, cursor) = self.textarea.cursor();
+        let Some(line) = self.textarea.lines().get(row) else {
+            return false;
+        };
+        let Some(range) = self.composer_draft.token_touching_cursor(line, cursor) else {
+            return false;
+        };
+        let token: String = line
+            .chars()
+            .skip(range.start)
+            .take(range.end - range.start)
+            .collect();
+        let row = u16::try_from(row).unwrap_or(u16::MAX);
+        let range_start = u16::try_from(range.start).unwrap_or(u16::MAX);
+        let range_end = u16::try_from(range.end).unwrap_or(u16::MAX);
+        match key.code {
+            KeyCode::Backspace if cursor > range.start => {
+                self.textarea
+                    .move_cursor(CursorMove::Jump(row, range_start));
+                self.textarea.delete_str(range.end - range.start);
+                self.composer_draft.remove_token(&token);
+                true
+            }
+            KeyCode::Delete if cursor < range.end => {
+                self.textarea
+                    .move_cursor(CursorMove::Jump(row, range_start));
+                self.textarea.delete_str(range.end - range.start);
+                self.composer_draft.remove_token(&token);
+                true
+            }
+            KeyCode::Left if cursor > range.start => {
+                self.textarea
+                    .move_cursor(CursorMove::Jump(row, range_start));
+                true
+            }
+            KeyCode::Right if cursor < range.end => {
+                self.textarea.move_cursor(CursorMove::Jump(row, range_end));
+                true
+            }
+            KeyCode::Char(_) if cursor > range.start && cursor < range.end => {
+                self.textarea.move_cursor(CursorMove::Jump(row, range_end));
+                false
+            }
+            _ => false,
         }
     }
 
@@ -844,9 +1663,9 @@ impl TuiApp {
 
     /// Cancel an in-progress composer mouse selection, if any.
     fn cancel_input_selection(&mut self) {
-        if self.selecting_input {
+        if self.selecting_input.is_on() {
             self.textarea.cancel_selection();
-            self.selecting_input = false;
+            self.selecting_input = Toggle::Off;
         }
     }
 
@@ -857,6 +1676,8 @@ impl TuiApp {
             self.state.mode,
             InteractionMode::Copy
                 | InteractionMode::Resume
+                | InteractionMode::HistorySearch
+                | InteractionMode::TranscriptSearch
                 | InteractionMode::Select
                 | InteractionMode::Prompt
                 | InteractionMode::Queue
@@ -878,7 +1699,7 @@ impl TuiApp {
                     let (row, col) = input_buffer_position(chunks.input, self.input_vscroll, x, y);
                     self.textarea.move_cursor(CursorMove::Jump(row, col));
                     self.textarea.start_selection();
-                    self.selecting_input = true;
+                    self.selecting_input = Toggle::On;
                 } else {
                     // A click outside the composer ends its selection.
                     self.cancel_input_selection();
@@ -890,7 +1711,7 @@ impl TuiApp {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if self.selecting_input {
+                if self.selecting_input.is_on() {
                     // Extend the composer selection; `Jump` clamps positions
                     // outside the panel to the buffer edges.
                     if let Some(ref chunks) = self.last_chunks {
@@ -911,8 +1732,8 @@ impl TuiApp {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if self.selecting_input {
-                    self.selecting_input = false;
+                if self.selecting_input.is_on() {
+                    self.selecting_input = Toggle::Off;
                     if let Some(ref chunks) = self.last_chunks {
                         let (row, col) = input_buffer_position(
                             chunks.input,
@@ -992,8 +1813,10 @@ impl TuiApp {
         toasts_changed = toasts_changed || self.state.toasts.len() != toasts_before;
 
         if self.drain_chat_events() {
-            self.needs_redraw = true;
+            self.needs_redraw = Toggle::On;
         }
+
+        self.drain_clipboard_images();
 
         self.poll_background_activity();
 
@@ -1002,7 +1825,68 @@ impl TuiApp {
             !self.state.toasts.is_empty(),
             toasts_changed,
         ) {
-            self.needs_redraw = true;
+            self.needs_redraw = Toggle::On;
+        }
+    }
+
+    fn request_clipboard_image(&mut self) {
+        if !self.terminal_capabilities.supports_native_image_clipboard() {
+            self.state.push_toast(
+                "Native image clipboard is unavailable in this terminal host; use /attach <path>."
+                    .into(),
+                ToastLevel::Warning,
+            );
+            return;
+        }
+        if self.clipboard_image_in_flight.is_on() {
+            return;
+        }
+        self.clipboard_image_in_flight = Toggle::On;
+        let sender = self.clipboard_image_tx.clone();
+        tokio::spawn(async move {
+            let result = tokio::task::spawn_blocking(clipboard::read_image)
+                .await
+                .map_err(|error| format!("clipboard image task failed: {error}"))
+                .and_then(std::convert::identity);
+            let _ = sender.send(result);
+        });
+    }
+
+    fn drain_clipboard_images(&mut self) {
+        while let Ok(result) = self.clipboard_image_rx.try_recv() {
+            self.clipboard_image_in_flight = Toggle::Off;
+            match result {
+                Ok(image) => {
+                    let size = u64::try_from(image.png_data.len()).unwrap_or(u64::MAX);
+                    let attachment = y_core::types::Attachment {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        filename: "clipboard.png".into(),
+                        mime_type: "image/png".into(),
+                        size,
+                        sha256: None,
+                        width: u32::try_from(image.width).ok(),
+                        height: u32::try_from(image.height).ok(),
+                        source: y_core::types::AttachmentSource::InlineBase64 {
+                            base64_data: base64::engine::general_purpose::STANDARD
+                                .encode(image.png_data),
+                        },
+                    };
+                    let token = self
+                        .composer_draft
+                        .add_attachment(attachment, Some((image.width, image.height)));
+                    self.textarea.insert_str(&token);
+                    self.state
+                        .push_toast("Image attached from clipboard.".into(), ToastLevel::Success);
+                    self.needs_redraw = Toggle::On;
+                }
+                Err(error) => {
+                    self.state.push_toast(
+                        format!("Clipboard image unavailable: {error}"),
+                        ToastLevel::Error,
+                    );
+                    self.needs_redraw = Toggle::On;
+                }
+            }
         }
     }
 
@@ -1022,7 +1906,7 @@ impl TuiApp {
         let agent_count = self.services.delegation_tracker.active_delegations().len();
         if agent_count != self.state.active_subagent_count {
             self.state.active_subagent_count = agent_count;
-            self.needs_redraw = true;
+            self.needs_redraw = Toggle::On;
             if self.state.mode == InteractionMode::Tasks {
                 self.repopulate_tasks_picker();
             }
@@ -1068,11 +1952,11 @@ impl TuiApp {
         self.bg_tasks_cache = tasks;
         if running != self.state.bg_task_count {
             self.state.bg_task_count = running;
-            self.needs_redraw = true;
+            self.needs_redraw = Toggle::On;
         }
         if self.state.mode == InteractionMode::Tasks {
             self.repopulate_tasks_picker();
-            self.needs_redraw = true;
+            self.needs_redraw = Toggle::On;
         }
     }
 
@@ -1101,6 +1985,8 @@ impl TuiApp {
         let render_cache = &mut self.chat_render_cache;
         let plain_lines = &mut self.chat_plain_lines;
         let tool_rows = &mut self.chat_tool_rows;
+        let keymap = &self.keymap;
+        let help_scroll = self.help_scroll;
         let Some(chunks_ref) = self.last_chunks.as_ref() else {
             unreachable!("layout stored above");
         };
@@ -1160,6 +2046,19 @@ impl TuiApp {
                 overlays::copy_picker::render(frame, area, &self.copy_picker, &state.theme);
             }
 
+            if state.mode == InteractionMode::HistorySearch {
+                overlays::history_search::render(frame, area, &self.history_search, &state.theme);
+            }
+
+            if state.mode == InteractionMode::TranscriptSearch {
+                overlays::transcript_search::render(
+                    frame,
+                    area,
+                    &self.transcript_search,
+                    &state.theme,
+                );
+            }
+
             if state.mode == InteractionMode::Resume {
                 overlays::session_picker::render(frame, area, &self.session_picker, &state.theme);
             }
@@ -1182,7 +2081,7 @@ impl TuiApp {
 
             // Render help overlay if in Help mode.
             if state.mode == InteractionMode::Help {
-                overlays::help::render(frame, area);
+                overlays::help::render(frame, area, keymap, help_scroll);
             }
 
             // Render toast overlay (always, non-modal).
@@ -1242,6 +2141,31 @@ impl TuiApp {
                 );
                 true
             }
+            "permission" => {
+                self.palette.enter_arg_mode(
+                    "permission".into(),
+                    vec![
+                        ("default".into(), "Evaluate each tool per its rules".into()),
+                        (
+                            "plan".into(),
+                            "Read-only tools allowed, write tools ask".into(),
+                        ),
+                        (
+                            "accept_edits".into(),
+                            "File edits auto-allowed, shell still asks".into(),
+                        ),
+                        (
+                            "bypass_permissions".into(),
+                            "Allow all except explicit Deny rules".into(),
+                        ),
+                        (
+                            "dont_ask".into(),
+                            "Auto-deny instead of asking (headless)".into(),
+                        ),
+                    ],
+                );
+                true
+            }
             "copy" => {
                 self.open_copy_picker();
                 true
@@ -1268,6 +2192,11 @@ impl TuiApp {
     /// Execute a command and apply its result to state.
     /// Returns `true` if the app should quit.
     async fn execute_command(&mut self, cmd_input: &str) -> bool {
+        let command_name = cmd_input.split_whitespace().next().unwrap_or_default();
+        let resolved = commands::registry::CommandRegistry::shared().resolve_alias(command_name);
+        if resolved == "new" {
+            self.stash_current_draft();
+        }
         let result = handlers::execute(cmd_input, &mut self.state);
         match result {
             CommandResult::Ok(Some(msg)) => {
@@ -1313,12 +2242,38 @@ impl TuiApp {
                 self.state
                     .push_toast(format!("Turn mode: {}", mode.label()), ToastLevel::Success);
             }
+            CommandResult::SetPermissionMode(mode) => {
+                self.apply_permission_mode(mode).await;
+            }
             CommandResult::Copy(target) => self.copy_to_clipboard(target),
             CommandResult::OpenCopyPicker => self.open_copy_picker(),
             CommandResult::OpenQueueOverlay => self.open_queue_overlay(),
             CommandResult::OpenTasksOverlay => self.open_tasks_overlay().await,
         }
         false
+    }
+
+    /// Apply a `/permission` selection to the service-side session permission
+    /// map. With no active session, stash it and apply it when the next
+    /// session is created (the guardrails pipeline re-reads the map on every
+    /// tool call, so writes take effect immediately).
+    async fn apply_permission_mode(&mut self, mode: PermissionMode) {
+        if let Some(ref session_id) = self.state.current_session_id {
+            self.services
+                .session_state
+                .session_permission_modes
+                .write()
+                .await
+                .insert(SessionId::from_string(session_id.clone()), mode);
+            self.state
+                .push_toast(format!("Permission mode: {mode}"), ToastLevel::Success);
+        } else {
+            self.state.pending_permission_mode = Some(mode);
+            self.state.push_toast(
+                format!("Permission mode: {mode} (applies to the next session)"),
+                ToastLevel::Success,
+            );
+        }
     }
 
     /// Execute an async command that requires service access.
@@ -1333,6 +2288,9 @@ impl TuiApp {
                 }
             },
             AsyncCommand::DeleteSession(target) => self.cmd_delete_session(&target).await,
+            AsyncCommand::RenameSession { target, title } => {
+                self.cmd_rename_session(&target, &title).await;
+            }
             AsyncCommand::BranchSession(label) => self.cmd_branch_session(label).await,
             AsyncCommand::ExportSession(ref format) => {
                 self.cmd_export_session(format.as_deref());
@@ -1349,7 +2307,67 @@ impl TuiApp {
                     self.open_prompt_picker();
                 }
             },
+            AsyncCommand::AttachFile(path) => self.attach_file(&path).await,
         }
+    }
+
+    async fn attach_file(&mut self, input_path: &str) {
+        let path = std::path::PathBuf::from(input_path);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+        let metadata = match tokio::fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => {
+                self.state.push_toast(
+                    "Only regular files can be attached.".into(),
+                    ToastLevel::Error,
+                );
+                return;
+            }
+            Err(error) => {
+                self.state.push_toast(
+                    format!("Could not attach {}: {error}", path.display()),
+                    ToastLevel::Error,
+                );
+                return;
+            }
+        };
+        if metadata.len() > 20 * 1024 * 1024 {
+            self.state.push_toast(
+                "Attachment exceeds the 20 MB limit.".into(),
+                ToastLevel::Error,
+            );
+            return;
+        }
+        let filename = path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .unwrap_or("attachment.bin")
+            .to_string();
+        let attachment = y_core::types::Attachment {
+            id: uuid::Uuid::new_v4().to_string(),
+            filename,
+            mime_type: mime_type_for_path(&path).into(),
+            size: metadata.len(),
+            sha256: None,
+            width: None,
+            height: None,
+            source: y_core::types::AttachmentSource::File {
+                path: path.to_string_lossy().into_owned(),
+            },
+        };
+        self.textarea = TextArea::default();
+        self.composer_draft.clear();
+        let token = self.composer_draft.add_attachment(attachment, None);
+        self.textarea.insert_str(token);
+        self.preserve_composer_after_command = Toggle::On;
+        self.state.push_toast(
+            "File attached to the next turn.".into(),
+            ToastLevel::Success,
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1599,6 +2617,7 @@ impl TuiApp {
                 } else {
                     TextArea::new(prompt.split('\n').map(String::from).collect())
                 };
+                self.composer_draft.clear();
                 self.state.history_index = None;
                 self.state.input_draft = None;
                 self.state.clear_backtrack_selection();
@@ -1614,6 +2633,177 @@ impl TuiApp {
                     .push_toast(format!("Backtrack failed: {error}"), ToastLevel::Error);
             }
         }
+    }
+
+    fn selected_backtrack_prompt(&self) -> Option<(usize, String, String)> {
+        let index = self.state.selected_message?;
+        let prompt = self.state.selected_user_message()?.content.clone();
+        let session_id = self.state.current_session_id.clone()?;
+        Some((index, prompt, session_id))
+    }
+
+    async fn create_selected_backtrack_branch(
+        &mut self,
+        title_prefix: &str,
+    ) -> Result<(String, y_core::session::SessionNode), String> {
+        let (message_index, prompt, current_id) = self
+            .selected_backtrack_prompt()
+            .ok_or_else(|| "No prompt selected.".to_string())?;
+        let title = format!("{title_prefix}: {}", backtrack_branch_title(&prompt));
+        let branch = y_service::SessionService::branch_before_message(
+            &self.services.session_manager,
+            &SessionId::from_string(current_id),
+            message_index,
+            Some(title),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        self.switch_active_session(&branch.id).await?;
+        self.load_sessions().await;
+        Ok((prompt, branch))
+    }
+
+    async fn retry_backtrack_selection(&mut self) {
+        match self.create_selected_backtrack_branch("Retry").await {
+            Ok((prompt, _)) => {
+                self.state.clear_backtrack_selection();
+                self.state.set_mode(InteractionMode::Normal);
+                self.state.set_focus(PanelFocus::Input);
+                self.record_prompt_history(&prompt);
+                let active = chat_flow::submit_message_with_attachments(
+                    &prompt,
+                    Vec::new(),
+                    &mut self.state,
+                    &self.services,
+                );
+                if active.is_some() {
+                    let draft_key = self.current_draft_key();
+                    let _ = self.draft_store.put(
+                        draft_key.clone(),
+                        DraftSnapshot {
+                            text: prompt.clone(),
+                            attachments: Vec::new(),
+                        },
+                    );
+                    self.pending_submission =
+                        Some((prompt.clone(), ComposerDraft::default(), draft_key));
+                }
+                self.active_chat = active;
+            }
+            Err(error) => self
+                .state
+                .push_toast(format!("Retry failed: {error}"), ToastLevel::Error),
+        }
+    }
+
+    async fn fork_backtrack_selection(&mut self) {
+        match self.create_selected_backtrack_branch("Fork").await {
+            Ok(_) => {
+                self.state.clear_backtrack_selection();
+                self.state.set_mode(InteractionMode::Normal);
+                self.state.set_focus(PanelFocus::Input);
+                self.state.push_toast(
+                    "Created a non-destructive turn fork.".into(),
+                    ToastLevel::Success,
+                );
+            }
+            Err(error) => self
+                .state
+                .push_toast(format!("Fork failed: {error}"), ToastLevel::Error),
+        }
+    }
+
+    fn quote_backtrack_selection(&mut self) {
+        let Some((_, prompt, _)) = self.selected_backtrack_prompt() else {
+            return;
+        };
+        let quote = prompt
+            .lines()
+            .map(|line| format!("> {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let existing = self.textarea.lines().join("\n");
+        let combined = if existing.trim().is_empty() {
+            format!("{quote}\n\n")
+        } else {
+            format!("{existing}\n\n{quote}\n\n")
+        };
+        self.replace_composer_text(&combined);
+        self.state.clear_backtrack_selection();
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Input);
+    }
+
+    fn copy_backtrack_selection(&mut self) {
+        let Some((_, prompt, _)) = self.selected_backtrack_prompt() else {
+            return;
+        };
+        self.deliver_copy(&prompt, "selected prompt");
+    }
+
+    fn selected_turn_assistant_index(&self) -> Option<usize> {
+        let selected = self.state.selected_message?;
+        self.state
+            .messages
+            .iter()
+            .enumerate()
+            .skip(selected + 1)
+            .take_while(|(_, message)| message.role != MessageRole::User)
+            .find_map(|(index, message)| (message.role == MessageRole::Assistant).then_some(index))
+    }
+
+    fn inspect_backtrack_tools(&mut self) {
+        let Some(message_index) = self.selected_turn_assistant_index() else {
+            self.state.push_toast(
+                "No assistant response belongs to this turn.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        };
+        if self.state.messages[message_index].tool_calls.is_empty() {
+            self.state.push_toast(
+                "The selected turn has no tool calls.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        }
+        self.state.selected_tool = Some(ToolSelection {
+            message_index,
+            tool_index: 0,
+        });
+        self.state.clear_backtrack_selection();
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Chat);
+    }
+
+    fn inspect_backtrack_diff(&mut self) {
+        let Some(message_index) = self.selected_turn_assistant_index() else {
+            return;
+        };
+        let changes = self.state.messages[message_index]
+            .tool_calls
+            .iter()
+            .filter(|tool| {
+                matches!(
+                    tool.name.as_str(),
+                    "FileWrite" | "FileEdit" | "ApplyPatch" | "apply_patch"
+                )
+            })
+            .map(commands::copy::format_tool_call_for_copy)
+            .collect::<Vec<_>>();
+        if changes.is_empty() {
+            self.state.push_toast(
+                "No file-change records were captured for this turn.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        }
+        self.state
+            .messages
+            .push(ChatMessage::system(changes.join("\n\n")));
+        self.state.clear_backtrack_selection();
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Chat);
     }
 
     /// Resolve a copy target and place it on the system clipboard.
@@ -1646,6 +2836,65 @@ impl TuiApp {
         self.copy_picker = CopyPickerState::new(items);
         self.state.set_mode(InteractionMode::Copy);
         self.state.set_focus(PanelFocus::Chat);
+    }
+
+    fn quote_copy_target(&mut self) {
+        let Some(item) = self.copy_picker.selected_item().cloned() else {
+            return;
+        };
+        let quoted = item
+            .content
+            .lines()
+            .map(|line| format!("> {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let existing = self.textarea.lines().join("\n");
+        let draft = if existing.trim().is_empty() {
+            format!("{quoted}\n\n")
+        } else {
+            format!("{existing}\n\n{quoted}\n\n")
+        };
+        self.replace_composer_text(&draft);
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Input);
+    }
+
+    fn open_copy_path(&mut self) {
+        let Some(item) = self.copy_picker.selected_item().cloned() else {
+            return;
+        };
+        if item.kind != commands::copy::CopyItemKind::Path {
+            self.state.push_toast(
+                "Select a path target before opening it.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        }
+        let path = std::path::PathBuf::from(&item.content);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+        let spawn_result = if cfg!(target_os = "macos") {
+            std::process::Command::new("open").arg(&path).spawn()
+        } else if cfg!(target_os = "windows") {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", ""])
+                .arg(&path)
+                .spawn()
+        } else {
+            std::process::Command::new("xdg-open").arg(&path).spawn()
+        };
+        match spawn_result {
+            Ok(_) => self
+                .state
+                .push_toast(format!("Opened {}.", path.display()), ToastLevel::Success),
+            Err(error) => self.state.push_toast(
+                format!("Could not open {}: {error}", path.display()),
+                ToastLevel::Error,
+            ),
+        }
     }
 
     /// `/queue` -- open the follow-up queue overlay for the active run.
@@ -1702,6 +2951,32 @@ impl TuiApp {
                 ToastLevel::Error,
             );
         }
+    }
+
+    /// Recall a queued follow-up into the composer so it can be edited and
+    /// resubmitted at a new FIFO position.
+    fn queue_recall_selected(&mut self) {
+        let (Some(session_id), Some(item)) = (
+            self.active_session_id(),
+            self.queue_picker.selected_item().cloned(),
+        ) else {
+            return;
+        };
+        if !y_service::ChatService::delete_follow_up(&self.services, &session_id, &item.id) {
+            self.state.push_toast(
+                "Could not recall the follow-up; un-steer it first.".into(),
+                ToastLevel::Error,
+            );
+            return;
+        }
+        self.replace_composer_text(&item.text);
+        self.sync_queue_overlay();
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Input);
+        self.state.push_toast(
+            "Queued follow-up recalled for editing.".into(),
+            ToastLevel::Success,
+        );
     }
 
     /// Promote the selected follow-up to the pending steer, or demote the
@@ -1784,7 +3059,7 @@ impl TuiApp {
     async fn tasks_refresh(&mut self) {
         self.refresh_tasks_data().await;
         self.repopulate_tasks_picker();
-        self.needs_redraw = true;
+        self.needs_redraw = Toggle::On;
     }
 
     /// Kill the background task under the `/tasks` overlay cursor. Subagent
@@ -1855,7 +3130,7 @@ impl TuiApp {
     }
 
     fn deliver_copy(&mut self, text: &str, label: &str) {
-        match clipboard::copy_text(text) {
+        match clipboard::copy_text(text, self.terminal_capabilities) {
             Ok(clipboard::ClipboardDelivery::Native) => self
                 .state
                 .push_toast(format!("Copied {label}."), ToastLevel::Success),
@@ -1989,10 +3264,32 @@ impl TuiApp {
             Some(node) => {
                 let sid = node.id.clone();
                 let is_current = self.state.current_session_id.as_deref() == Some(&sid.to_string());
+                if !self.confirm_session_action(
+                    KeyAction::SessionDelete,
+                    sid.as_str(),
+                    "delete permanently",
+                ) {
+                    return;
+                }
 
-                match self.services.session_manager.delete_session(&sid).await {
+                match y_service::SessionService::delete_session(
+                    &self.services.session_manager,
+                    &sid,
+                )
+                .await
+                {
                     Ok(()) => {
                         self.services.cleanup_session_state(&sid).await;
+                        let preferences = self.services.data_dir.join("session-hub.json");
+                        if let Err(error) =
+                            y_service::SessionService::remove_hub_preferences(&preferences, &sid)
+                                .await
+                        {
+                            tracing::warn!(%error, "failed to remove deleted session hub preferences");
+                        }
+                        if let Err(error) = self.draft_store.remove(sid.as_str()) {
+                            tracing::warn!(%error, "failed to remove deleted session draft");
+                        }
                         self.state.push_toast(
                             format!("Deleted session: {}", &sid.to_string()[..8]),
                             ToastLevel::Info,
@@ -2022,6 +3319,42 @@ impl TuiApp {
         }
     }
 
+    async fn cmd_rename_session(&mut self, target: &str, title: &str) {
+        let nodes = match self.workspace_sessions().await {
+            Ok(nodes) => nodes,
+            Err(error) => {
+                self.state.push_toast(
+                    format!("Failed to list sessions: {error}"),
+                    ToastLevel::Error,
+                );
+                return;
+            }
+        };
+        let Some(session) = find_session_by_target(&nodes, target) else {
+            self.state.push_toast(
+                format!("No session matching '{target}'."),
+                ToastLevel::Error,
+            );
+            return;
+        };
+        match y_service::SessionService::rename_session(
+            &self.services.session_manager,
+            &session.id,
+            title,
+        )
+        .await
+        {
+            Ok(()) => {
+                self.load_sessions().await;
+                self.state
+                    .push_toast("Session renamed.".into(), ToastLevel::Success);
+            }
+            Err(error) => self
+                .state
+                .push_toast(format!("Rename failed: {error}"), ToastLevel::Error),
+        }
+    }
+
     /// `/branch [label]` -- fork current session.
     async fn cmd_branch_session(&mut self, label: Option<String>) {
         let Some(ref current_id) = self.state.current_session_id else {
@@ -2033,11 +3366,13 @@ impl TuiApp {
         let sid = y_core::types::SessionId::from_string(current_id.clone());
 
         // Fork at the last message (full fork).
-        match self
-            .services
-            .session_manager
-            .fork_session(&sid, usize::MAX, label)
-            .await
+        match y_service::SessionService::fork_session(
+            &self.services.session_manager,
+            &sid,
+            usize::MAX,
+            label,
+        )
+        .await
         {
             Ok(fork) => {
                 let fork_id = fork.id.to_string();
@@ -2362,6 +3697,19 @@ impl TuiApp {
         Ok(())
     }
 
+    fn activate_terminal(&mut self) -> Result<()> {
+        enable_raw_mode()?;
+        execute!(
+            self.terminal.backend_mut(),
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )?;
+        self.terminal.clear()?;
+        self.needs_redraw = Toggle::On;
+        Ok(())
+    }
+
     /// Return the active session ID at exit time.
     pub fn exit_session_id(&self) -> Option<String> {
         self.state.current_session_id.clone()
@@ -2379,15 +3727,37 @@ impl TuiApp {
 
     /// Load session list from storage into state.
     async fn load_sessions(&mut self) {
-        match self.workspace_sessions().await {
-            Ok(nodes) => {
-                self.state.sessions = nodes
+        let workspace = match std::env::current_dir() {
+            Ok(workspace) => workspace,
+            Err(error) => {
+                warn!(%error, "failed to resolve workspace for session hub");
+                return;
+            }
+        };
+        let preferences = self.services.data_dir.join("session-hub.json");
+        match y_service::SessionService::list_session_hub(
+            &self.services.session_manager,
+            &workspace,
+            &preferences,
+        )
+        .await
+        {
+            Ok(items) => {
+                self.state.sessions = items
                     .into_iter()
-                    .map(|n| SessionListItem {
-                        id: n.id.to_string(),
-                        title: n.manual_title.or(n.title).unwrap_or_default(),
-                        updated_at: n.updated_at,
-                        message_count: n.message_count,
+                    .map(|item| {
+                        let n = item.session;
+                        SessionListItem {
+                            id: n.id.to_string(),
+                            title: n.manual_title.or(n.title).unwrap_or_default(),
+                            updated_at: n.updated_at,
+                            message_count: n.message_count,
+                            state: n.state,
+                            parent_id: n.parent_id.map(|id| id.to_string()),
+                            depth: n.depth,
+                            pinned: item.pinned,
+                            quick_slot: item.quick_slot,
+                        }
                     })
                     .collect();
             }
@@ -2415,14 +3785,21 @@ impl TuiApp {
         &mut self,
         session_id: &y_core::types::SessionId,
     ) -> Result<(), String> {
+        self.stash_current_draft();
         let previous = self.state.current_session_id.clone();
+        self.textarea = TextArea::default();
+        self.composer_draft.clear();
         self.state.current_session_id = Some(session_id.to_string());
         // The queue projection belongs to the previously active session.
         self.state.follow_up_queue.clear();
         match self.load_session_transcript(session_id).await {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                self.restore_saved_draft();
+                Ok(())
+            }
             Err(error) => {
                 self.state.current_session_id = previous;
+                self.restore_saved_draft();
                 Err(error)
             }
         }
@@ -2547,6 +3924,59 @@ fn find_session_by_target<'a>(
 /// Whether the input textarea holds no user text (all lines empty).
 fn textarea_is_empty(textarea: &TextArea<'_>) -> bool {
     textarea.lines().iter().all(String::is_empty)
+}
+
+fn textarea_from_text(text: &str) -> TextArea<'static> {
+    if text.is_empty() {
+        TextArea::default()
+    } else {
+        TextArea::new(text.split('\n').map(String::from).collect())
+    }
+}
+
+fn mime_type_for_path(path: &std::path::Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        "md" | "txt" | "rs" | "ts" | "tsx" | "js" | "py" | "toml" | "yaml" | "yml" => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
+/// Resolve what to execute when the command palette is submitted.
+///
+/// An exactly typed command name or alias (first token) always wins over the
+/// fuzzy-highlighted item — typing `/plan` must not run `/auto` just because
+/// its description mentions "plan". Falls back to the highlighted command,
+/// then to the raw input.
+fn resolve_palette_command(palette: &CommandPaletteState) -> String {
+    let typed = palette.input.trim();
+    let first = typed.split_whitespace().next().unwrap_or("");
+    let registry = commands::registry::CommandRegistry::shared();
+    let first_lower = first.to_lowercase();
+    if !first.is_empty() && registry.find(&first_lower).is_some() {
+        let resolved = registry.resolve_alias(&first_lower);
+        let args = typed[first.len()..].trim();
+        return if args.is_empty() {
+            resolved.to_string()
+        } else {
+            format!("{resolved} {args}")
+        };
+    }
+    if let Some(selected) = palette.selected_command() {
+        return selected.to_string();
+    }
+    palette.input.clone()
 }
 
 /// Cycle the selected tool card's detail level, auto-selecting the most
@@ -3124,6 +4554,46 @@ mod transcript_tests {
 mod interaction_tests {
     use super::*;
     use chrono::Utc;
+
+    // Regression: an exactly typed command name/alias must win over the
+    // fuzzy-highlighted item — `/plan` previously executed `/auto` because
+    // auto's description contains "plan".
+    #[test]
+    fn test_resolve_palette_command_prefers_exact_typed_input() {
+        let mut palette = CommandPaletteState::new();
+        for c in "plan".chars() {
+            palette.push_char(c);
+        }
+        assert_eq!(resolve_palette_command(&palette), "plan");
+    }
+
+    #[test]
+    fn test_resolve_palette_command_resolves_alias_and_keeps_args() {
+        let mut palette = CommandPaletteState::new();
+        for c in "p do the refactor".chars() {
+            palette.push_char(c);
+        }
+        assert_eq!(resolve_palette_command(&palette), "plan do the refactor");
+    }
+
+    #[test]
+    fn test_resolve_palette_command_falls_back_to_highlighted() {
+        let mut palette = CommandPaletteState::new();
+        for c in "pla".chars() {
+            palette.push_char(c);
+        }
+        // "pla" is not an exact command; the top fuzzy match (plan) executes.
+        assert_eq!(resolve_palette_command(&palette), "plan");
+    }
+
+    #[test]
+    fn test_resolve_palette_command_unknown_input_returned_raw() {
+        let mut palette = CommandPaletteState::new();
+        for c in "nosuchthing".chars() {
+            palette.push_char(c);
+        }
+        assert_eq!(resolve_palette_command(&palette), "nosuchthing");
+    }
 
     fn tool_call(name: &str) -> state::ToolCallInfo {
         state::ToolCallInfo {

@@ -140,7 +140,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     );
 
     frame.render_widget(
-        Paragraph::new(" Esc/Up older  Down newer  Enter branch & edit  q close")
+        Paragraph::new(" Enter edit  r retry  q quote  b fork  y copy  t tools  d diff  Esc close")
             .style(Style::default().fg(theme.muted())),
         rows[3],
     );

@@ -222,8 +222,10 @@ fn file_argument_lines(value: &Value, width: usize) -> Option<Vec<String>> {
 }
 
 /// Shell results surface stdout first, then stderr with a `! ` prefix so
-/// error output stands out from normal output. Returns `None` when neither
-/// stream is present so callers fall back to the generic preview.
+/// error output stands out from normal output. When both streams are empty
+/// the shell shape is still honored with a concise placeholder instead of
+/// falling back to a raw JSON blob. Returns `None` only when the payload has
+/// neither `stdout` nor `stderr`, so callers fall back to the generic preview.
 fn shell_result_lines(value: &Value, width: usize) -> Option<Vec<String>> {
     let object = value.as_object()?;
     if !object.contains_key("stdout") && !object.contains_key("stderr") {
@@ -243,7 +245,12 @@ fn shell_result_lines(value: &Value, width: usize) -> Option<Vec<String>> {
         }
     }
     if lines.is_empty() {
-        None
+        let exit = object.get("exit_code").and_then(Value::as_i64);
+        let placeholder = match exit {
+            Some(code) if code != 0 => format!("(exit {code})"),
+            _ => "(no output)".to_string(),
+        };
+        Some(vec![placeholder])
     } else {
         Some(lines)
     }
@@ -609,6 +616,32 @@ mod tests {
         );
         let joined = presentation.result_lines.join("\n");
         assert!(joined.contains("\"files\": 2"));
+    }
+
+    #[test]
+    fn test_shell_result_empty_streams_show_placeholder_not_json() {
+        let presentation = present_tool(
+            &tool(
+                "ShellExec",
+                r#"{"command":"git add ."}"#,
+                r#"{"exit_code":0,"stderr":"","stdout":""}"#,
+            ),
+            80,
+        );
+        assert_eq!(presentation.result_lines, vec!["(no output)".to_string()]);
+    }
+
+    #[test]
+    fn test_shell_result_nonzero_exit_shows_code() {
+        let presentation = present_tool(
+            &tool(
+                "ShellExec",
+                r#"{"command":"false"}"#,
+                r#"{"exit_code":2,"stderr":"","stdout":""}"#,
+            ),
+            80,
+        );
+        assert_eq!(presentation.result_lines, vec!["(exit 2)".to_string()]);
     }
 
     #[test]

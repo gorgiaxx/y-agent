@@ -4,15 +4,37 @@
 //! 1. **Global keys** (Ctrl+Q/D/C, F1, Ctrl+O) — always handled, regardless of mode/focus.
 //! 2. **Mode + Focus keys** — dispatched based on `InteractionMode` × `PanelFocus`.
 
+use std::collections::{BTreeMap, HashMap};
+use std::fmt;
+use std::path::Path;
+#[cfg(test)]
+use std::sync::LazyLock;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use serde::Deserialize;
 
 use crate::tui::state::{AppState, InteractionMode, PanelFocus};
+use crate::tui::terminal::TerminalCapabilities;
 
 /// Result of dispatching a key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyAction {
     /// Quit the TUI application.
     Quit,
+    /// Ask for a second quit gesture before exiting.
+    ConfirmQuit,
+    /// Clear the current composer draft without exiting.
+    ClearInput,
+    /// Arm the next terminal paste to bypass fragment collapsing.
+    PasteRaw,
+    /// Read image media from the system clipboard.
+    PasteImage,
+    /// Search persisted prompt history.
+    OpenHistorySearch,
+    /// Search the active session transcript.
+    OpenTranscriptSearch,
+    /// Edit the current draft in `$VISUAL` or `$EDITOR`.
+    OpenExternalEditor,
     /// No-op — the key was consumed but had no effect.
     Consumed,
     /// The key was not handled by the dispatcher.
@@ -39,6 +61,8 @@ pub enum KeyAction {
     CancelStreaming,
     /// Show the help overlay.
     ShowHelp,
+    /// Temporarily expose the transcript in normal terminal scrollback.
+    ShowRawScrollback,
     /// Enter command mode.
     EnterCommandMode,
     /// Return to normal mode.
@@ -51,6 +75,18 @@ pub enum KeyAction {
     BacktrackNext,
     /// Branch before the selected prompt and restore it to the composer.
     ConfirmBacktrack,
+    /// Retry the selected prompt in a new branch.
+    BacktrackRetry,
+    /// Quote the selected prompt into the composer.
+    BacktrackQuote,
+    /// Fork before the selected prompt without editing it.
+    BacktrackFork,
+    /// Copy the selected prompt exactly.
+    BacktrackCopy,
+    /// Focus tools associated with the selected turn.
+    BacktrackInspectTools,
+    /// Show file-change details associated with the selected turn.
+    BacktrackDiff,
     /// Navigate to previous input history entry.
     HistoryPrev,
     /// Navigate to next input history entry.
@@ -63,250 +99,936 @@ pub enum KeyAction {
     ToggleSelectedTool,
     /// Copy the selected tool card.
     CopySelectedTool,
+    /// Quote the selected copy target into the composer.
+    CopyQuote,
+    /// Open a selected filesystem path with the host shell.
+    CopyOpenPath,
     /// Remove the selected follow-up from the queue.
     QueueDelete,
     /// Promote the selected follow-up to the pending steer (or demote it).
     QueueSteer,
+    /// Remove the selected follow-up and recall it into the composer.
+    QueueRecall,
     /// Kill the selected entry in the `/tasks` overlay.
     TasksKill,
     /// Refresh the `/tasks` overlay contents.
     TasksRefresh,
+    /// Toggle pin on the selected session.
+    SessionPin,
+    /// Archive the selected session.
+    SessionArchive,
+    /// Request deletion of the selected session.
+    SessionDelete,
+    /// Recall a rename command for the selected session.
+    SessionRename,
+    SessionSlot1,
+    SessionSlot2,
+    SessionSlot3,
+    SessionSlot4,
+    SessionSlot5,
 }
 
-/// Dispatch a key event against the current state.
-///
-/// Returns a `KeyAction` indicating what the caller should do.
+impl KeyAction {
+    /// Stable configuration identifier for this semantic action.
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Quit => "quit",
+            Self::ConfirmQuit => "confirm_quit",
+            Self::ClearInput => "clear_input",
+            Self::PasteRaw => "paste_raw",
+            Self::PasteImage => "paste_image",
+            Self::OpenHistorySearch => "open_history_search",
+            Self::OpenTranscriptSearch => "open_transcript_search",
+            Self::OpenExternalEditor => "open_external_editor",
+            Self::Consumed => "consumed",
+            Self::Unhandled => "unhandled",
+            Self::Submit => "submit",
+            Self::InputPassthrough => "input_passthrough",
+            Self::CycleFocus => "cycle_focus",
+            Self::ScrollUp => "scroll_up",
+            Self::ScrollDown => "scroll_down",
+            Self::PageScrollUp => "page_scroll_up",
+            Self::PageScrollDown => "page_scroll_down",
+            Self::ScrollToTop => "scroll_to_top",
+            Self::ScrollToBottom => "scroll_to_bottom",
+            Self::CancelStreaming => "cancel_streaming",
+            Self::ShowHelp => "show_help",
+            Self::ShowRawScrollback => "show_raw_scrollback",
+            Self::EnterCommandMode => "enter_command_mode",
+            Self::ReturnToNormal => "return_to_normal",
+            Self::EnterBacktrack => "enter_backtrack",
+            Self::BacktrackPrevious => "backtrack_previous",
+            Self::BacktrackNext => "backtrack_next",
+            Self::ConfirmBacktrack => "confirm_backtrack",
+            Self::BacktrackRetry => "backtrack_retry",
+            Self::BacktrackQuote => "backtrack_quote",
+            Self::BacktrackFork => "backtrack_fork",
+            Self::BacktrackCopy => "backtrack_copy",
+            Self::BacktrackInspectTools => "backtrack_inspect_tools",
+            Self::BacktrackDiff => "backtrack_diff",
+            Self::HistoryPrev => "history_previous",
+            Self::HistoryNext => "history_next",
+            Self::SelectNextTool => "select_next_tool",
+            Self::SelectPreviousTool => "select_previous_tool",
+            Self::ToggleSelectedTool => "toggle_selected_tool",
+            Self::CopySelectedTool => "copy_selected_tool",
+            Self::CopyQuote => "copy_quote",
+            Self::CopyOpenPath => "copy_open_path",
+            Self::QueueDelete => "queue_delete",
+            Self::QueueSteer => "queue_steer",
+            Self::QueueRecall => "queue_recall",
+            Self::TasksKill => "tasks_kill",
+            Self::TasksRefresh => "tasks_refresh",
+            Self::SessionPin => "session_pin",
+            Self::SessionArchive => "session_archive",
+            Self::SessionDelete => "session_delete",
+            Self::SessionRename => "session_rename",
+            Self::SessionSlot1 => "session_slot_1",
+            Self::SessionSlot2 => "session_slot_2",
+            Self::SessionSlot3 => "session_slot_3",
+            Self::SessionSlot4 => "session_slot_4",
+            Self::SessionSlot5 => "session_slot_5",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<Self> {
+        ALL_ACTIONS.iter().copied().find(|action| action.id() == id)
+    }
+
+    /// User-facing action description shared by help and diagnostics.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::Quit => "Quit",
+            Self::ConfirmQuit => "Confirm quit",
+            Self::ClearInput => "Clear composer",
+            Self::PasteRaw => "Paste next clipboard event without collapsing",
+            Self::PasteImage => "Paste image from clipboard",
+            Self::OpenHistorySearch => "Reverse search prompt history",
+            Self::OpenTranscriptSearch => "Search current transcript",
+            Self::OpenExternalEditor => "Edit draft in external editor",
+            Self::Consumed | Self::Unhandled | Self::InputPassthrough => "Edit input",
+            Self::Submit => "Submit or confirm",
+            Self::CycleFocus => "Switch input / conversation focus",
+            Self::ScrollUp => "Move or scroll up",
+            Self::ScrollDown => "Move or scroll down",
+            Self::PageScrollUp => "Move or scroll one page up",
+            Self::PageScrollDown => "Move or scroll one page down",
+            Self::ScrollToTop => "Scroll to top",
+            Self::ScrollToBottom => "Scroll to bottom",
+            Self::CancelStreaming => "Cancel the active response",
+            Self::ShowHelp => "Show keyboard help",
+            Self::ShowRawScrollback => "Show transcript in terminal scrollback",
+            Self::EnterCommandMode => "Open command palette",
+            Self::ReturnToNormal => "Close the current overlay",
+            Self::EnterBacktrack => "Select an earlier prompt",
+            Self::BacktrackPrevious => "Select the previous prompt",
+            Self::BacktrackNext => "Select the next prompt",
+            Self::ConfirmBacktrack => "Branch and edit the prompt",
+            Self::BacktrackRetry => "Retry selected prompt in a branch",
+            Self::BacktrackQuote => "Quote selected prompt into composer",
+            Self::BacktrackFork => "Fork before selected prompt",
+            Self::BacktrackCopy => "Copy selected prompt",
+            Self::BacktrackInspectTools => "Inspect tools in selected turn",
+            Self::BacktrackDiff => "Inspect changes in selected turn",
+            Self::HistoryPrev => "Previous prompt history entry",
+            Self::HistoryNext => "Next prompt history entry",
+            Self::SelectNextTool => "Select next tool card",
+            Self::SelectPreviousTool => "Select previous tool card",
+            Self::ToggleSelectedTool => "Toggle tool details",
+            Self::CopySelectedTool => "Copy selected tool",
+            Self::CopyQuote => "Quote selected copy target",
+            Self::CopyOpenPath => "Open selected path",
+            Self::QueueDelete => "Delete queued follow-up",
+            Self::QueueSteer => "Steer or un-steer follow-up",
+            Self::QueueRecall => "Recall queued follow-up for editing",
+            Self::TasksKill => "Kill selected background task",
+            Self::TasksRefresh => "Refresh tasks",
+            Self::SessionPin => "Pin or unpin selected session",
+            Self::SessionArchive => "Archive selected session",
+            Self::SessionDelete => "Delete selected session with confirmation",
+            Self::SessionRename => "Rename selected session",
+            Self::SessionSlot1 => "Assign or open session slot 1",
+            Self::SessionSlot2 => "Assign or open session slot 2",
+            Self::SessionSlot3 => "Assign or open session slot 3",
+            Self::SessionSlot4 => "Assign or open session slot 4",
+            Self::SessionSlot5 => "Assign or open session slot 5",
+        }
+    }
+}
+
+const ALL_ACTIONS: &[KeyAction] = &[
+    KeyAction::Quit,
+    KeyAction::ConfirmQuit,
+    KeyAction::ClearInput,
+    KeyAction::PasteRaw,
+    KeyAction::PasteImage,
+    KeyAction::OpenHistorySearch,
+    KeyAction::OpenTranscriptSearch,
+    KeyAction::OpenExternalEditor,
+    KeyAction::Submit,
+    KeyAction::CycleFocus,
+    KeyAction::ScrollUp,
+    KeyAction::ScrollDown,
+    KeyAction::PageScrollUp,
+    KeyAction::PageScrollDown,
+    KeyAction::ScrollToTop,
+    KeyAction::ScrollToBottom,
+    KeyAction::CancelStreaming,
+    KeyAction::ShowHelp,
+    KeyAction::ShowRawScrollback,
+    KeyAction::EnterCommandMode,
+    KeyAction::ReturnToNormal,
+    KeyAction::EnterBacktrack,
+    KeyAction::BacktrackPrevious,
+    KeyAction::BacktrackNext,
+    KeyAction::ConfirmBacktrack,
+    KeyAction::BacktrackRetry,
+    KeyAction::BacktrackQuote,
+    KeyAction::BacktrackFork,
+    KeyAction::BacktrackCopy,
+    KeyAction::BacktrackInspectTools,
+    KeyAction::BacktrackDiff,
+    KeyAction::HistoryPrev,
+    KeyAction::HistoryNext,
+    KeyAction::SelectNextTool,
+    KeyAction::SelectPreviousTool,
+    KeyAction::ToggleSelectedTool,
+    KeyAction::CopySelectedTool,
+    KeyAction::CopyQuote,
+    KeyAction::CopyOpenPath,
+    KeyAction::QueueDelete,
+    KeyAction::QueueSteer,
+    KeyAction::QueueRecall,
+    KeyAction::TasksKill,
+    KeyAction::TasksRefresh,
+    KeyAction::SessionPin,
+    KeyAction::SessionArchive,
+    KeyAction::SessionDelete,
+    KeyAction::SessionRename,
+    KeyAction::SessionSlot1,
+    KeyAction::SessionSlot2,
+    KeyAction::SessionSlot3,
+    KeyAction::SessionSlot4,
+    KeyAction::SessionSlot5,
+];
+
+/// Interaction context used to resolve the same chord differently by state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyContext {
+    Global,
+    Cancelling,
+    Streaming,
+    NormalInputEmpty,
+    NormalInputDraft,
+    NormalChat,
+    Command,
+    Select,
+    Help,
+    Picker,
+    SessionHub,
+    CopyPicker,
+    Queue,
+    Tasks,
+}
+
+impl KeyContext {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Global => "global",
+            Self::Cancelling => "cancelling",
+            Self::Streaming => "streaming",
+            Self::NormalInputEmpty => "input (empty)",
+            Self::NormalInputDraft => "input (draft)",
+            Self::NormalChat => "conversation",
+            Self::Command => "command palette",
+            Self::Select => "prompt backtrack",
+            Self::Help => "help",
+            Self::Picker => "picker",
+            Self::SessionHub => "session hub",
+            Self::CopyPicker => "copy picker",
+            Self::Queue => "follow-up queue",
+            Self::Tasks => "tasks",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct KeyChord {
+    code: KeyCode,
+    modifiers: KeyModifiers,
+}
+
+impl KeyChord {
+    fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
+        let mut chord = Self { code, modifiers };
+        chord.normalize();
+        chord
+    }
+
+    fn from_event(event: KeyEvent) -> Self {
+        Self::new(event.code, event.modifiers)
+    }
+
+    fn parse(input: &str) -> Result<Self, KeymapError> {
+        let input = input.trim();
+        if input.is_empty() {
+            return Err(KeymapError::InvalidChord(input.into()));
+        }
+        let mut parts: Vec<&str> = input.split('+').collect();
+        let key = parts.pop().unwrap_or_default();
+        let mut modifiers = KeyModifiers::NONE;
+        for modifier in parts {
+            match modifier.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => modifiers.insert(KeyModifiers::CONTROL),
+                "alt" | "option" => modifiers.insert(KeyModifiers::ALT),
+                "shift" => modifiers.insert(KeyModifiers::SHIFT),
+                "super" | "cmd" | "meta" => modifiers.insert(KeyModifiers::SUPER),
+                _ => return Err(KeymapError::InvalidChord(input.into())),
+            }
+        }
+        let lower = key.to_ascii_lowercase();
+        let code = match lower.as_str() {
+            "enter" => KeyCode::Enter,
+            "esc" | "escape" => KeyCode::Esc,
+            "tab" => KeyCode::Tab,
+            "backspace" => KeyCode::Backspace,
+            "up" => KeyCode::Up,
+            "down" => KeyCode::Down,
+            "left" => KeyCode::Left,
+            "right" => KeyCode::Right,
+            "home" => KeyCode::Home,
+            "end" => KeyCode::End,
+            "pageup" => KeyCode::PageUp,
+            "pagedown" => KeyCode::PageDown,
+            _ if lower.starts_with('f') => lower[1..]
+                .parse::<u8>()
+                .ok()
+                .filter(|number| (1..=24).contains(number))
+                .map(KeyCode::F)
+                .ok_or_else(|| KeymapError::InvalidChord(input.into()))?,
+            _ => {
+                let mut chars = key.chars();
+                let character = chars
+                    .next()
+                    .filter(|_| chars.next().is_none())
+                    .ok_or_else(|| KeymapError::InvalidChord(input.into()))?;
+                KeyCode::Char(character)
+            }
+        };
+        Ok(Self::new(code, modifiers))
+    }
+
+    fn normalize(&mut self) {
+        self.modifiers &= KeyModifiers::SHIFT
+            | KeyModifiers::CONTROL
+            | KeyModifiers::ALT
+            | KeyModifiers::SUPER
+            | KeyModifiers::HYPER
+            | KeyModifiers::META;
+        if let KeyCode::Char(character) = self.code {
+            if character.is_ascii_uppercase() {
+                self.code = KeyCode::Char(character.to_ascii_lowercase());
+                self.modifiers.insert(KeyModifiers::SHIFT);
+            } else if !character.is_ascii_alphabetic() {
+                self.modifiers.remove(KeyModifiers::SHIFT);
+            }
+        }
+    }
+}
+
+impl fmt::Display for KeyChord {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.modifiers.contains(KeyModifiers::CONTROL) {
+            formatter.write_str("Ctrl+")?;
+        }
+        if self.modifiers.contains(KeyModifiers::ALT) {
+            formatter.write_str("Alt+")?;
+        }
+        if self.modifiers.contains(KeyModifiers::SHIFT) {
+            formatter.write_str("Shift+")?;
+        }
+        if self.modifiers.contains(KeyModifiers::SUPER) {
+            formatter.write_str("Super+")?;
+        }
+        match self.code {
+            KeyCode::Char(character)
+                if character.is_ascii_alphabetic()
+                    && self.modifiers.intersects(
+                        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                    ) =>
+            {
+                write!(formatter, "{}", character.to_ascii_uppercase())
+            }
+            KeyCode::Char(character) => write!(formatter, "{character}"),
+            KeyCode::Enter => formatter.write_str("Enter"),
+            KeyCode::Esc => formatter.write_str("Esc"),
+            KeyCode::Tab => formatter.write_str("Tab"),
+            KeyCode::Backspace => formatter.write_str("Backspace"),
+            KeyCode::Up => formatter.write_str("Up"),
+            KeyCode::Down => formatter.write_str("Down"),
+            KeyCode::Left => formatter.write_str("Left"),
+            KeyCode::Right => formatter.write_str("Right"),
+            KeyCode::Home => formatter.write_str("Home"),
+            KeyCode::End => formatter.write_str("End"),
+            KeyCode::PageUp => formatter.write_str("PageUp"),
+            KeyCode::PageDown => formatter.write_str("PageDown"),
+            KeyCode::F(number) => write!(formatter, "F{number}"),
+            _ => write!(formatter, "{:?}", self.code),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct KeyBinding {
+    context: KeyContext,
+    chord: KeyChord,
+    action: KeyAction,
+}
+
+/// One rendered help entry generated from the active keymap.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyHelpEntry {
+    pub action: KeyAction,
+    pub description: &'static str,
+    pub keys: Vec<String>,
+}
+
+/// Keymap validation or parsing failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeymapError {
+    UnknownAction(String),
+    InvalidChord(String),
+    Conflict {
+        chord: String,
+        context: String,
+        first: String,
+        second: String,
+    },
+    Read(String),
+    Parse(String),
+}
+
+impl fmt::Display for KeymapError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownAction(action) => write!(formatter, "unknown keymap action `{action}`"),
+            Self::InvalidChord(chord) => write!(formatter, "invalid key chord `{chord}`"),
+            Self::Conflict {
+                chord,
+                context,
+                first,
+                second,
+            } => write!(
+                formatter,
+                "key {chord} conflicts in {context}: `{first}` and `{second}`"
+            ),
+            Self::Read(error) => write!(formatter, "could not read keymap: {error}"),
+            Self::Parse(error) => write!(formatter, "could not parse keymap: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for KeymapError {}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeymapFile {
+    #[serde(default)]
+    bindings: BTreeMap<String, Vec<String>>,
+}
+
+/// Validated semantic keymap used by dispatch, help, and diagnostics.
+#[derive(Debug, Clone)]
+pub struct Keymap {
+    bindings: Vec<KeyBinding>,
+}
+
+impl Default for Keymap {
+    fn default() -> Self {
+        let keymap = Self {
+            bindings: default_bindings(),
+        };
+        debug_assert!(keymap.validate().is_ok(), "built-in keymap must be valid");
+        keymap
+    }
+}
+
+impl Keymap {
+    /// Load `[bindings]` overrides from a TOML file. A missing file uses defaults.
+    pub fn load(path: &Path) -> Result<Self, KeymapError> {
+        let source = match std::fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default())
+            }
+            Err(error) => return Err(KeymapError::Read(error.to_string())),
+        };
+        let file: KeymapFile =
+            toml::from_str(&source).map_err(|error| KeymapError::Parse(error.to_string()))?;
+        Self::with_overrides(file.bindings)
+    }
+
+    pub fn load_for_terminal(
+        path: &Path,
+        capabilities: TerminalCapabilities,
+    ) -> Result<Self, KeymapError> {
+        let mut keymap = Self::load(path)?;
+        keymap.add_terminal_fallbacks(capabilities);
+        keymap.validate()?;
+        Ok(keymap)
+    }
+
+    pub fn for_terminal(capabilities: TerminalCapabilities) -> Self {
+        let mut keymap = Self::default();
+        keymap.add_terminal_fallbacks(capabilities);
+        keymap
+    }
+
+    fn add_terminal_fallbacks(&mut self, capabilities: TerminalCapabilities) {
+        if !capabilities.needs_function_key_fallbacks() {
+            return;
+        }
+        let fallback = KeyChord::new(KeyCode::F(8), KeyModifiers::NONE);
+        for context in [KeyContext::NormalInputEmpty, KeyContext::NormalInputDraft] {
+            let occupied = self
+                .bindings
+                .iter()
+                .any(|binding| binding.context == context && binding.chord == fallback);
+            if !occupied {
+                self.bindings.push(KeyBinding {
+                    context,
+                    chord: fallback.clone(),
+                    action: KeyAction::PasteRaw,
+                });
+            }
+        }
+    }
+
+    /// Apply action-level overrides while preserving each action's contexts.
+    pub fn with_overrides(overrides: BTreeMap<String, Vec<String>>) -> Result<Self, KeymapError> {
+        let mut bindings = default_bindings();
+        for (action_id, configured_chords) in overrides {
+            let action = KeyAction::from_id(&action_id)
+                .ok_or_else(|| KeymapError::UnknownAction(action_id.clone()))?;
+            let contexts: Vec<KeyContext> = bindings
+                .iter()
+                .filter(|binding| binding.action == action)
+                .map(|binding| binding.context)
+                .collect();
+            if contexts.is_empty() {
+                return Err(KeymapError::UnknownAction(action_id));
+            }
+            let chords = configured_chords
+                .iter()
+                .map(|chord| KeyChord::parse(chord))
+                .collect::<Result<Vec<_>, _>>()?;
+            bindings.retain(|binding| binding.action != action);
+            for context in contexts {
+                for chord in &chords {
+                    bindings.push(KeyBinding {
+                        context,
+                        chord: chord.clone(),
+                        action,
+                    });
+                }
+            }
+        }
+        let keymap = Self { bindings };
+        keymap.validate()?;
+        Ok(keymap)
+    }
+
+    /// Resolve an event using an empty composer for compatibility with tests.
+    #[cfg(test)]
+    pub fn dispatch(&self, key: KeyEvent, state: &AppState) -> KeyAction {
+        self.dispatch_with_composer(key, state, true)
+    }
+
+    /// Resolve an event against active contexts and composer state.
+    pub fn dispatch_with_composer(
+        &self,
+        key: KeyEvent,
+        state: &AppState,
+        composer_empty: bool,
+    ) -> KeyAction {
+        if key.kind != KeyEventKind::Press {
+            return KeyAction::Consumed;
+        }
+        let chord = KeyChord::from_event(key);
+        for context in active_contexts(state, composer_empty) {
+            if let Some(binding) = self
+                .bindings
+                .iter()
+                .find(|binding| binding.context == context && binding.chord == chord)
+            {
+                return binding.action;
+            }
+        }
+        fallback_action(state)
+    }
+
+    /// Validate that no simultaneously active contexts claim the same chord.
+    pub fn validate(&self) -> Result<(), KeymapError> {
+        let mut seen: HashMap<&KeyChord, &KeyBinding> = HashMap::new();
+        for binding in &self.bindings {
+            if let Some(previous) = seen.get(&binding.chord) {
+                if previous.action == binding.action {
+                    continue;
+                }
+                if previous.context == binding.context
+                    || previous.context == KeyContext::Global
+                    || binding.context == KeyContext::Global
+                {
+                    let context = if previous.context == KeyContext::Global
+                        || binding.context == KeyContext::Global
+                    {
+                        KeyContext::Global
+                    } else {
+                        binding.context
+                    };
+                    return Err(KeymapError::Conflict {
+                        chord: binding.chord.to_string(),
+                        context: context.label().into(),
+                        first: previous.action.id().into(),
+                        second: binding.action.id().into(),
+                    });
+                }
+            } else {
+                seen.insert(&binding.chord, binding);
+            }
+        }
+        Ok(())
+    }
+
+    /// Group active bindings by action for generated help and footer hints.
+    pub fn help_entries(&self, context: KeyContext) -> Vec<KeyHelpEntry> {
+        let mut entries = Vec::new();
+        for action in ALL_ACTIONS {
+            let keys: Vec<String> = self
+                .bindings
+                .iter()
+                .filter(|binding| binding.context == context && binding.action == *action)
+                .map(|binding| binding.chord.to_string())
+                .collect();
+            if !keys.is_empty() {
+                entries.push(KeyHelpEntry {
+                    action: *action,
+                    description: action.description(),
+                    keys,
+                });
+            }
+        }
+        entries
+    }
+}
+
+#[cfg(test)]
+static DEFAULT_KEYMAP: LazyLock<Keymap> = LazyLock::new(Keymap::default);
+
+/// Dispatch with the built-in keymap. Prefer [`Keymap::dispatch_with_composer`]
+/// in the application so draft-sensitive actions resolve correctly.
+#[cfg(test)]
 pub fn dispatch(key: KeyEvent, state: &AppState) -> KeyAction {
-    // Only react to key presses. Platforms/terminals that emit Release or
-    // Repeat events (e.g. Windows, Kitty keyboard protocol) would otherwise
-    // dispatch a single keystroke more than once.
-    if key.kind != KeyEventKind::Press {
-        return KeyAction::Consumed;
-    }
+    DEFAULT_KEYMAP.dispatch(key, state)
+}
 
-    // Tier 1: Global shortcuts (always active).
-    if let Some(action) = dispatch_global(key) {
-        return action;
+fn binding(context: KeyContext, chord: KeyChord, action: KeyAction) -> KeyBinding {
+    KeyBinding {
+        context,
+        chord,
+        action,
     }
+}
 
-    // Tier 2: Mode-specific dispatch.
+fn plain(code: KeyCode) -> KeyChord {
+    KeyChord::new(code, KeyModifiers::NONE)
+}
+
+fn character(character: char) -> KeyChord {
+    plain(KeyCode::Char(character))
+}
+
+fn ctrl(character: char) -> KeyChord {
+    KeyChord::new(KeyCode::Char(character), KeyModifiers::CONTROL)
+}
+
+fn shift(character: char) -> KeyChord {
+    KeyChord::new(KeyCode::Char(character), KeyModifiers::SHIFT)
+}
+
+fn default_bindings() -> Vec<KeyBinding> {
+    use KeyAction as A;
+    use KeyContext as C;
+
+    vec![
+        binding(C::Global, ctrl('q'), A::Quit),
+        binding(C::Global, plain(KeyCode::F(1)), A::ShowHelp),
+        binding(C::Global, plain(KeyCode::F(3)), A::ShowRawScrollback),
+        binding(C::Global, ctrl('o'), A::ToggleSelectedTool),
+        binding(C::Cancelling, plain(KeyCode::Esc), A::Consumed),
+        binding(C::Cancelling, ctrl('c'), A::Consumed),
+        binding(C::Streaming, plain(KeyCode::Esc), A::CancelStreaming),
+        binding(C::Streaming, ctrl('c'), A::CancelStreaming),
+        binding(C::NormalInputEmpty, ctrl('c'), A::ConfirmQuit),
+        binding(C::NormalInputEmpty, ctrl('d'), A::Quit),
+        binding(C::NormalInputDraft, ctrl('c'), A::ClearInput),
+        binding(C::NormalInputDraft, ctrl('d'), A::InputPassthrough),
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Char('v'), KeyModifiers::ALT),
+            A::PasteRaw,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Char('v'), KeyModifiers::ALT),
+            A::PasteRaw,
+        ),
+        binding(C::NormalInputEmpty, ctrl('v'), A::PasteImage),
+        binding(C::NormalInputDraft, ctrl('v'), A::PasteImage),
+        binding(C::NormalInputEmpty, ctrl('r'), A::OpenHistorySearch),
+        binding(C::NormalInputDraft, ctrl('r'), A::OpenHistorySearch),
+        binding(C::NormalInputEmpty, ctrl('f'), A::OpenTranscriptSearch),
+        binding(C::NormalInputDraft, ctrl('f'), A::OpenTranscriptSearch),
+        binding(C::NormalInputEmpty, ctrl('e'), A::OpenExternalEditor),
+        binding(C::NormalInputDraft, ctrl('e'), A::OpenExternalEditor),
+        binding(C::NormalInputEmpty, plain(KeyCode::Enter), A::Submit),
+        binding(C::NormalInputDraft, plain(KeyCode::Enter), A::Submit),
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            A::InputPassthrough,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            A::InputPassthrough,
+        ),
+        binding(C::NormalInputEmpty, plain(KeyCode::Up), A::HistoryPrev),
+        binding(C::NormalInputDraft, plain(KeyCode::Up), A::HistoryPrev),
+        binding(C::NormalInputEmpty, plain(KeyCode::Down), A::HistoryNext),
+        binding(C::NormalInputDraft, plain(KeyCode::Down), A::HistoryNext),
+        binding(C::NormalInputEmpty, plain(KeyCode::Tab), A::CycleFocus),
+        binding(C::NormalInputDraft, plain(KeyCode::Tab), A::CycleFocus),
+        binding(C::NormalInputEmpty, ctrl('g'), A::ScrollToBottom),
+        binding(C::NormalInputDraft, ctrl('g'), A::ScrollToBottom),
+        binding(C::NormalInputEmpty, character(':'), A::EnterCommandMode),
+        binding(C::NormalInputDraft, character(':'), A::EnterCommandMode),
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Char('1'), KeyModifiers::ALT),
+            A::SessionSlot1,
+        ),
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Char('2'), KeyModifiers::ALT),
+            A::SessionSlot2,
+        ),
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Char('3'), KeyModifiers::ALT),
+            A::SessionSlot3,
+        ),
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Char('4'), KeyModifiers::ALT),
+            A::SessionSlot4,
+        ),
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Char('5'), KeyModifiers::ALT),
+            A::SessionSlot5,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Char('1'), KeyModifiers::ALT),
+            A::SessionSlot1,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Char('2'), KeyModifiers::ALT),
+            A::SessionSlot2,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Char('3'), KeyModifiers::ALT),
+            A::SessionSlot3,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Char('4'), KeyModifiers::ALT),
+            A::SessionSlot4,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Char('5'), KeyModifiers::ALT),
+            A::SessionSlot5,
+        ),
+        binding(C::NormalInputEmpty, plain(KeyCode::Esc), A::EnterBacktrack),
+        binding(C::NormalInputDraft, plain(KeyCode::Esc), A::EnterBacktrack),
+        binding(C::NormalChat, character(']'), A::SelectNextTool),
+        binding(C::NormalChat, character('['), A::SelectPreviousTool),
+        binding(C::NormalChat, plain(KeyCode::Enter), A::ToggleSelectedTool),
+        binding(C::NormalChat, character('c'), A::CopySelectedTool),
+        binding(C::NormalChat, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::NormalChat, character('k'), A::ScrollUp),
+        binding(C::NormalChat, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::NormalChat, character('j'), A::ScrollDown),
+        binding(C::NormalChat, plain(KeyCode::PageUp), A::PageScrollUp),
+        binding(C::NormalChat, plain(KeyCode::PageDown), A::PageScrollDown),
+        binding(C::NormalChat, plain(KeyCode::Home), A::ScrollToTop),
+        binding(C::NormalChat, character('g'), A::ScrollToTop),
+        binding(C::NormalChat, plain(KeyCode::End), A::ScrollToBottom),
+        binding(C::NormalChat, shift('g'), A::ScrollToBottom),
+        binding(C::NormalChat, plain(KeyCode::Tab), A::CycleFocus),
+        binding(C::NormalChat, character('?'), A::ShowHelp),
+        binding(C::NormalChat, ctrl('f'), A::OpenTranscriptSearch),
+        binding(C::NormalChat, plain(KeyCode::Esc), A::EnterBacktrack),
+        binding(C::NormalChat, character('i'), A::ReturnToNormal),
+        binding(C::Command, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::Command, plain(KeyCode::Enter), A::Submit),
+        binding(C::Command, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::Command, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::Command, plain(KeyCode::Tab), A::ScrollDown),
+        binding(C::Select, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::Select, character('i'), A::ReturnToNormal),
+        binding(C::Select, plain(KeyCode::Up), A::BacktrackPrevious),
+        binding(C::Select, plain(KeyCode::Left), A::BacktrackPrevious),
+        binding(C::Select, character('k'), A::BacktrackPrevious),
+        binding(C::Select, plain(KeyCode::Down), A::BacktrackNext),
+        binding(C::Select, plain(KeyCode::Right), A::BacktrackNext),
+        binding(C::Select, character('j'), A::BacktrackNext),
+        binding(C::Select, plain(KeyCode::Enter), A::ConfirmBacktrack),
+        binding(C::Select, character('r'), A::BacktrackRetry),
+        binding(C::Select, character('q'), A::BacktrackQuote),
+        binding(C::Select, character('b'), A::BacktrackFork),
+        binding(C::Select, character('y'), A::BacktrackCopy),
+        binding(C::Select, character('t'), A::BacktrackInspectTools),
+        binding(C::Select, character('d'), A::BacktrackDiff),
+        binding(C::Help, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::Help, character('q'), A::ReturnToNormal),
+        binding(C::Help, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::Help, character('k'), A::ScrollUp),
+        binding(C::Help, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::Help, character('j'), A::ScrollDown),
+        binding(C::Help, plain(KeyCode::PageUp), A::PageScrollUp),
+        binding(C::Help, plain(KeyCode::PageDown), A::PageScrollDown),
+        binding(C::Picker, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::Picker, plain(KeyCode::Enter), A::Submit),
+        binding(C::Picker, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::Picker, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::Picker, plain(KeyCode::Tab), A::ScrollDown),
+        binding(C::Picker, plain(KeyCode::PageUp), A::PageScrollUp),
+        binding(C::Picker, plain(KeyCode::PageDown), A::PageScrollDown),
+        binding(C::CopyPicker, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::CopyPicker, plain(KeyCode::Enter), A::Submit),
+        binding(C::CopyPicker, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::CopyPicker, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::CopyPicker, plain(KeyCode::PageUp), A::PageScrollUp),
+        binding(C::CopyPicker, plain(KeyCode::PageDown), A::PageScrollDown),
+        binding(
+            C::CopyPicker,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
+            A::CopyQuote,
+        ),
+        binding(C::CopyPicker, ctrl('l'), A::CopyOpenPath),
+        binding(C::SessionHub, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::SessionHub, plain(KeyCode::Enter), A::Submit),
+        binding(C::SessionHub, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::SessionHub, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::SessionHub, plain(KeyCode::PageUp), A::PageScrollUp),
+        binding(C::SessionHub, plain(KeyCode::PageDown), A::PageScrollDown),
+        binding(C::SessionHub, plain(KeyCode::F(2)), A::SessionRename),
+        binding(C::SessionHub, ctrl('p'), A::SessionPin),
+        binding(C::SessionHub, ctrl('a'), A::SessionArchive),
+        binding(C::SessionHub, ctrl('d'), A::SessionDelete),
+        binding(
+            C::SessionHub,
+            KeyChord::new(KeyCode::Char('1'), KeyModifiers::ALT),
+            A::SessionSlot1,
+        ),
+        binding(
+            C::SessionHub,
+            KeyChord::new(KeyCode::Char('2'), KeyModifiers::ALT),
+            A::SessionSlot2,
+        ),
+        binding(
+            C::SessionHub,
+            KeyChord::new(KeyCode::Char('3'), KeyModifiers::ALT),
+            A::SessionSlot3,
+        ),
+        binding(
+            C::SessionHub,
+            KeyChord::new(KeyCode::Char('4'), KeyModifiers::ALT),
+            A::SessionSlot4,
+        ),
+        binding(
+            C::SessionHub,
+            KeyChord::new(KeyCode::Char('5'), KeyModifiers::ALT),
+            A::SessionSlot5,
+        ),
+        binding(C::Queue, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::Queue, character('q'), A::ReturnToNormal),
+        binding(C::Queue, plain(KeyCode::Enter), A::Submit),
+        binding(C::Queue, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::Queue, character('k'), A::ScrollUp),
+        binding(C::Queue, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::Queue, character('j'), A::ScrollDown),
+        binding(C::Queue, character('d'), A::QueueDelete),
+        binding(C::Queue, character('s'), A::QueueSteer),
+        binding(C::Queue, character('e'), A::QueueRecall),
+        binding(C::Tasks, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::Tasks, character('q'), A::ReturnToNormal),
+        binding(C::Tasks, plain(KeyCode::Enter), A::Submit),
+        binding(C::Tasks, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::Tasks, character('k'), A::ScrollUp),
+        binding(C::Tasks, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::Tasks, character('j'), A::ScrollDown),
+        binding(C::Tasks, character('d'), A::TasksKill),
+        binding(C::Tasks, character('r'), A::TasksRefresh),
+    ]
+}
+
+fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
+    let mut contexts = vec![KeyContext::Global];
+    if state.is_cancelling {
+        contexts.insert(0, KeyContext::Cancelling);
+    } else if state.is_streaming {
+        contexts.insert(0, KeyContext::Streaming);
+    }
+    let mode = match state.mode {
+        InteractionMode::Normal if state.focus == PanelFocus::Input && composer_empty => {
+            KeyContext::NormalInputEmpty
+        }
+        InteractionMode::Normal if state.focus == PanelFocus::Input => KeyContext::NormalInputDraft,
+        InteractionMode::Normal => KeyContext::NormalChat,
+        InteractionMode::Command => KeyContext::Command,
+        InteractionMode::Select => KeyContext::Select,
+        InteractionMode::Help => KeyContext::Help,
+        InteractionMode::Queue => KeyContext::Queue,
+        InteractionMode::Tasks => KeyContext::Tasks,
+        InteractionMode::Resume => KeyContext::SessionHub,
+        InteractionMode::Copy => KeyContext::CopyPicker,
+        InteractionMode::HistorySearch
+        | InteractionMode::TranscriptSearch
+        | InteractionMode::Prompt => KeyContext::Picker,
+    };
+    contexts.push(mode);
+    contexts
+}
+
+fn fallback_action(state: &AppState) -> KeyAction {
     match state.mode {
-        InteractionMode::Normal => dispatch_normal(key, state),
-        InteractionMode::Command => dispatch_command(key, state),
-        InteractionMode::Select => dispatch_select(key),
-        InteractionMode::Help => dispatch_help(key),
-        InteractionMode::Queue => dispatch_queue(key),
-        InteractionMode::Tasks => dispatch_tasks(key),
-        InteractionMode::Copy | InteractionMode::Resume | InteractionMode::Prompt => {
-            dispatch_picker(key)
+        InteractionMode::Normal if state.focus == PanelFocus::Input => KeyAction::InputPassthrough,
+        InteractionMode::Command
+        | InteractionMode::Copy
+        | InteractionMode::HistorySearch
+        | InteractionMode::TranscriptSearch
+        | InteractionMode::Resume
+        | InteractionMode::Prompt => KeyAction::InputPassthrough,
+        InteractionMode::Help | InteractionMode::Queue | InteractionMode::Tasks => {
+            KeyAction::Consumed
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tier 1: Global keys
-// ---------------------------------------------------------------------------
-
-fn dispatch_global(key: KeyEvent) -> Option<KeyAction> {
-    // F1 shows help globally. Ctrl+H is intentionally NOT bound: many
-    // terminals send ^H (0x08) for Backspace, so binding it would pop the
-    // help overlay every time the user deletes a character.
-    if key.code == KeyCode::F(1) {
-        return Some(KeyAction::ShowHelp);
-    }
-    if key.modifiers.contains(KeyModifiers::CONTROL) {
-        if let KeyCode::Char('q' | 'd' | 'c') = key.code {
-            return Some(KeyAction::Quit);
-        }
-        // Ctrl+O cycles the selected tool card from any mode/focus. It is
-        // global (not chat-focus-only like Enter) because the common case is
-        // expanding the latest tool card while typing in the composer. No
-        // picker or overlay binds Ctrl+O, so this is conflict-free.
-        if key.code == KeyCode::Char('o') {
-            return Some(KeyAction::ToggleSelectedTool);
-        }
-    }
-    None
-}
-
-// ---------------------------------------------------------------------------
-// Tier 2: Normal mode
-// ---------------------------------------------------------------------------
-
-fn dispatch_normal(key: KeyEvent, state: &AppState) -> KeyAction {
-    match state.focus {
-        PanelFocus::Input => dispatch_input_normal(key, state),
-        PanelFocus::Chat => dispatch_chat_normal(key, state),
-    }
-}
-
-/// Normal mode, Input panel focused.
-fn dispatch_input_normal(key: KeyEvent, state: &AppState) -> KeyAction {
-    match key.code {
-        // Enter submits the message.
-        KeyCode::Enter => {
-            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                KeyAction::InputPassthrough // Shift+Enter = newline
-            } else {
-                KeyAction::Submit
-            }
-        }
-        // Up/Down navigate input history.
-        KeyCode::Up => KeyAction::HistoryPrev,
-        KeyCode::Down => KeyAction::HistoryNext,
-        // Tab cycles focus.
-        KeyCode::Tab => KeyAction::CycleFocus,
-        // Ctrl+G scrolls to bottom (dismiss "new content below").
-        _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') => {
-            KeyAction::ScrollToBottom
-        }
-        // ':' prefix enters command mode.
-        KeyCode::Char(':') => KeyAction::EnterCommandMode,
-        // Escape cancels streaming if active, otherwise opens prompt backtracking.
-        KeyCode::Esc => {
-            if state.is_cancelling {
-                KeyAction::Consumed
-            } else if state.is_streaming {
-                KeyAction::CancelStreaming
-            } else {
-                KeyAction::EnterBacktrack
-            }
-        }
-        // Everything else passes through to textarea.
-        _ => KeyAction::InputPassthrough,
-    }
-}
-
-/// Normal mode, Chat panel focused.
-fn dispatch_chat_normal(key: KeyEvent, state: &AppState) -> KeyAction {
-    match key.code {
-        KeyCode::Char(']') => KeyAction::SelectNextTool,
-        KeyCode::Char('[') => KeyAction::SelectPreviousTool,
-        KeyCode::Enter => KeyAction::ToggleSelectedTool,
-        KeyCode::Char('c') => KeyAction::CopySelectedTool,
-        // Line scroll.
-        KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
-        // Page scroll.
-        KeyCode::PageUp => KeyAction::PageScrollUp,
-        KeyCode::PageDown => KeyAction::PageScrollDown,
-        // Jump to top/bottom.
-        KeyCode::Home | KeyCode::Char('g') => KeyAction::ScrollToTop,
-        KeyCode::End | KeyCode::Char('G') => KeyAction::ScrollToBottom,
-        // Tab cycles focus.
-        KeyCode::Tab => KeyAction::CycleFocus,
-        // '?' shows help.
-        KeyCode::Char('?') => KeyAction::ShowHelp,
-        // Escape cancels streaming if active, otherwise opens prompt backtracking.
-        KeyCode::Esc => {
-            if state.is_cancelling {
-                KeyAction::Consumed
-            } else if state.is_streaming {
-                KeyAction::CancelStreaming
-            } else {
-                KeyAction::EnterBacktrack
-            }
-        }
-        // 'i' returns focus to input.
-        KeyCode::Char('i') => KeyAction::ReturnToNormal,
-        _ => KeyAction::Unhandled,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tier 2: Command mode
-// ---------------------------------------------------------------------------
-
-fn dispatch_command(key: KeyEvent, _state: &AppState) -> KeyAction {
-    match key.code {
-        // Escape cancels command mode, returns to normal.
-        KeyCode::Esc => KeyAction::ReturnToNormal,
-        // Enter submits the command.
-        KeyCode::Enter => KeyAction::Submit,
-        // Arrow keys navigate the palette selection.
-        KeyCode::Up => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Tab => KeyAction::ScrollDown,
-        // Everything else is input for the command buffer.
-        _ => KeyAction::InputPassthrough,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tier 2: Select mode
-// ---------------------------------------------------------------------------
-
-fn dispatch_select(key: KeyEvent) -> KeyAction {
-    match key.code {
-        // Escape exits backtrack selection, consistent with other modes.
-        KeyCode::Esc | KeyCode::Char('q' | 'i') => KeyAction::ReturnToNormal,
-        KeyCode::Up | KeyCode::Left | KeyCode::Char('k') => KeyAction::BacktrackPrevious,
-        KeyCode::Down | KeyCode::Right | KeyCode::Char('j') => KeyAction::BacktrackNext,
-        KeyCode::Enter => KeyAction::ConfirmBacktrack,
-        _ => KeyAction::Unhandled,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tier 2: Help mode
-// ---------------------------------------------------------------------------
-
-fn dispatch_help(key: KeyEvent) -> KeyAction {
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => KeyAction::ReturnToNormal,
-        _ => KeyAction::Consumed,
-    }
-}
-
-fn dispatch_picker(key: KeyEvent) -> KeyAction {
-    match key.code {
-        KeyCode::Esc => KeyAction::ReturnToNormal,
-        KeyCode::Enter => KeyAction::Submit,
-        KeyCode::Up => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Tab => KeyAction::ScrollDown,
-        KeyCode::PageUp => KeyAction::PageScrollUp,
-        KeyCode::PageDown => KeyAction::PageScrollDown,
-        _ => KeyAction::InputPassthrough,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tier 2: Queue mode
-// ---------------------------------------------------------------------------
-
-fn dispatch_queue(key: KeyEvent) -> KeyAction {
-    match key.code {
-        // Escape or q closes the queue overlay.
-        KeyCode::Esc | KeyCode::Char('q') => KeyAction::ReturnToNormal,
-        // Enter closes the overlay; queue mutations use d/s instead.
-        KeyCode::Enter => KeyAction::Submit,
-        // Arrow / vim keys navigate the queue.
-        KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
-        KeyCode::Char('d') => KeyAction::QueueDelete,
-        KeyCode::Char('s') => KeyAction::QueueSteer,
-        // Everything else is swallowed so it cannot leak into the composer.
-        _ => KeyAction::Consumed,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tier 2: Tasks mode
-// ---------------------------------------------------------------------------
-
-fn dispatch_tasks(key: KeyEvent) -> KeyAction {
-    match key.code {
-        // Escape or q closes the tasks overlay.
-        KeyCode::Esc | KeyCode::Char('q') => KeyAction::ReturnToNormal,
-        // Enter toggles the selected task's inline output preview.
-        KeyCode::Enter => KeyAction::Submit,
-        // Arrow / vim keys navigate the list, consistent with the queue
-        // overlay; kill lives on `d` there too (delete).
-        KeyCode::Up | KeyCode::Char('k') => KeyAction::ScrollUp,
-        KeyCode::Down | KeyCode::Char('j') => KeyAction::ScrollDown,
-        KeyCode::Char('d') => KeyAction::TasksKill,
-        KeyCode::Char('r') => KeyAction::TasksRefresh,
-        // Everything else is swallowed so it cannot leak into the composer.
-        _ => KeyAction::Consumed,
+        InteractionMode::Normal | InteractionMode::Select => KeyAction::Unhandled,
     }
 }
 
@@ -373,6 +1095,48 @@ mod tests {
         let state = AppState::new();
         let action = dispatch(key_with_mod(KeyCode::Enter, KeyModifiers::SHIFT), &state);
         assert_eq!(action, KeyAction::InputPassthrough);
+    }
+
+    #[test]
+    fn test_composer_productivity_shortcuts_are_semantic_actions() {
+        let state = AppState::new();
+        assert_eq!(
+            dispatch(
+                key_with_mod(KeyCode::Char('r'), KeyModifiers::CONTROL),
+                &state,
+            ),
+            KeyAction::OpenHistorySearch
+        );
+        assert_eq!(
+            dispatch(
+                key_with_mod(KeyCode::Char('e'), KeyModifiers::CONTROL),
+                &state,
+            ),
+            KeyAction::OpenExternalEditor
+        );
+    }
+
+    #[test]
+    fn test_queue_edit_recalls_selected_prompt() {
+        let mut state = AppState::new();
+        state.mode = InteractionMode::Queue;
+        assert_eq!(
+            dispatch(key(KeyCode::Char('e')), &state),
+            KeyAction::QueueRecall
+        );
+    }
+
+    #[test]
+    fn test_remote_terminal_adds_raw_paste_function_key_fallback() {
+        let keymap = Keymap::for_terminal(TerminalCapabilities::for_host(
+            crate::tui::terminal::TerminalHost::Ssh,
+        ));
+        let state = AppState::new();
+
+        assert_eq!(
+            keymap.dispatch(key(KeyCode::F(8)), &state),
+            KeyAction::PasteRaw
+        );
     }
 
     #[test]
@@ -569,7 +1333,7 @@ mod tests {
         );
         assert_eq!(
             dispatch(key(KeyCode::Char('q')), &state),
-            KeyAction::ReturnToNormal
+            KeyAction::BacktrackQuote
         );
     }
 
@@ -704,6 +1468,135 @@ mod tests {
         assert_eq!(
             dispatch(key(KeyCode::Backspace), &state),
             KeyAction::Consumed
+        );
+    }
+
+    #[test]
+    fn test_default_keymap_has_no_context_conflicts() {
+        let keymap = Keymap::default();
+
+        assert!(keymap.validate().is_ok());
+    }
+
+    #[test]
+    fn test_keymap_metadata_is_the_help_source_of_truth() {
+        let keymap = Keymap::default();
+        let help = keymap.help_entries(KeyContext::Global);
+
+        assert!(help.iter().any(|entry| {
+            entry.action == KeyAction::ShowHelp && entry.keys.iter().any(|key| key == "F1")
+        }));
+        assert!(!help
+            .iter()
+            .any(|entry| entry.keys.iter().any(|key| key == "Ctrl+H")));
+    }
+
+    #[test]
+    fn test_keymap_override_replaces_default_binding() {
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("show_help".to_string(), vec!["ctrl+?".to_string()]);
+        let keymap = Keymap::with_overrides(overrides).unwrap();
+        let state = AppState::new();
+
+        assert_eq!(
+            keymap.dispatch(
+                key_with_mod(KeyCode::Char('?'), KeyModifiers::CONTROL),
+                &state,
+            ),
+            KeyAction::ShowHelp
+        );
+        assert_ne!(
+            keymap.dispatch(key(KeyCode::F(1)), &state),
+            KeyAction::ShowHelp
+        );
+    }
+
+    #[test]
+    fn test_keymap_rejects_unknown_action_with_action_name() {
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("teleport".to_string(), vec!["ctrl+t".to_string()]);
+
+        let error = Keymap::with_overrides(overrides).unwrap_err();
+
+        assert!(error.to_string().contains("teleport"));
+    }
+
+    #[test]
+    fn test_keymap_rejects_conflicting_binding_with_context() {
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("quit".to_string(), vec!["f1".to_string()]);
+
+        let error = Keymap::with_overrides(overrides).unwrap_err();
+
+        assert!(error.to_string().contains("F1"));
+        assert!(error.to_string().contains("global"));
+    }
+
+    #[test]
+    fn test_ctrl_c_is_state_sensitive() {
+        let keymap = Keymap::default();
+        let ctrl_c = key_with_mod(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let mut state = AppState::new();
+
+        assert_eq!(
+            keymap.dispatch_with_composer(ctrl_c, &state, true),
+            KeyAction::ConfirmQuit
+        );
+        assert_eq!(
+            keymap.dispatch_with_composer(ctrl_c, &state, false),
+            KeyAction::ClearInput
+        );
+
+        state.is_streaming = true;
+        assert_eq!(
+            keymap.dispatch_with_composer(ctrl_c, &state, false),
+            KeyAction::CancelStreaming
+        );
+    }
+
+    #[test]
+    fn test_ctrl_d_only_quits_with_empty_composer() {
+        let keymap = Keymap::default();
+        let ctrl_d = key_with_mod(KeyCode::Char('d'), KeyModifiers::CONTROL);
+        let state = AppState::new();
+
+        assert_eq!(
+            keymap.dispatch_with_composer(ctrl_d, &state, true),
+            KeyAction::Quit
+        );
+        assert_eq!(
+            keymap.dispatch_with_composer(ctrl_d, &state, false),
+            KeyAction::InputPassthrough
+        );
+    }
+
+    #[test]
+    fn test_alt_v_arms_raw_paste_in_composer() {
+        let keymap = Keymap::default();
+        let state = AppState::new();
+
+        assert_eq!(
+            keymap.dispatch_with_composer(
+                key_with_mod(KeyCode::Char('v'), KeyModifiers::ALT),
+                &state,
+                false,
+            ),
+            KeyAction::PasteRaw
+        );
+    }
+
+    #[test]
+    fn test_ctrl_v_requests_clipboard_image_in_composer() {
+        let keymap = Keymap::default();
+        let state = AppState::new();
+
+        assert_eq!(
+            keymap.dispatch_with_composer(
+                key_with_mod(KeyCode::Char('v'), KeyModifiers::CONTROL),
+                &state,
+                true,
+            ),
+            KeyAction::PasteImage
         );
     }
 }

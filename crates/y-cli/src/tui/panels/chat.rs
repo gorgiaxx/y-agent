@@ -27,7 +27,7 @@ use crate::tui::state::{
 };
 use crate::tui::theme::Theme;
 use crate::tui::tool_renderers::{
-    group_tool_indexes, present_tool, quick_summary, ToolKind, ToolRenderGroup,
+    group_tool_indexes, present_tool, quick_summary, ToolRenderGroup,
 };
 
 // ---------------------------------------------------------------------------
@@ -1274,7 +1274,7 @@ fn render_think_card(
 /// Layout:
 /// ```text
 ///      [wrench] ToolName  Done / Running...
-///        Arguments: ...
+///        <arguments in accent color>
 /// ```
 fn render_tool_call_card(
     lines: &mut Vec<Line>,
@@ -1521,7 +1521,6 @@ fn render_exploration_group(
                 push_tool_section(
                     lines,
                     plain,
-                    "Arguments",
                     &presentation.argument_lines,
                     80,
                     t.tool_card_text(),
@@ -1536,7 +1535,6 @@ fn render_exploration_group(
             push_tool_section(
                 lines,
                 plain,
-                "Result",
                 &presentation.result_lines,
                 result_limit,
                 t.muted(),
@@ -1580,6 +1578,16 @@ fn render_tool_call_executed_card(
         };
 
     let selected_label = if selected { "  [selected]" } else { "" };
+    let heading =
+        if tc.display_mode != ToolCallDisplayMode::Collapsed && !presentation.summary.is_empty() {
+            format!(
+                "{} {}",
+                presentation.verb,
+                truncate_str(&presentation.summary, 56)
+            )
+        } else {
+            format!("{} {}", presentation.verb, tc.name)
+        };
     let header_spans = vec![
         Span::styled(
             format!("{indent}{} ", if selected { ">" } else { "\u{2022}" }),
@@ -1590,7 +1598,7 @@ fn render_tool_call_executed_card(
             }),
         ),
         Span::styled(
-            format!("{} {}", presentation.verb, tc.name),
+            heading.clone(),
             Style::default()
                 .fg(t.tool_card_accent())
                 .add_modifier(Modifier::BOLD),
@@ -1607,43 +1615,21 @@ fn render_tool_call_executed_card(
         ),
     ];
     let header_plain = format!(
-        "{indent}{} {} {}{}  {status_label}{timing}{selected_label}",
+        "{indent}{} {}{}  {status_label}{timing}{selected_label}",
         if selected { ">" } else { "*" },
-        presentation.verb,
-        tc.name,
+        heading,
         collapsed_summary
     );
     lines.push(Line::from(header_spans));
     plain.push(header_plain);
 
     if tc.display_mode != ToolCallDisplayMode::Collapsed {
-        if !presentation.summary.is_empty() {
-            let argument_line = format!(
-                "{indent}  {}={}",
-                summary_label(presentation.kind),
-                presentation.summary
-            );
-            lines.push(Line::from(Span::styled(
-                argument_line.clone(),
-                Style::default().fg(t.tool_card_text()),
-            )));
-            plain.push(argument_line);
-        } else if let Some(argument) = presentation.argument_lines.first() {
-            let argument_line = format!("{indent}  {argument}");
-            lines.push(Line::from(Span::styled(
-                argument_line.clone(),
-                Style::default().fg(t.tool_card_text()),
-            )));
-            plain.push(argument_line);
-        }
-
         if tc.display_mode == ToolCallDisplayMode::Expanded
             && !presentation.argument_lines.is_empty()
         {
             push_tool_section(
                 lines,
                 plain,
-                "Arguments",
                 &presentation.argument_lines,
                 80,
                 t.tool_card_text(),
@@ -1659,7 +1645,6 @@ fn render_tool_call_executed_card(
         push_tool_section(
             lines,
             plain,
-            "Result",
             &presentation.result_lines,
             result_limit,
             t.muted(),
@@ -1670,10 +1655,12 @@ fn render_tool_call_executed_card(
     tool_ranges.push((tool_index, card_start..lines.len()));
 }
 
+/// Push tool output lines with plain indentation. Arguments and results are
+/// distinguished by color (callers pass different colors), not by labels or
+/// border glyphs.
 fn push_tool_section(
     lines: &mut Vec<Line>,
     plain: &mut Vec<String>,
-    label: &str,
     content: &[String],
     limit: usize,
     color: Color,
@@ -1683,19 +1670,9 @@ fn push_tool_section(
         return;
     }
     let indent = "     ";
-    if limit > 4 {
-        let label_line = format!("{indent}  {label}:");
-        lines.push(Line::from(Span::styled(
-            label_line.clone(),
-            Style::default()
-                .fg(t.tool_card_accent())
-                .add_modifier(Modifier::BOLD),
-        )));
-        plain.push(label_line);
-    }
     let shown = content.len().min(limit);
     for line in content.iter().take(shown) {
-        let output_line = format!("{indent}  \u{2514} {line}");
+        let output_line = format!("{indent}  {line}");
         lines.push(Line::from(Span::styled(
             output_line.clone(),
             Style::default().fg(color),
@@ -1710,18 +1687,6 @@ fn push_tool_section(
             Style::default().fg(t.muted()),
         )));
         plain.push(more_line);
-    }
-}
-
-fn summary_label(kind: ToolKind) -> &'static str {
-    match kind {
-        ToolKind::Shell => "command",
-        ToolKind::Read | ToolKind::Edit => "path",
-        ToolKind::Search => "query",
-        ToolKind::List => "directory",
-        ToolKind::Web => "target",
-        ToolKind::Task => "task",
-        ToolKind::Generic => "input",
     }
 }
 
@@ -2326,7 +2291,7 @@ mod tests {
             .unwrap();
         let tool = plain
             .iter()
-            .position(|line| line.contains("Read FileRead"))
+            .position(|line| line.contains("Read src/lib.rs"))
             .unwrap();
         let second_reasoning = plain
             .iter()
@@ -2560,8 +2525,13 @@ mod tests {
         );
 
         let text = plain.join("\n");
-        assert!(text.contains("Ran ShellExec"));
-        assert!(text.contains("command=cargo test"));
+        // The header carries the semantic action, not the raw tool name.
+        assert!(text.contains("Ran cargo test"));
+        // No raw `command=` line, no Arguments/Result labels, no box glyphs.
+        assert!(!text.contains("command="));
+        assert!(!text.contains("Arguments:"));
+        assert!(!text.contains("Result:"));
+        assert!(!text.contains('\u{2514}'));
         assert!(text.contains("test result: ok"));
         assert!(text.contains("42 passed"));
         assert!(text.contains("selected"));
@@ -3107,7 +3077,7 @@ mod tests {
         assert_eq!(range.end, lines.len());
         assert_eq!(range.end, plain.len());
         assert!(
-            plain[range.start].contains("Ran ShellExec"),
+            plain[range.start].contains("Ran cargo test"),
             "first row of the range must be the card header: {plain:?}"
         );
     }
@@ -3186,8 +3156,10 @@ mod tests {
             "no content row may leak into the card range: {plain:?}"
         );
         assert!(
-            plain[range.start].contains("Ran ShellExec"),
-            "first row of the range must be the card header: {plain:?}"
+            plain[range.start..range.end]
+                .concat()
+                .contains("Ran cargo test"),
+            "the card header must open the range (wrapped rows reassemble): {plain:?}"
         );
         assert_eq!(range.end, lines.len());
     }
@@ -3266,7 +3238,7 @@ mod tests {
         );
         assert_eq!(range.start, 5, "card start in absolute rows: {plain:?}");
         assert_eq!(range.end, plain.len());
-        assert!(plain[range.start].contains("Ran ShellExec"));
+        assert!(plain[range.start].contains("Ran cargo test"));
 
         // A second render (cache hit) clears and refills identical rows.
         terminal

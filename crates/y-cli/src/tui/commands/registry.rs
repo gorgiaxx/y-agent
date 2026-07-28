@@ -92,17 +92,21 @@ impl CommandRegistry {
 
     /// Search commands by prefix (for command palette fuzzy filter).
     ///
-    /// Returns commands whose name or alias starts with the given prefix.
+    /// Returns commands whose name or alias starts with the given prefix, or
+    /// whose description contains it. Name/alias prefix matches always rank
+    /// before description-substring matches so that e.g. `plan` outranks
+    /// `auto` ("...select fast, plan, or loop") for the query "plan".
     pub fn search(&self, prefix: &str) -> Vec<&CommandInfo> {
         let prefix = prefix.to_lowercase();
-        self.commands
+        let prefix_match = |c: &CommandInfo| {
+            c.name.starts_with(&prefix) || c.alias.is_some_and(|a| a.starts_with(&prefix))
+        };
+        let (primary, secondary): (Vec<_>, Vec<_>) = self
+            .commands
             .iter()
-            .filter(|c| {
-                c.name.starts_with(&prefix)
-                    || c.alias.is_some_and(|a| a.starts_with(&prefix))
-                    || c.description.to_lowercase().contains(&prefix)
-            })
-            .collect()
+            .filter(|c| prefix_match(c) || c.description.to_lowercase().contains(&prefix))
+            .partition(|c| prefix_match(c));
+        primary.into_iter().chain(secondary).collect()
     }
 
     /// Get all commands, grouped by category.
@@ -157,6 +161,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Session,
         },
         CommandInfo {
+            name: "rename",
+            alias: Some("rn"),
+            description: "Rename a session",
+            args: "<session-id> <title>",
+            category: CommandCategory::Session,
+        },
+        CommandInfo {
             name: "reset",
             alias: None,
             description: "Reset current session (clear messages)",
@@ -207,6 +218,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Mode,
         },
         CommandInfo {
+            name: "permission",
+            alias: Some("perm"),
+            description: "View or change the session permission mode",
+            args: "[default|plan|accept_edits|bypass_permissions|dont_ask]",
+            category: CommandCategory::Mode,
+        },
+        CommandInfo {
             name: "fast",
             alias: None,
             description: "Use direct execution for subsequent turns",
@@ -247,6 +265,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             alias: Some("pr"),
             description: "Select the session prompt template",
             args: "[template-id|default]",
+            category: CommandCategory::General,
+        },
+        CommandInfo {
+            name: "attach",
+            alias: Some("file"),
+            description: "Attach a local file to the next turn",
+            args: "<path>",
             category: CommandCategory::General,
         },
         // Debug commands
@@ -375,6 +400,21 @@ mod tests {
         assert!(
             results.len() >= 3,
             "should find multiple session-related commands"
+        );
+    }
+
+    // Regression: name/alias prefix matches must outrank description-substring
+    // matches, so typing `/plan` does not highlight `/auto` ("...fast, plan,
+    // or loop") first.
+    #[test]
+    fn test_search_prefix_matches_rank_before_description_matches() {
+        let reg = CommandRegistry::new();
+
+        let results = reg.search("plan");
+        assert_eq!(results.first().map(|c| c.name), Some("plan"));
+        assert!(
+            results.iter().any(|c| c.name == "auto"),
+            "auto should still be found via its description"
         );
     }
 

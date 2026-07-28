@@ -78,18 +78,36 @@ pub enum ChatEvent {
 pub enum InputIntent {
     Ignore,
     Command(String),
+    ShellCommand(String),
     NewTurn(String),
     FollowUp(String),
 }
 
 /// Classify composer text without performing service work.
+#[cfg(test)]
 pub fn classify_input(input: &str, is_streaming: bool) -> InputIntent {
+    classify_input_with_attachments(input, is_streaming, false)
+}
+
+/// Classify composer content while allowing an attachment-only new turn.
+pub fn classify_input_with_attachments(
+    input: &str,
+    is_streaming: bool,
+    has_attachments: bool,
+) -> InputIntent {
     let trimmed = input.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() && !has_attachments {
         return InputIntent::Ignore;
     }
-    if let Some(command) = trimmed.strip_prefix('/') {
-        return InputIntent::Command(command.to_string());
+    if !has_attachments {
+        if let Some(command) = trimmed.strip_prefix('/') {
+            return InputIntent::Command(command.to_string());
+        }
+        if let Some(command) = trimmed.strip_prefix('!').map(str::trim) {
+            if !command.is_empty() {
+                return InputIntent::ShellCommand(command.to_string());
+            }
+        }
     }
     if is_streaming {
         InputIntent::FollowUp(trimmed.to_string())
@@ -111,16 +129,164 @@ impl ActiveChat {
     }
 }
 
-/// Submit a user message: adds to state, persists, starts async LLM call.
-///
-/// Returns a receiver for `ChatEvent`s. The caller should poll this
-/// in the main event loop and apply events to state.
-pub fn submit_message(
+/// Submit text plus typed attachments from a structured composer draft.
+pub fn submit_message_with_attachments(
     input: &str,
+    attachments: Vec<y_core::types::Attachment>,
     state: &mut AppState,
     services: &Arc<AppServices>,
 ) -> Option<ActiveChat> {
-    submit_message_with_mode(input, state.turn_mode, state, services)
+    submit_message_with_mode_and_attachments(input, state.turn_mode, attachments, state, services)
+}
+
+/// Execute an operator-entered `!command` through the service guardrail and
+/// sandbox pipeline while reusing the normal TUI streaming lifecycle.
+pub fn submit_shell_command(
+    command: &str,
+    confirmed: bool,
+    state: &mut AppState,
+    services: &Arc<AppServices>,
+) -> Option<ActiveChat> {
+    let command = command.trim();
+    if command.is_empty() || state.is_streaming {
+        return None;
+    }
+
+    state.messages.push(ChatMessage {
+        role: MessageRole::User,
+        content: format!("!{command}"),
+        timestamp: Utc::now(),
+        is_streaming: false,
+        is_cancelled: false,
+        reasoning_content: String::new(),
+        reasoning_complete: false,
+        tool_calls: Vec::new(),
+        segments: Vec::new(),
+    });
+    state.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: String::new(),
+        timestamp: Utc::now(),
+        is_streaming: true,
+        is_cancelled: false,
+        reasoning_content: String::new(),
+        reasoning_complete: false,
+        tool_calls: Vec::new(),
+        segments: Vec::new(),
+    });
+    state.is_streaming = true;
+    state.is_cancelling = false;
+    state.scroll_offset = 0;
+
+    let services = Arc::clone(services);
+    let command = command.to_string();
+    let current_session = state.current_session_id.clone();
+    let (tx, rx) = mpsc::channel(8);
+    let cancellation = TurnCancellationToken::new();
+    let task_cancellation = cancellation.clone();
+    tokio::spawn(async move {
+        let (session_id, created_session) = if let Some(id) = current_session {
+            (SessionId::from_string(id), None)
+        } else {
+            match create_workspace_session(&services).await {
+                Ok(session) => (session.id.clone(), Some(session)),
+                Err(error) => {
+                    let _ = tx.send(ChatEvent::Error(error)).await;
+                    return;
+                }
+            }
+        };
+        if let Some(session) = created_session {
+            let _ = tx
+                .send(ChatEvent::SessionCreated {
+                    id: session.id.to_string(),
+                    title: "New Chat".into(),
+                    updated_at: session.updated_at,
+                })
+                .await;
+        }
+
+        let call_id = uuid::Uuid::new_v4().to_string();
+        let _ = tx
+            .send(ChatEvent::ToolCallStarted {
+                tool_call_id: call_id.clone(),
+                name: "ShellExec".into(),
+                input_preview: command.clone(),
+                agent_name: "operator".into(),
+            })
+            .await;
+        let started = std::time::Instant::now();
+        let working_dir = std::env::current_dir()
+            .ok()
+            .and_then(|path| path.to_str().map(str::to_owned));
+        let result = y_service::OperatorShellService::execute(
+            &services,
+            y_service::OperatorShellRequest {
+                session_id: &session_id,
+                command: &command,
+                working_dir: working_dir.as_deref(),
+                additional_read_dirs: &[],
+                confirmed,
+                cancellation: Some(&task_cancellation),
+            },
+        )
+        .await;
+        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        match result {
+            Ok(output) => {
+                let result_preview = serde_json::to_string_pretty(&output.content)
+                    .unwrap_or_else(|_| output.content.to_string());
+                let _ = tx
+                    .send(ChatEvent::ToolCallCompleted {
+                        tool_call_id: call_id,
+                        name: "ShellExec".into(),
+                        success: output.success,
+                        duration_ms,
+                        input_preview: command,
+                        result_preview,
+                        agent_name: "operator".into(),
+                        url_meta: None,
+                        metadata: Some(output.metadata),
+                    })
+                    .await;
+                let _ = tx
+                    .send(ChatEvent::Response {
+                        content: String::new(),
+                        model: "local-shell".into(),
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        last_input_tokens: 0,
+                        context_window: 0,
+                        cost_usd: 0.0,
+                    })
+                    .await;
+            }
+            Err(y_service::OperatorShellError::Execution(y_core::tool::ToolError::Cancelled)) => {
+                let _ = tx.send(ChatEvent::Cancelled).await;
+            }
+            Err(error) => {
+                let _ = tx
+                    .send(ChatEvent::ToolCallCompleted {
+                        tool_call_id: call_id,
+                        name: "ShellExec".into(),
+                        success: false,
+                        duration_ms,
+                        input_preview: command,
+                        result_preview: error.to_string(),
+                        agent_name: "operator".into(),
+                        url_meta: None,
+                        metadata: None,
+                    })
+                    .await;
+                let _ = tx.send(ChatEvent::Error(error.to_string())).await;
+            }
+        }
+    });
+
+    Some(ActiveChat {
+        events: rx,
+        cancellation,
+    })
 }
 
 /// Submit a user message with an optional service-owned orchestration mode.
@@ -130,15 +296,41 @@ pub fn submit_message_with_mode(
     state: &mut AppState,
     services: &Arc<AppServices>,
 ) -> Option<ActiveChat> {
+    submit_message_with_mode_and_attachments(input, turn_mode, Vec::new(), state, services)
+}
+
+fn submit_message_with_mode_and_attachments(
+    input: &str,
+    turn_mode: TurnMode,
+    attachments: Vec<y_core::types::Attachment>,
+    state: &mut AppState,
+    services: &Arc<AppServices>,
+) -> Option<ActiveChat> {
     let trimmed = input.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() && attachments.is_empty() {
         return None;
     }
 
     // Add user message to chat history.
+    let display_content = if trimmed.is_empty() {
+        attachments
+            .iter()
+            .map(|attachment| {
+                let kind = if attachment.mime_type.starts_with("image/") {
+                    "Image"
+                } else {
+                    "File"
+                };
+                format!("[{kind}: {}]", attachment.filename)
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        trimmed.to_string()
+    };
     state.messages.push(ChatMessage {
         role: MessageRole::User,
-        content: trimmed.to_string(),
+        content: display_content,
         timestamp: Utc::now(),
         is_streaming: false,
         is_cancelled: false,
@@ -160,6 +352,7 @@ pub fn submit_message_with_mode(
     let session_id_opt = state.current_session_id.clone();
     let trimmed_owned = trimmed.to_string();
     let selected_provider_id = state.selected_provider_id.clone();
+    let attachments_owned = attachments;
 
     // Determine if title generation should be triggered. The title only
     // consumes user messages, so it regenerates on every send (interval acts
@@ -194,6 +387,7 @@ pub fn submit_message_with_mode(
             trimmed_owned,
             selected_provider_id,
             turn_mode,
+            attachments_owned,
         )
         .await
         {
@@ -406,6 +600,7 @@ async fn prepare_tui_turn(
     user_input: String,
     provider_id: Option<String>,
     turn_mode: TurnMode,
+    attachments: Vec<y_core::types::Attachment>,
 ) -> Result<(PreparedTurn, Option<y_core::session::SessionNode>), String> {
     let (session_id, created_session) = if let Some(session_id) = session_id {
         (SessionId::from_string(session_id), None)
@@ -422,6 +617,7 @@ async fn prepare_tui_turn(
             request_mode: Some(y_core::provider::RequestMode::TextChat),
             plan_mode: turn_mode.plan_mode().map(str::to_string),
             operation_mode: Some(y_service::chat_types::OperationMode::Default),
+            attachments,
             ..PrepareTurnRequest::default()
         },
     )
@@ -682,6 +878,11 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                     title,
                     updated_at,
                     message_count: 0,
+                    state: y_core::session::SessionState::Active,
+                    parent_id: None,
+                    depth: 0,
+                    pinned: false,
+                    quick_slot: None,
                 },
             );
         }
@@ -784,6 +985,7 @@ mod tests {
             "edit the file".into(),
             None,
             TurnMode::Fast,
+            Vec::new(),
         )
         .await
         .unwrap();
@@ -1162,6 +1364,14 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_input_recognizes_shell_composer_command() {
+        assert_eq!(
+            classify_input("!cargo test", false),
+            InputIntent::ShellCommand("cargo test".into())
+        );
+    }
+
+    #[test]
     fn test_active_chat_cancel_signals_service_token() {
         let cancellation = TurnCancellationToken::new();
         let (_, events) = mpsc::channel(1);
@@ -1184,6 +1394,11 @@ mod tests {
             title: String::new(),
             updated_at: Utc::now(),
             message_count: 3,
+            state: y_core::session::SessionState::Active,
+            parent_id: None,
+            depth: 0,
+            pinned: false,
+            quick_slot: None,
         });
 
         apply_chat_event(
@@ -1206,6 +1421,11 @@ mod tests {
             title: "Original".into(),
             updated_at: Utc::now(),
             message_count: 3,
+            state: y_core::session::SessionState::Active,
+            parent_id: None,
+            depth: 0,
+            pinned: false,
+            quick_slot: None,
         });
 
         apply_chat_event(
@@ -1511,5 +1731,13 @@ mod tests {
         let last = state.messages.last().unwrap();
         assert!(last.reasoning_complete);
         assert_eq!(last.reasoning_content, "some reasoning");
+    }
+
+    #[test]
+    fn test_classify_input_accepts_image_only_turn() {
+        assert_eq!(
+            classify_input_with_attachments("", false, true),
+            InputIntent::NewTurn(String::new())
+        );
     }
 }

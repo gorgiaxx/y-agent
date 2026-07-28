@@ -6,6 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use base64::Engine as _;
 
 const OSC52_MAX_INPUT_BYTES: usize = 100_000;
+const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 
 /// Prefix of fallback clipboard files written to the temp dir.
 const FALLBACK_FILE_PREFIX: &str = "y-agent-copy-";
@@ -27,12 +28,70 @@ pub enum ClipboardDelivery {
     FallbackFile(PathBuf),
 }
 
-pub fn copy_text(text: &str) -> Result<ClipboardDelivery, String> {
-    let remote = std::env::var_os("SSH_CONNECTION").is_some()
-        || std::env::var_os("SSH_CLIENT").is_some()
-        || std::env::var_os("SSH_TTY").is_some();
-    let tmux = std::env::var_os("TMUX").is_some();
-    let route = choose_clipboard_route(remote, tmux);
+/// PNG-encoded clipboard image ready for the typed attachment contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardImage {
+    pub width: usize,
+    pub height: usize,
+    pub png_data: Vec<u8>,
+}
+
+/// Read image media from the native clipboard and normalize it to PNG.
+pub fn read_image() -> Result<ClipboardImage, String> {
+    let image = arboard::Clipboard::new()
+        .and_then(|mut clipboard| clipboard.get_image())
+        .map_err(|error| error.to_string())?;
+    if image.bytes.len() > MAX_IMAGE_BYTES.saturating_mul(4) {
+        return Err("clipboard image exceeds the 20 MB attachment limit".into());
+    }
+    let png_data = encode_rgba_png(image.width, image.height, image.bytes.as_ref())?;
+    if png_data.len() > MAX_IMAGE_BYTES {
+        return Err("encoded clipboard image exceeds the 20 MB attachment limit".into());
+    }
+    Ok(ClipboardImage {
+        width: image.width,
+        height: image.height,
+        png_data,
+    })
+}
+
+fn encode_rgba_png(width: usize, height: usize, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let expected = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "clipboard image dimensions overflow RGBA size".to_string())?;
+    if expected != rgba.len() {
+        return Err(format!(
+            "clipboard RGBA length mismatch: expected {expected}, received {}",
+            rgba.len()
+        ));
+    }
+    let width = u32::try_from(width).map_err(|_| "clipboard image width is too large")?;
+    let height = u32::try_from(height).map_err(|_| "clipboard image height is too large")?;
+    let mut encoded = Vec::new();
+    {
+        let mut png_encoder = png::Encoder::new(&mut encoded, width, height);
+        png_encoder.set_color(png::ColorType::Rgba);
+        png_encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = png_encoder
+            .write_header()
+            .map_err(|error| error.to_string())?;
+        writer
+            .write_image_data(rgba)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(encoded)
+}
+
+pub fn copy_text(
+    text: &str,
+    capabilities: crate::tui::terminal::TerminalCapabilities,
+) -> Result<ClipboardDelivery, String> {
+    let tmux = matches!(
+        capabilities.host,
+        crate::tui::terminal::TerminalHost::Tmux | crate::tui::terminal::TerminalHost::TmuxOverSsh
+    );
+    let route = choose_clipboard_route(capabilities.supports_osc52_copy(), tmux);
 
     let primary = match route {
         ClipboardRoute::Native => native_copy(text).map(|()| ClipboardDelivery::Native),
@@ -215,5 +274,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist");
         cleanup_stale_fallback_files(&missing); // Must not panic.
+    }
+
+    #[test]
+    fn test_rgba_clipboard_pixels_encode_as_png() {
+        let encoded = encode_rgba_png(1, 1, &[255, 0, 0, 255]).unwrap();
+
+        assert!(encoded.starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[test]
+    fn test_rgba_encoder_rejects_inconsistent_dimensions() {
+        let error = encode_rgba_png(2, 2, &[255, 0, 0, 255]).unwrap_err();
+
+        assert!(error.contains("RGBA"));
     }
 }

@@ -11,6 +11,8 @@ pub enum CopyItemKind {
     CodeBlock,
     ToolInput,
     ToolResult,
+    Command,
+    Path,
     Transcript,
 }
 
@@ -87,13 +89,28 @@ pub fn discover_copy_items(messages: &[ChatMessage]) -> Vec<CopyItem> {
             });
         }
 
-        for (block_index, block) in fenced_blocks(&message.content).into_iter().enumerate() {
+        for (block_index, (language, block)) in fenced_blocks_with_language(&message.content)
+            .into_iter()
+            .enumerate()
+        {
             items.push(CopyItem {
                 kind: CopyItemKind::CodeBlock,
-                label: format!("Code block {}", block_index + 1),
-                detail: format!("From assistant response {response_number}"),
-                content: block,
+                label: format!("Response {response_number} / code {}", block_index + 1),
+                detail: if language.is_empty() {
+                    "Fenced code".into()
+                } else {
+                    language.clone()
+                },
+                content: block.clone(),
             });
+            if matches!(language.as_str(), "sh" | "bash" | "shell" | "zsh" | "fish") {
+                items.push(CopyItem {
+                    kind: CopyItemKind::Command,
+                    label: format!("Response {response_number} / command {}", block_index + 1),
+                    detail: "Runnable shell command".into(),
+                    content: block,
+                });
+            }
         }
 
         for tool in message.tool_calls.iter().rev() {
@@ -104,6 +121,26 @@ pub fn discover_copy_items(messages: &[ChatMessage]) -> Vec<CopyItem> {
                     detail: format!("Tool call in response {response_number}"),
                     content: tool.input_preview.clone(),
                 });
+            }
+            if let Ok(input) = serde_json::from_str::<serde_json::Value>(&tool.input_preview) {
+                if let Some(command) = input.get("command").and_then(serde_json::Value::as_str) {
+                    items.push(CopyItem {
+                        kind: CopyItemKind::Command,
+                        label: format!("Response {response_number} / {} command", tool.name),
+                        detail: "Tool command".into(),
+                        content: command.to_string(),
+                    });
+                }
+                for field in ["path", "file_path"] {
+                    if let Some(path) = input.get(field).and_then(serde_json::Value::as_str) {
+                        items.push(CopyItem {
+                            kind: CopyItemKind::Path,
+                            label: format!("Response {response_number} / {} path", tool.name),
+                            detail: field.replace('_', " "),
+                            content: path.to_string(),
+                        });
+                    }
+                }
             }
             if !tool.result_preview.trim().is_empty() {
                 items.push(CopyItem {
@@ -179,17 +216,29 @@ fn last_fenced_block(content: &str) -> Option<String> {
 }
 
 fn fenced_blocks(content: &str) -> Vec<String> {
+    fenced_blocks_with_language(content)
+        .into_iter()
+        .map(|(_, block)| block)
+        .collect()
+}
+
+fn fenced_blocks_with_language(content: &str) -> Vec<(String, String)> {
     let mut blocks = Vec::new();
-    let mut current: Option<Vec<&str>> = None;
+    let mut current: Option<(String, Vec<&str>)> = None;
 
     for line in content.lines() {
         if line.trim_start().starts_with("```") {
-            if let Some(lines) = current.take() {
-                blocks.push(lines.join("\n"));
+            if let Some((language, lines)) = current.take() {
+                blocks.push((language, lines.join("\n")));
             } else {
-                current = Some(Vec::new());
+                let language = line
+                    .trim_start()
+                    .trim_start_matches("```")
+                    .trim()
+                    .to_ascii_lowercase();
+                current = Some((language, Vec::new()));
             }
-        } else if let Some(lines) = current.as_mut() {
+        } else if let Some((_, lines)) = current.as_mut() {
             lines.push(line);
         }
     }
@@ -348,6 +397,35 @@ mod tests {
         assert!(transcript.contains("[Tool: FileEdit]"));
         assert!(transcript.contains("src/main.rs"));
         assert!(transcript.contains("updated src/main.rs"));
+    }
+
+    #[test]
+    fn test_discover_copy_items_extracts_runnable_commands_and_paths() {
+        let mut assistant = message(
+            MessageRole::Assistant,
+            "Run it:\n```sh\ncargo test -p y-cli\n```",
+        );
+        assistant.tool_calls.push(ToolCallInfo {
+            tool_call_id: "tool-1".into(),
+            name: "FileRead".into(),
+            status: ToolCallStatus::Succeeded,
+            duration_ms: Some(1),
+            input_preview: r#"{"path":"/tmp/report.txt"}"#.into(),
+            result_preview: "ok".into(),
+            agent_name: "root".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        });
+
+        let items = discover_copy_items(&[assistant]);
+
+        assert!(items.iter().any(|item| {
+            item.kind == CopyItemKind::Command && item.content == "cargo test -p y-cli"
+        }));
+        assert!(items
+            .iter()
+            .any(|item| { item.kind == CopyItemKind::Path && item.content == "/tmp/report.txt" }));
     }
 
     #[test]

@@ -166,7 +166,7 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &CopyPickerState, theme: &T
     );
 
     frame.render_widget(
-        Paragraph::new(" Up/Down navigate  Type to search  Enter copy  Esc close")
+        Paragraph::new(" Enter copy  Alt+Enter quote  Ctrl+L open path  Esc close")
             .style(Style::default().fg(theme.muted())),
         rows[3],
     );
@@ -182,6 +182,8 @@ fn kind_label(kind: CopyItemKind) -> &'static str {
         CopyItemKind::CodeBlock => "code",
         CopyItemKind::ToolInput => "tool in",
         CopyItemKind::ToolResult => "tool out",
+        CopyItemKind::Command => "command",
+        CopyItemKind::Path => "path",
         CopyItemKind::Transcript => "all",
     }
 }
