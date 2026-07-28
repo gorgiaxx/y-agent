@@ -3,23 +3,15 @@
 //! Contains all state types used by the TUI: panel focus, interaction mode,
 //! chat messages, and the top-level `AppState`.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 
 use chrono::{DateTime, Utc};
+use ratatui::text::Line;
 
 use crate::tui::selection::TextSelection;
 use crate::tui::theme::Theme;
-
-// TurnMeta
-#[derive(Debug, Clone, PartialEq)]
-pub struct TurnMeta {
-    pub model: String,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost_usd: f64,
-    pub context_window: usize,
-    pub context_tokens_used: u64,
-}
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -41,8 +33,6 @@ pub enum InteractionMode {
     Normal,
     /// Slash-command mode: `/` was typed, command palette visible.
     Command,
-    /// Search mode: incremental search overlay visible.
-    Search,
     /// Select mode: choosing an earlier user prompt for a non-destructive branch.
     Select,
     /// Help mode: help overlay is visible.
@@ -53,6 +43,10 @@ pub enum InteractionMode {
     Resume,
     /// Full-screen session prompt-template selector.
     Prompt,
+    /// Full-screen follow-up queue viewer for the active run.
+    Queue,
+    /// Full-screen background task and subagent viewer (`/tasks` overlay).
+    Tasks,
 }
 
 /// Service-owned orchestration mode selected by the TUI operator.
@@ -129,7 +123,7 @@ impl PromptTemplateStatus {
 }
 
 /// Role of a chat message for display purposes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageRole {
     User,
     Assistant,
@@ -142,7 +136,7 @@ pub enum MessageRole {
 // ---------------------------------------------------------------------------
 
 /// Structured record of an executed tool call for rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolCallStatus {
     Running,
     Succeeded,
@@ -150,7 +144,7 @@ pub enum ToolCallStatus {
 }
 
 /// Amount of detail rendered for a tool call card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolCallDisplayMode {
     Collapsed,
     Preview,
@@ -190,10 +184,6 @@ pub struct ToolCallInfo {
 }
 
 impl ToolCallInfo {
-    pub fn is_complete(&self) -> bool {
-        self.status != ToolCallStatus::Running
-    }
-
     pub fn cycle_display_mode(&mut self) -> ToolCallDisplayMode {
         self.display_mode = match self.display_mode {
             ToolCallDisplayMode::Collapsed => ToolCallDisplayMode::Preview,
@@ -262,6 +252,163 @@ impl ChatMessage {
             segments: Vec::new(),
         }
     }
+
+    /// Hash of every display-relevant field, used by the chat panel's
+    /// per-message render cache to detect when a message must be re-rendered.
+    ///
+    /// Uses `DefaultHasher` (cheap, not cryptographic) over the fields that
+    /// affect rendering, so no full content copies are kept as cache keys.
+    pub fn render_hash(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.role.hash(&mut hasher);
+        self.content.hash(&mut hasher);
+        self.timestamp.hash(&mut hasher);
+        self.is_streaming.hash(&mut hasher);
+        self.is_cancelled.hash(&mut hasher);
+        self.reasoning_content.hash(&mut hasher);
+        self.reasoning_complete.hash(&mut hasher);
+        for tool in &self.tool_calls {
+            tool.tool_call_id.hash(&mut hasher);
+            tool.name.hash(&mut hasher);
+            tool.status.hash(&mut hasher);
+            tool.duration_ms.hash(&mut hasher);
+            tool.input_preview.hash(&mut hasher);
+            tool.result_preview.hash(&mut hasher);
+            tool.agent_name.hash(&mut hasher);
+            tool.url_meta.hash(&mut hasher);
+            tool.metadata
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .hash(&mut hasher);
+            tool.display_mode.hash(&mut hasher);
+        }
+        for segment in &self.segments {
+            match segment {
+                StreamSegment::Text(text) => {
+                    0u8.hash(&mut hasher);
+                    text.hash(&mut hasher);
+                }
+                StreamSegment::Reasoning {
+                    content,
+                    is_complete,
+                } => {
+                    1u8.hash(&mut hasher);
+                    content.hash(&mut hasher);
+                    is_complete.hash(&mut hasher);
+                }
+                StreamSegment::ToolCall(tool_index) => {
+                    2u8.hash(&mut hasher);
+                    tool_index.hash(&mut hasher);
+                }
+            }
+        }
+        hasher.finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chat render cache
+// ---------------------------------------------------------------------------
+
+/// Rendered output for one chat message at a specific geometry.
+///
+/// Holds the wrapped, styled lines plus their plain-text mirror so the
+/// expensive markdown/highlight/wrap pipeline runs only when the inputs
+/// change (see [`ChatRenderCache`]).
+#[derive(Debug, Clone)]
+pub struct CachedMessageRender {
+    /// `ChatMessage::render_hash()` at render time.
+    pub content_hash: u64,
+    /// Inner content width (columns) the lines were wrapped for.
+    pub inner_width: usize,
+    /// Tool selection at render time (affects tool-card highlighting).
+    pub selected_tool: Option<ToolSelection>,
+    /// Whether the message was the transcript tail (affects the footer).
+    pub is_last: bool,
+    /// Whether the output depends on the animation tick (spinner frames).
+    pub animated: bool,
+    /// Animation tick at render time (relevant only when `animated`).
+    pub tick: u64,
+    /// Wrapped, styled lines ready for the chat `Paragraph`.
+    pub lines: Vec<Line<'static>>,
+    /// Plain-text mirror of `lines`, aligned by row, for selection extraction.
+    pub plain: Vec<String>,
+    /// Tool card line spans within `lines` (wrapped coordinates), as
+    /// `(tool_index, line_range)` pairs. Used for mouse hit-testing: the chat
+    /// panel offsets them to absolute transcript rows each frame.
+    pub tool_ranges: Vec<(usize, std::ops::Range<usize>)>,
+    /// Monotonic counter bumped on every actual re-render (test/diagnostic signal).
+    pub generation: u64,
+}
+
+impl CachedMessageRender {
+    /// Check whether this entry is still valid for the given render inputs.
+    ///
+    /// Animated entries (spinner frames) are only valid on the tick they
+    /// were rendered for; static entries ignore the tick entirely.
+    pub fn matches(
+        &self,
+        content_hash: u64,
+        inner_width: usize,
+        selected_tool: Option<ToolSelection>,
+        is_last: bool,
+        tick: u64,
+    ) -> bool {
+        self.content_hash == content_hash
+            && self.inner_width == inner_width
+            && self.selected_tool == selected_tool
+            && self.is_last == is_last
+            && (!self.animated || self.tick == tick)
+    }
+}
+
+/// Per-message render cache for the chat panel.
+///
+/// Historical messages are immutable, so their rendered lines are computed
+/// once and reused until the content hash, width, tool selection, or tail
+/// position changes. Entries beyond the transcript length are dropped via
+/// [`ChatRenderCache::retain_messages`].
+#[derive(Debug, Default)]
+pub struct ChatRenderCache {
+    /// Rendered output keyed by message index.
+    entries: HashMap<usize, CachedMessageRender>,
+    /// Monotonic counter stamped onto every stored entry.
+    generation: u64,
+}
+
+impl ChatRenderCache {
+    /// Return the entry for `index` regardless of validity.
+    pub fn get(&self, index: usize) -> Option<&CachedMessageRender> {
+        self.entries.get(&index)
+    }
+
+    /// Return the entry for `index` only when it matches the render inputs.
+    pub fn lookup(
+        &self,
+        index: usize,
+        content_hash: u64,
+        inner_width: usize,
+        selected_tool: Option<ToolSelection>,
+        is_last: bool,
+        tick: u64,
+    ) -> Option<&CachedMessageRender> {
+        self.entries
+            .get(&index)
+            .filter(|entry| entry.matches(content_hash, inner_width, selected_tool, is_last, tick))
+    }
+
+    /// Store a freshly rendered entry, replacing any stale one and stamping
+    /// it with a new generation.
+    pub fn store(&mut self, index: usize, mut entry: CachedMessageRender) {
+        self.generation = self.generation.wrapping_add(1);
+        entry.generation = self.generation;
+        self.entries.insert(index, entry);
+    }
+
+    /// Drop entries for messages no longer present in the transcript.
+    pub fn retain_messages(&mut self, message_count: usize) {
+        self.entries.retain(|index, _| *index < message_count);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -302,12 +449,12 @@ pub enum ToastLevel {
 }
 
 impl ToastLevel {
-    /// Default number of ticks (at 250ms each) before auto-dismiss.
+    /// Default number of ticks (at 100ms each) before auto-dismiss.
     pub fn default_ticks(self) -> u16 {
         match self {
-            Self::Info | Self::Success => 12, // 3 seconds
-            Self::Warning => 20,              // 5 seconds
-            Self::Error => 28,                // 7 seconds
+            Self::Info | Self::Success => 30, // 3 seconds
+            Self::Warning => 50,              // 5 seconds
+            Self::Error => 70,                // 7 seconds
         }
     }
 }
@@ -319,10 +466,8 @@ pub struct Toast {
     pub message: String,
     /// Severity level (determines color and duration).
     pub level: ToastLevel,
-    /// Ticks remaining before auto-dismiss (decremented each 250ms tick).
+    /// Ticks remaining before auto-dismiss (decremented each 100ms tick).
     pub ticks_remaining: u16,
-    /// Unique ID for targeted dismissal.
-    pub id: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -341,8 +486,6 @@ pub struct AppState {
     pub mode: InteractionMode,
     /// Conversation transcript for the current session.
     pub messages: Vec<ChatMessage>,
-    /// Current input buffer text.
-    pub input_buffer: String,
     /// Scroll offset in the chat panel (0 = at bottom).
     pub scroll_offset: usize,
     /// Whether the assistant is currently streaming a response.
@@ -365,8 +508,6 @@ pub struct AppState {
     pub prompt_template_status: PromptTemplateStatus,
     /// Active toast notifications (most recent at back).
     pub toasts: VecDeque<Toast>,
-    /// Monotonic counter for unique toast IDs.
-    toast_counter: u64,
     /// Current text selection in the chat panel.
     pub selection: TextSelection,
     /// Tool card selected for expansion or direct copy.
@@ -395,11 +536,25 @@ pub struct AppState {
     pub page_height: usize,
     /// User-selected provider ID for the next turn. None = auto (pool assigns).
     pub selected_provider_id: Option<String>,
-    /// Monotonic tick counter for frame-based animations (incremented every 250ms).
+    /// Monotonic tick counter for frame-based animations (incremented every 100ms).
     pub tick_counter: u64,
-    pub turn_meta_cache: HashMap<String, TurnMeta>,
     /// Terminal-aware color theme (auto-detected at startup).
     pub theme: Theme,
+    /// Projection of the service-side follow-up queue for the active session.
+    ///
+    /// Maintained by the chat flow; read by the input panel (queue depth in
+    /// the streaming title) and the status bar (`queue: N` segment).
+    pub follow_up_queue: Vec<y_service::FollowUpMessage>,
+    /// Number of background shell tasks currently running.
+    ///
+    /// Maintained by the app loop's polling task; read by the status bar
+    /// (`bg: N` segment) and the future `/tasks` overlay.
+    pub bg_task_count: usize,
+    /// Number of subagents currently running.
+    ///
+    /// Maintained by the app loop's polling task; read by the status bar
+    /// (`agents: N` segment) and the future `/tasks` overlay.
+    pub active_subagent_count: usize,
 }
 
 impl Default for AppState {
@@ -408,7 +563,6 @@ impl Default for AppState {
             focus: PanelFocus::Input,
             mode: InteractionMode::Normal,
             messages: Vec::new(),
-            input_buffer: String::new(),
             scroll_offset: 0,
             is_streaming: false,
             is_cancelling: false,
@@ -420,7 +574,6 @@ impl Default for AppState {
             turn_mode: TurnMode::Fast,
             prompt_template_status: PromptTemplateStatus::Default,
             toasts: VecDeque::new(),
-            toast_counter: 0,
             selection: TextSelection::default(),
             selected_tool: None,
             selected_message: None,
@@ -436,8 +589,10 @@ impl Default for AppState {
             page_height: 20,
             selected_provider_id: None,
             tick_counter: 0,
-            turn_meta_cache: HashMap::new(),
             theme: Theme::default(),
+            follow_up_queue: Vec::new(),
+            bg_task_count: 0,
+            active_subagent_count: 0,
         }
     }
 }
@@ -456,9 +611,8 @@ impl AppState {
     /// Set the interaction mode.
     ///
     /// Enforces the design state machine:
-    /// - `Normal` → `Command` | `Search` | `Select` | picker modes
-    /// - `Command` → `Normal`
-    /// - `Search` → `Normal`
+    /// - `Normal` → `Command` | `Select` | picker modes
+    /// - `Command` → `Normal` | picker modes (palette-opened overlays)
     /// - `Select` and picker modes → `Normal`
     ///
     /// Returns `true` if the transition was accepted.
@@ -469,25 +623,31 @@ impl AppState {
             (
                 InteractionMode::Normal,
                 InteractionMode::Command
-                    | InteractionMode::Search
                     | InteractionMode::Select
                     | InteractionMode::Help
                     | InteractionMode::Copy
                     | InteractionMode::Resume
                     | InteractionMode::Prompt
+                    | InteractionMode::Queue
+                    | InteractionMode::Tasks
                     | InteractionMode::Normal
             ) | (
                 InteractionMode::Command
-                    | InteractionMode::Search
                     | InteractionMode::Select
                     | InteractionMode::Help
                     | InteractionMode::Copy
                     | InteractionMode::Resume
-                    | InteractionMode::Prompt,
+                    | InteractionMode::Prompt
+                    | InteractionMode::Queue
+                    | InteractionMode::Tasks,
                 InteractionMode::Normal
             ) | (
                 InteractionMode::Command,
-                InteractionMode::Copy | InteractionMode::Resume | InteractionMode::Prompt
+                InteractionMode::Copy
+                    | InteractionMode::Resume
+                    | InteractionMode::Prompt
+                    | InteractionMode::Queue
+                    | InteractionMode::Tasks
             )
         );
 
@@ -497,42 +657,28 @@ impl AppState {
         valid
     }
 
-    /// Push a toast notification. Returns the assigned toast ID.
+    /// Push a toast notification.
     ///
     /// If the toast queue exceeds `MAX_TOASTS`, the oldest toast is evicted.
-    pub fn push_toast(&mut self, message: String, level: ToastLevel) -> u64 {
-        self.toast_counter += 1;
-        let id = self.toast_counter;
+    pub fn push_toast(&mut self, message: String, level: ToastLevel) {
         self.toasts.push_back(Toast {
             message,
             level,
             ticks_remaining: level.default_ticks(),
-            id,
         });
         if self.toasts.len() > MAX_TOASTS {
             self.toasts.pop_front();
         }
-        id
     }
 
     /// Decrement all toast timers and remove expired toasts.
     ///
-    /// Called once per tick (250ms) in the event loop.
+    /// Called once per tick (100ms) in the event loop.
     pub fn tick_toasts(&mut self) {
         for toast in &mut self.toasts {
             toast.ticks_remaining = toast.ticks_remaining.saturating_sub(1);
         }
         self.toasts.retain(|t| t.ticks_remaining > 0);
-    }
-
-    /// Dismiss a specific toast by ID.
-    pub fn dismiss_toast(&mut self, id: u64) {
-        self.toasts.retain(|t| t.id != id);
-    }
-
-    /// Dismiss all active toasts.
-    pub fn dismiss_all_toasts(&mut self) {
-        self.toasts.clear();
     }
 
     /// Increment user message counter and return the new count.
@@ -787,13 +933,15 @@ mod tests {
         assert_eq!(state.focus, PanelFocus::Input);
         assert_eq!(state.mode, InteractionMode::Normal);
         assert!(state.messages.is_empty());
-        assert!(state.input_buffer.is_empty());
         assert_eq!(state.scroll_offset, 0);
         assert!(!state.is_streaming);
         assert!(!state.is_cancelling);
         assert_eq!(state.turn_mode, TurnMode::Fast);
         assert_eq!(state.prompt_template_status, PromptTemplateStatus::Default);
         assert_eq!(state.prompt_template_status.label(), "prompt:default");
+        assert!(state.follow_up_queue.is_empty());
+        assert_eq!(state.bg_task_count, 0);
+        assert_eq!(state.active_subagent_count, 0);
     }
 
     #[test]
@@ -833,14 +981,6 @@ mod tests {
         assert!(state.set_mode(InteractionMode::Normal));
         assert_eq!(state.mode, InteractionMode::Normal);
 
-        // Normal → Search
-        assert!(state.set_mode(InteractionMode::Search));
-        assert_eq!(state.mode, InteractionMode::Search);
-
-        // Search → Normal
-        assert!(state.set_mode(InteractionMode::Normal));
-        assert_eq!(state.mode, InteractionMode::Normal);
-
         // Normal → Select
         assert!(state.set_mode(InteractionMode::Select));
         assert_eq!(state.mode, InteractionMode::Select);
@@ -854,6 +994,32 @@ mod tests {
         assert_eq!(state.mode, InteractionMode::Prompt);
         assert!(state.set_mode(InteractionMode::Normal));
         assert_eq!(state.mode, InteractionMode::Normal);
+
+        // Normal → Queue overlay → Normal
+        assert!(state.set_mode(InteractionMode::Queue));
+        assert_eq!(state.mode, InteractionMode::Queue);
+        assert!(state.set_mode(InteractionMode::Normal));
+        assert_eq!(state.mode, InteractionMode::Normal);
+
+        // Command → Queue (palette-opened overlay) → Normal
+        assert!(state.set_mode(InteractionMode::Command));
+        assert!(state.set_mode(InteractionMode::Queue));
+        assert_eq!(state.mode, InteractionMode::Queue);
+        assert!(state.set_mode(InteractionMode::Normal));
+        assert_eq!(state.mode, InteractionMode::Normal);
+
+        // Normal → Tasks overlay → Normal
+        assert!(state.set_mode(InteractionMode::Tasks));
+        assert_eq!(state.mode, InteractionMode::Tasks);
+        assert!(state.set_mode(InteractionMode::Normal));
+        assert_eq!(state.mode, InteractionMode::Normal);
+
+        // Command → Tasks (palette-opened overlay) → Normal
+        assert!(state.set_mode(InteractionMode::Command));
+        assert!(state.set_mode(InteractionMode::Tasks));
+        assert_eq!(state.mode, InteractionMode::Tasks);
+        assert!(state.set_mode(InteractionMode::Normal));
+        assert_eq!(state.mode, InteractionMode::Normal);
     }
 
     // T-TUI-01-05: InteractionMode state transitions follow design state machine.
@@ -861,32 +1027,29 @@ mod tests {
     fn test_mode_state_machine_rejects_invalid() {
         let mut state = AppState::new();
 
-        // Command → Search (invalid: must go through Normal)
+        // Command → Select (invalid: must go through Normal)
         state.mode = InteractionMode::Command;
-        assert!(!state.set_mode(InteractionMode::Search));
+        assert!(!state.set_mode(InteractionMode::Select));
         assert_eq!(state.mode, InteractionMode::Command); // unchanged
-
-        // Command → Select (invalid)
-        assert!(!state.set_mode(InteractionMode::Select));
-        assert_eq!(state.mode, InteractionMode::Command);
-
-        // Search → Command (invalid)
-        state.mode = InteractionMode::Search;
-        assert!(!state.set_mode(InteractionMode::Command));
-        assert_eq!(state.mode, InteractionMode::Search);
-
-        // Search → Select (invalid)
-        assert!(!state.set_mode(InteractionMode::Select));
-        assert_eq!(state.mode, InteractionMode::Search);
 
         // Select → Command (invalid)
         state.mode = InteractionMode::Select;
         assert!(!state.set_mode(InteractionMode::Command));
         assert_eq!(state.mode, InteractionMode::Select);
 
-        // Select → Search (invalid)
-        assert!(!state.set_mode(InteractionMode::Search));
+        // Select → Help (invalid)
+        assert!(!state.set_mode(InteractionMode::Help));
         assert_eq!(state.mode, InteractionMode::Select);
+
+        // Queue → Command (invalid: must go through Normal)
+        state.mode = InteractionMode::Queue;
+        assert!(!state.set_mode(InteractionMode::Command));
+        assert_eq!(state.mode, InteractionMode::Queue);
+
+        // Tasks → Command (invalid: must go through Normal)
+        state.mode = InteractionMode::Tasks;
+        assert!(!state.set_mode(InteractionMode::Command));
+        assert_eq!(state.mode, InteractionMode::Tasks);
     }
 
     // T-TUI-01-06: Panel focus cycles only between input and conversation.
@@ -1005,11 +1168,10 @@ mod tests {
     #[test]
     fn test_push_toast_adds_with_defaults() {
         let mut state = AppState::new();
-        let id = state.push_toast("hello".into(), ToastLevel::Info);
+        state.push_toast("hello".into(), ToastLevel::Info);
         assert_eq!(state.toasts.len(), 1);
-        assert_eq!(state.toasts[0].id, id);
         assert_eq!(state.toasts[0].level, ToastLevel::Info);
-        assert_eq!(state.toasts[0].ticks_remaining, 12);
+        assert_eq!(state.toasts[0].ticks_remaining, 30);
         assert_eq!(state.toasts[0].message, "hello");
     }
 
@@ -1049,51 +1211,18 @@ mod tests {
             state.push_toast(format!("toast {i}"), ToastLevel::Info);
         }
         assert_eq!(state.toasts.len(), MAX_TOASTS);
-        // The first toast (id=1) should have been evicted.
-        assert_eq!(state.toasts.front().unwrap().id, 2);
-        assert_eq!(state.toasts.back().unwrap().id, 6);
+        // The first toast ("toast 0") should have been evicted.
+        assert_eq!(state.toasts.front().unwrap().message, "toast 1");
+        assert_eq!(state.toasts.back().unwrap().message, "toast 5");
     }
 
-    // T-TOAST-05: dismiss_toast removes specific toast by ID.
-    #[test]
-    fn test_dismiss_toast_by_id() {
-        let mut state = AppState::new();
-        let id1 = state.push_toast("a".into(), ToastLevel::Info);
-        let _id2 = state.push_toast("b".into(), ToastLevel::Warning);
-
-        state.dismiss_toast(id1);
-        assert_eq!(state.toasts.len(), 1);
-        assert_eq!(state.toasts[0].message, "b");
-    }
-
-    // T-TOAST-06: dismiss_all_toasts clears all toasts.
-    #[test]
-    fn test_dismiss_all_toasts() {
-        let mut state = AppState::new();
-        state.push_toast("a".into(), ToastLevel::Info);
-        state.push_toast("b".into(), ToastLevel::Error);
-        state.dismiss_all_toasts();
-        assert!(state.toasts.is_empty());
-    }
-
-    // T-TOAST-07: Toast IDs are monotonically increasing.
-    #[test]
-    fn test_toast_ids_monotonic() {
-        let mut state = AppState::new();
-        let id1 = state.push_toast("a".into(), ToastLevel::Info);
-        let id2 = state.push_toast("b".into(), ToastLevel::Info);
-        let id3 = state.push_toast("c".into(), ToastLevel::Info);
-        assert!(id2 > id1);
-        assert!(id3 > id2);
-    }
-
-    // T-TOAST-08: Default tick counts per level.
+    // T-TOAST-08: Default tick counts per level (100ms ticks).
     #[test]
     fn test_toast_default_ticks() {
-        assert_eq!(ToastLevel::Info.default_ticks(), 12);
-        assert_eq!(ToastLevel::Success.default_ticks(), 12);
-        assert_eq!(ToastLevel::Warning.default_ticks(), 20);
-        assert_eq!(ToastLevel::Error.default_ticks(), 28);
+        assert_eq!(ToastLevel::Info.default_ticks(), 30);
+        assert_eq!(ToastLevel::Success.default_ticks(), 30);
+        assert_eq!(ToastLevel::Warning.default_ticks(), 50);
+        assert_eq!(ToastLevel::Error.default_ticks(), 70);
     }
 
     // T-TOAST-09: AppState default has empty toasts.
@@ -1107,7 +1236,7 @@ mod tests {
     #[test]
     fn test_context_usage_percent_zero_window() {
         let state = AppState::new();
-        assert_eq!(state.context_usage_percent(), 0.0);
+        assert!((state.context_usage_percent() - 0.0).abs() < f32::EPSILON);
     }
 
     // T-CTX-02: context_usage_percent uses last_input_tokens (not cumulative).
@@ -1142,7 +1271,6 @@ mod tests {
         assert_eq!(tc.duration_ms, Some(120));
         assert_eq!(tc.input_preview, r#"{"query":"ratatui"}"#);
         assert_eq!(tc.result_preview, "3 results");
-        assert!(tc.is_complete());
     }
 
     #[test]
@@ -1167,7 +1295,7 @@ mod tests {
 
     #[test]
     fn test_app_state_selects_tools_in_transcript_order_and_toggles_selected() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let make_tool = |name: &str| ToolCallInfo {
             tool_call_id: format!("call-{name}"),
             name: name.into(),
@@ -1251,81 +1379,211 @@ mod tests {
         assert!(pct > 100.0, "expected >100%, got {pct}");
     }
 
-    // T-TURNMETA-01: TurnMeta struct construction.
+    // T-RENDERHASH-01: render_hash is stable for identical state.
     #[test]
-    fn test_turn_meta_creation() {
-        let meta = TurnMeta {
-            model: "gpt-4o".into(),
-            input_tokens: 100,
-            output_tokens: 50,
-            cost_usd: 0.002,
-            context_window: 128_000,
-            context_tokens_used: 100,
-        };
-        assert_eq!(meta.model, "gpt-4o");
-        assert_eq!(meta.input_tokens, 100);
-        assert_eq!(meta.output_tokens, 50);
-        assert!((meta.cost_usd - 0.002).abs() < f64::EPSILON);
-        assert_eq!(meta.context_window, 128_000);
-        assert_eq!(meta.context_tokens_used, 100);
+    fn test_render_hash_stable_for_identical_message() {
+        let msg = ChatMessage::system("hello".into());
+        assert_eq!(msg.render_hash(), msg.render_hash());
     }
 
-    // T-TURNMETA-02: AppState default has empty turn_meta_cache.
+    // T-RENDERHASH-02: render_hash changes with display-relevant fields.
     #[test]
-    fn test_app_state_default_turn_meta_cache_empty() {
-        let state = AppState::new();
-        assert!(state.turn_meta_cache.is_empty());
-    }
+    fn test_render_hash_tracks_display_state() {
+        let base = ChatMessage::system("hello".into());
+        let base_hash = base.render_hash();
 
-    // T-TURNMETA-03: TurnMeta can be inserted and retrieved from cache.
-    #[test]
-    fn test_turn_meta_cache_insert_get() {
-        let mut state = AppState::new();
-        let meta = TurnMeta {
-            model: "gpt-4o".into(),
-            input_tokens: 100,
-            output_tokens: 50,
-            cost_usd: 0.002,
-            context_window: 128_000,
-            context_tokens_used: 100,
-        };
-        state
-            .turn_meta_cache
-            .insert("session-1".into(), meta.clone());
-        assert_eq!(state.turn_meta_cache.get("session-1"), Some(&meta));
-        assert!(state.turn_meta_cache.get("unknown").is_none());
-    }
+        let mut changed = base.clone();
+        changed.content.push_str(" world");
+        assert_ne!(base_hash, changed.render_hash(), "content change");
 
-    // T-TURNMETA-04: TurnMeta cache supports multiple sessions.
-    #[test]
-    fn test_turn_meta_cache_multiple_sessions() {
-        let mut state = AppState::new();
-        let meta1 = TurnMeta {
-            model: "gpt-4o".into(),
-            input_tokens: 100,
-            output_tokens: 50,
-            cost_usd: 0.002,
-            context_window: 128_000,
-            context_tokens_used: 100,
-        };
-        let meta2 = TurnMeta {
-            model: "claude-3".into(),
-            input_tokens: 200,
-            output_tokens: 100,
-            cost_usd: 0.005,
-            context_window: 200_000,
-            context_tokens_used: 200,
-        };
-        state.turn_meta_cache.insert("session-1".into(), meta1);
-        state.turn_meta_cache.insert("session-2".into(), meta2);
-        assert_eq!(state.turn_meta_cache.len(), 2);
-        assert_eq!(
-            state.turn_meta_cache.get("session-1").unwrap().model,
-            "gpt-4o"
+        let mut changed = base.clone();
+        changed.role = MessageRole::Assistant;
+        assert_ne!(base_hash, changed.render_hash(), "role change");
+
+        let mut changed = base.clone();
+        changed.is_streaming = true;
+        assert_ne!(base_hash, changed.render_hash(), "streaming flag change");
+
+        let mut changed = base.clone();
+        changed.is_cancelled = true;
+        assert_ne!(base_hash, changed.render_hash(), "cancelled flag change");
+
+        let mut changed = base.clone();
+        changed.reasoning_content = "thinking".into();
+        assert_ne!(base_hash, changed.render_hash(), "reasoning change");
+
+        let mut changed = base.clone();
+        changed.tool_calls.push(ToolCallInfo {
+            tool_call_id: "call-1".into(),
+            name: "ShellExec".into(),
+            status: ToolCallStatus::Running,
+            duration_ms: None,
+            input_preview: "{}".into(),
+            result_preview: String::new(),
+            agent_name: "chat-turn".into(),
+            url_meta: None,
+            metadata: None,
+            display_mode: ToolCallDisplayMode::Preview,
+        });
+        let with_tool_hash = changed.render_hash();
+        assert_ne!(base_hash, with_tool_hash, "tool call added");
+
+        // Tool display state changes must also invalidate.
+        let mut tool_done = changed.clone();
+        tool_done.tool_calls[0].status = ToolCallStatus::Succeeded;
+        assert_ne!(
+            with_tool_hash,
+            tool_done.render_hash(),
+            "tool status change"
         );
-        assert_eq!(
-            state.turn_meta_cache.get("session-2").unwrap().model,
-            "claude-3"
+
+        let mut tool_expanded = changed.clone();
+        tool_expanded.tool_calls[0].display_mode = ToolCallDisplayMode::Expanded;
+        assert_ne!(
+            with_tool_hash,
+            tool_expanded.render_hash(),
+            "tool display mode change"
         );
+
+        let mut with_segment = base.clone();
+        with_segment
+            .segments
+            .push(StreamSegment::Text("hello".into()));
+        assert_ne!(base_hash, with_segment.render_hash(), "segment added");
+    }
+
+    // T-RENDERCACHE-01: store then lookup returns the entry while inputs match.
+    #[test]
+    fn test_chat_render_cache_lookup_matches_stored_inputs() {
+        let mut cache = ChatRenderCache::default();
+        let entry = CachedMessageRender {
+            content_hash: 42,
+            inner_width: 80,
+            selected_tool: None,
+            is_last: true,
+            animated: false,
+            tick: 7,
+            lines: Vec::new(),
+            plain: Vec::new(),
+            tool_ranges: Vec::new(),
+            generation: 0,
+        };
+        cache.store(0, entry);
+
+        assert!(cache.lookup(0, 42, 80, None, true, 7).is_some());
+        assert!(cache.lookup(0, 43, 80, None, true, 7).is_none(), "hash");
+        assert!(cache.lookup(0, 42, 40, None, true, 7).is_none(), "width");
+        assert!(
+            cache
+                .lookup(
+                    0,
+                    42,
+                    80,
+                    Some(ToolSelection {
+                        message_index: 0,
+                        tool_index: 0
+                    }),
+                    true,
+                    7
+                )
+                .is_none(),
+            "selected_tool"
+        );
+        assert!(cache.lookup(0, 42, 80, None, false, 7).is_none(), "is_last");
+        assert!(cache.lookup(1, 42, 80, None, true, 7).is_none(), "index");
+    }
+
+    // T-RENDERCACHE-02: animated entries are only valid on the same tick.
+    #[test]
+    fn test_chat_render_cache_animated_entries_follow_tick() {
+        let mut cache = ChatRenderCache::default();
+        let entry = CachedMessageRender {
+            content_hash: 7,
+            inner_width: 80,
+            selected_tool: None,
+            is_last: true,
+            animated: true,
+            tick: 3,
+            lines: Vec::new(),
+            plain: Vec::new(),
+            tool_ranges: Vec::new(),
+            generation: 0,
+        };
+        cache.store(0, entry);
+
+        assert!(cache.lookup(0, 7, 80, None, true, 3).is_some());
+        assert!(cache.lookup(0, 7, 80, None, true, 4).is_none());
+    }
+
+    // T-RENDERCACHE-03: static entries ignore the animation tick.
+    #[test]
+    fn test_chat_render_cache_static_entries_ignore_tick() {
+        let mut cache = ChatRenderCache::default();
+        let entry = CachedMessageRender {
+            content_hash: 7,
+            inner_width: 80,
+            selected_tool: None,
+            is_last: true,
+            animated: false,
+            tick: 3,
+            lines: Vec::new(),
+            plain: Vec::new(),
+            tool_ranges: Vec::new(),
+            generation: 0,
+        };
+        cache.store(0, entry);
+
+        assert!(cache.lookup(0, 7, 80, None, true, 3).is_some());
+        assert!(cache.lookup(0, 7, 80, None, true, 99).is_some());
+    }
+
+    // T-RENDERCACHE-04: entries beyond the transcript length are dropped.
+    #[test]
+    fn test_chat_render_cache_retain_drops_removed_messages() {
+        let mut cache = ChatRenderCache::default();
+        for index in 0..5 {
+            cache.store(
+                index,
+                CachedMessageRender {
+                    content_hash: index as u64,
+                    inner_width: 80,
+                    selected_tool: None,
+                    is_last: false,
+                    animated: false,
+                    tick: 0,
+                    lines: Vec::new(),
+                    plain: Vec::new(),
+                    tool_ranges: Vec::new(),
+                    generation: 0,
+                },
+            );
+        }
+        cache.retain_messages(3);
+        assert!(cache.get(0).is_some());
+        assert!(cache.get(2).is_some());
+        assert!(cache.get(3).is_none());
+    }
+
+    // T-RENDERCACHE-05: store bumps the generation so tests can detect re-renders.
+    #[test]
+    fn test_chat_render_cache_generation_increments_on_store() {
+        let mut cache = ChatRenderCache::default();
+        let make = || CachedMessageRender {
+            content_hash: 1,
+            inner_width: 80,
+            selected_tool: None,
+            is_last: false,
+            animated: false,
+            tick: 0,
+            lines: Vec::new(),
+            plain: Vec::new(),
+            tool_ranges: Vec::new(),
+            generation: 0,
+        };
+        cache.store(0, make());
+        let first = cache.get(0).unwrap().generation;
+        cache.store(0, make());
+        let second = cache.get(0).unwrap().generation;
+        assert!(second > first);
     }
 }

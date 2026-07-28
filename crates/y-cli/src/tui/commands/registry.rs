@@ -4,6 +4,7 @@
 //! The registry supports prefix-based fuzzy search for the command palette.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Information about a registered command.
 #[derive(Debug, Clone)]
@@ -54,6 +55,9 @@ pub struct CommandRegistry {
 
 impl CommandRegistry {
     /// Create a new registry with all built-in commands.
+    ///
+    /// Prefer [`CommandRegistry::shared`] for runtime use; `new()` remains
+    /// for tests that want an isolated instance.
     pub fn new() -> Self {
         let commands = builtin_commands();
         let mut aliases = HashMap::new();
@@ -63,6 +67,16 @@ impl CommandRegistry {
             }
         }
         Self { commands, aliases }
+    }
+
+    /// Process-wide shared registry, built once on first access.
+    ///
+    /// The built-in command set is static, so a single instance can serve
+    /// the command palette, help generation, and alias resolution without
+    /// rebuilding per keystroke, frame, or command execution.
+    pub fn shared() -> &'static Self {
+        static SHARED: OnceLock<CommandRegistry> = OnceLock::new();
+        SHARED.get_or_init(Self::new)
     }
 
     /// Resolve an alias to its primary command name.
@@ -287,6 +301,20 @@ fn builtin_commands() -> Vec<CommandInfo> {
             category: CommandCategory::General,
         },
         CommandInfo {
+            name: "queue",
+            alias: None,
+            description: "Show the follow-up queue for the active run",
+            args: "",
+            category: CommandCategory::General,
+        },
+        CommandInfo {
+            name: "tasks",
+            alias: None,
+            description: "Show background tasks and subagents",
+            args: "",
+            category: CommandCategory::General,
+        },
+        CommandInfo {
             name: "quit",
             alias: Some("q"),
             description: "Quit the TUI",
@@ -391,6 +419,14 @@ mod tests {
             reg.find("prompt").is_some(),
             "prompt command should be discoverable"
         );
+        assert!(
+            reg.find("queue").is_some(),
+            "queue command should be discoverable"
+        );
+        assert!(
+            reg.find("tasks").is_some(),
+            "tasks command should be discoverable"
+        );
     }
 
     #[test]
@@ -419,5 +455,25 @@ mod tests {
             .filter(|c| c.category == CommandCategory::Session)
             .collect();
         assert!(session_cmds.len() >= 5, "should have >= 5 session commands");
+    }
+
+    // T-REGISTRY-SHARED-01: shared() returns the same instance across calls.
+    #[test]
+    fn test_shared_returns_same_instance() {
+        let first = CommandRegistry::shared();
+        let second = CommandRegistry::shared();
+        assert!(
+            std::ptr::eq(first, second),
+            "shared() must return the same registry instance"
+        );
+    }
+
+    // T-REGISTRY-SHARED-02: shared() behaves like a fresh registry.
+    #[test]
+    fn test_shared_resolves_aliases_and_searches() {
+        let reg = CommandRegistry::shared();
+        assert_eq!(reg.resolve_alias("n"), "new");
+        assert!(reg.find("sw").is_some_and(|c| c.name == "switch"));
+        assert!(!reg.search("session").is_empty());
     }
 }

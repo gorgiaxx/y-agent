@@ -9,8 +9,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
-use crate::tui::commands::registry::{CommandInfo, CommandRegistry};
+use crate::tui::commands::registry::CommandRegistry;
 use crate::tui::theme::Theme;
+
+use super::picker::visible_range;
 
 /// State for the command palette overlay.
 #[derive(Debug, Clone)]
@@ -23,6 +25,9 @@ pub struct CommandPaletteState {
     pub filtered_names: Vec<String>,
     /// Cached filtered descriptions.
     pub filtered_descriptions: Vec<String>,
+    /// Cached filtered argument synopses (e.g. "<session-id>"), aligned with
+    /// `filtered_names` so rendering needs no registry lookups.
+    pub filtered_synopses: Vec<&'static str>,
     /// When set, the palette is in argument-completion mode for this command.
     pub arg_command: Option<String>,
     /// Available argument completions (e.g. provider IDs for `/model`).
@@ -39,15 +44,13 @@ impl Default for CommandPaletteState {
 
 impl CommandPaletteState {
     pub fn new() -> Self {
-        let registry = CommandRegistry::new();
-        let all = registry.all();
-        let names: Vec<String> = all.iter().map(|c| c.name.to_string()).collect();
-        let descs: Vec<String> = all.iter().map(|c| c.description.to_string()).collect();
+        let all = CommandRegistry::shared().all();
         Self {
             input: String::new(),
             selected: 0,
-            filtered_names: names,
-            filtered_descriptions: descs,
+            filtered_names: all.iter().map(|c| c.name.to_string()).collect(),
+            filtered_descriptions: all.iter().map(|c| c.description.to_string()).collect(),
+            filtered_synopses: all.iter().map(|c| c.args).collect(),
             arg_command: None,
             arg_completions: Vec::new(),
             filtered_args: Vec::new(),
@@ -90,15 +93,16 @@ impl CommandPaletteState {
             }
             return;
         }
-        let registry = CommandRegistry::new();
-        let results: Vec<&CommandInfo> = if self.input.is_empty() {
-            registry.all().iter().collect()
+        let registry = CommandRegistry::shared();
+        let results = if self.input.is_empty() {
+            registry.all().iter().collect::<Vec<_>>()
         } else {
             registry.search(&self.input)
         };
 
         self.filtered_names = results.iter().map(|c| c.name.to_string()).collect();
         self.filtered_descriptions = results.iter().map(|c| c.description.to_string()).collect();
+        self.filtered_synopses = results.iter().map(|c| c.args).collect();
 
         // Clamp selected index.
         if self.selected >= self.filtered_names.len() {
@@ -248,7 +252,8 @@ fn render_command_list(
         palette.selected,
         list_area.height as usize,
     );
-    let registry = CommandRegistry::new();
+    // All metadata comes from the palette's cached vectors: no registry
+    // lookups or command searches during rendering.
     let items: Vec<ListItem> = range
         .map(|i| {
             let name = &palette.filtered_names[i];
@@ -256,7 +261,7 @@ fn render_command_list(
                 .filtered_descriptions
                 .get(i)
                 .map_or("", std::string::String::as_str);
-            let args = registry.find(name).map_or("", |command| command.args);
+            let args = palette.filtered_synopses.get(i).copied().unwrap_or("");
 
             let style = if i == palette.selected {
                 Style::default()
@@ -331,21 +336,6 @@ fn render_arg_list(frame: &mut Frame, list_area: Rect, palette: &CommandPaletteS
     } else {
         frame.render_widget(List::new(items), list_area);
     }
-}
-
-fn visible_range(
-    item_count: usize,
-    selected: usize,
-    visible_height: usize,
-) -> std::ops::Range<usize> {
-    if item_count == 0 || visible_height == 0 {
-        return 0..0;
-    }
-
-    let selected = selected.min(item_count - 1);
-    let start = selected.saturating_add(1).saturating_sub(visible_height);
-    let end = start.saturating_add(visible_height).min(item_count);
-    start..end
 }
 
 // ---------------------------------------------------------------------------
@@ -439,5 +429,35 @@ mod tests {
 
         palette.push_char('r');
         assert_eq!(palette.selected, 0);
+    }
+
+    // T-PALETTE-CACHE-01: cached synopses stay aligned with filtered names.
+    #[test]
+    fn test_filtered_synopses_align_with_names() {
+        let mut palette = CommandPaletteState::new();
+        assert_eq!(
+            palette.filtered_names.len(),
+            palette.filtered_synopses.len()
+        );
+        let new_pos = palette
+            .filtered_names
+            .iter()
+            .position(|n| n == "new")
+            .expect("'new' command present");
+        assert_eq!(palette.filtered_synopses[new_pos], "[label]");
+
+        for ch in "sw".chars() {
+            palette.push_char(ch);
+        }
+        assert_eq!(
+            palette.filtered_names.len(),
+            palette.filtered_synopses.len()
+        );
+        let sw_pos = palette
+            .filtered_names
+            .iter()
+            .position(|n| n == "switch")
+            .expect("'switch' matches 'sw'");
+        assert_eq!(palette.filtered_synopses[sw_pos], "<session-id|label>");
     }
 }

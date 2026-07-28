@@ -118,7 +118,6 @@ impl StyleFlags {
     const BOLD: u8 = 1 << 0;
     const ITALIC: u8 = 1 << 1;
     const STRIKETHROUGH: u8 = 1 << 2;
-    const INLINE_CODE: u8 = 1 << 3;
     const CODE_BLOCK: u8 = 1 << 4;
     const LINK: u8 = 1 << 5;
 

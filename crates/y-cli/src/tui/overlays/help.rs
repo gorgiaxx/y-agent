@@ -11,9 +11,12 @@ use ratatui::Frame;
 
 /// Render the help overlay.
 pub fn render(frame: &mut Frame, area: Rect) {
-    // Calculate popup size.
+    let lines = help_lines();
+
+    // Calculate popup size; the height fits the content so no section is
+    // clipped on reasonably sized terminals.
     let popup_width = area.width.clamp(30, 60);
-    let popup_height = area.height.clamp(10, 44);
+    let popup_height = area.height.clamp(10, lines.len() as u16 + 2);
 
     let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
@@ -33,7 +36,6 @@ pub fn render(frame: &mut Frame, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         );
 
-    let lines = help_lines();
     let paragraph = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false });
@@ -101,6 +103,12 @@ fn help_lines() -> Vec<Line<'static>> {
             key_style,
             desc_style,
         ),
+        keybinding_line(
+            "  Ctrl+O    ",
+            "Cycle latest tool card details",
+            key_style,
+            desc_style,
+        ),
         keybinding_line("  ?         ", "Show help", key_style, desc_style),
         keybinding_line("  i         ", "Return to input", key_style, desc_style),
         keybinding_line(
@@ -121,6 +129,49 @@ fn help_lines() -> Vec<Line<'static>> {
         ),
         keybinding_line("  q / i    ", "Close selector", key_style, desc_style),
         Line::from(""),
+        Line::from(Span::styled("  Follow-up Queue (/queue)", header_style)),
+        keybinding_line(
+            "  Up/Down/j/k",
+            "Navigate queued follow-ups",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
+            "  d         ",
+            "Delete the selected follow-up",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
+            "  s         ",
+            "Steer / un-steer the selected follow-up",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line("  Esc / q   ", "Close the queue", key_style, desc_style),
+        Line::from(""),
+        Line::from(Span::styled("  Tasks (/tasks)", header_style)),
+        keybinding_line(
+            "  Up/Down/j/k",
+            "Navigate tasks and subagents",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
+            "  Enter     ",
+            "Toggle the selected task's output",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
+            "  d         ",
+            "Kill the selected background task",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line("  r         ", "Refresh the list", key_style, desc_style),
+        keybinding_line("  Esc / q   ", "Close the overlay", key_style, desc_style),
+        Line::from(""),
         Line::from(Span::styled("  Command Mode", header_style)),
         keybinding_line("  Enter     ", "Execute command", key_style, desc_style),
         keybinding_line("  Esc       ", "Cancel", key_style, desc_style),
@@ -128,6 +179,18 @@ fn help_lines() -> Vec<Line<'static>> {
         keybinding_line(
             "  /resume   ",
             "Pick a recent session",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
+            "  /queue    ",
+            "Inspect the follow-up queue",
+            key_style,
+            desc_style,
+        ),
+        keybinding_line(
+            "  /tasks    ",
+            "Show background tasks and subagents",
             key_style,
             desc_style,
         ),
@@ -198,9 +261,16 @@ mod tests {
         assert!(text.contains("Enter"));
         assert!(text.contains("Tab"));
         assert!(text.contains("[ / ]"));
+        assert!(text.contains("Ctrl+O"));
         assert!(text.contains("Copy selected tool"));
         assert!(text.contains("Prompt Backtrack"));
         assert!(text.contains("Branch before prompt"));
         assert!(text.contains("/prompt"));
+        assert!(text.contains("/queue"));
+        assert!(text.contains("/tasks"));
+        assert!(text.contains("Follow-up Queue"));
+        assert!(text.contains("Steer / un-steer"));
+        assert!(text.contains("Tasks (/tasks)"));
+        assert!(text.contains("Kill the selected background task"));
     }
 }

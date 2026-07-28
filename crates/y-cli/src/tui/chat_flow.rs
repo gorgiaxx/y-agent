@@ -65,7 +65,10 @@ pub enum ChatEvent {
         updated_at: chrono::DateTime<Utc>,
     },
     /// A queued follow-up was injected into the active service run.
-    FollowUpInjected { id: String, text: String },
+    FollowUpInjected { follow_up_id: String, text: String },
+    /// A queued steer was injected into the active service run at an
+    /// LLM-call boundary.
+    SteerInjected { steer_id: String, text: String },
     /// The active service run acknowledged cancellation.
     Cancelled,
 }
@@ -325,10 +328,12 @@ pub fn submit_message_with_mode(
                     }
                     y_service::TurnEvent::FollowUpInjected { follow_up_id, text } => {
                         let _ = tx_stream
-                            .send(ChatEvent::FollowUpInjected {
-                                id: follow_up_id,
-                                text,
-                            })
+                            .send(ChatEvent::FollowUpInjected { follow_up_id, text })
+                            .await;
+                    }
+                    y_service::TurnEvent::SteerInjected { steer_id, text } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::SteerInjected { steer_id, text })
                             .await;
                     }
                     _ => {}
@@ -455,6 +460,8 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             }
             state.is_streaming = false;
             state.is_cancelling = false;
+            // The service destroys the queue when the run finishes.
+            state.follow_up_queue.clear();
 
             // Update status bar data.
             state.status_model = model;
@@ -582,11 +589,15 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             }
             state.is_streaming = false;
             state.is_cancelling = false;
+            // The service destroys the queue when the run finishes.
+            state.follow_up_queue.clear();
 
             // Also emit a transient warning toast.
             state.push_toast(msg, crate::tui::state::ToastLevel::Warning);
         }
-        ChatEvent::FollowUpInjected { text, .. } => {
+        ChatEvent::FollowUpInjected { follow_up_id, text } => {
+            // Drop the injected item from the queue projection.
+            state.follow_up_queue.retain(|item| item.id != follow_up_id);
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
                     finish_active_reasoning(last);
@@ -617,6 +628,15 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 segments: Vec::new(),
             });
         }
+        ChatEvent::SteerInjected { steer_id, text } => {
+            // Drop the injected steer from the queue projection; the run
+            // continues with the same streaming assistant message.
+            state.follow_up_queue.retain(|item| item.id != steer_id);
+            state.push_toast(
+                format!("Steering the active run: {text}"),
+                crate::tui::state::ToastLevel::Info,
+            );
+        }
         ChatEvent::Cancelled => {
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {
@@ -635,6 +655,8 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
             }
             state.is_streaming = false;
             state.is_cancelling = false;
+            // The service destroys the queue when the run finishes.
+            state.follow_up_queue.clear();
             state.push_toast(
                 "Response cancelled.".into(),
                 crate::tui::state::ToastLevel::Info,
@@ -714,6 +736,22 @@ pub fn enqueue_follow_up(
     .map_err(|error| error.to_string())
 }
 
+/// Refresh the TUI projection of the service-side follow-up queue.
+///
+/// Best-effort: the service owns a queue only while a run is streaming, so
+/// the projection is only re-read for an active streaming session; otherwise
+/// the previous projection is kept.
+pub fn refresh_follow_up_queue(state: &mut AppState, services: &AppServices) {
+    let Some(ref session_id) = state.current_session_id else {
+        return;
+    };
+    if !state.is_streaming {
+        return;
+    }
+    state.follow_up_queue =
+        ChatService::list_follow_ups(services, &SessionId::from_string(session_id.clone()));
+}
+
 /// Mark the active response as awaiting service-side cancellation.
 pub fn cancel_streaming(state: &mut AppState) {
     if state.is_streaming && !state.is_cancelling {
@@ -733,8 +771,10 @@ mod tests {
     #[tokio::test]
     async fn prepare_tui_turn_uses_shared_service_preparation() {
         let temp = tempfile::tempdir().unwrap();
-        let mut config = y_service::ServiceConfig::default();
-        config.storage = y_service::config_types::StorageConfig::in_memory();
+        let mut config = y_service::ServiceConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
         config.storage.transcript_dir = temp.path().join("transcripts");
         let services = AppServices::from_config(&config).await.unwrap();
 
@@ -758,7 +798,7 @@ mod tests {
     // T-TUI-05-01: User message appended to history.
     #[test]
     fn test_apply_chat_response() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -795,7 +835,7 @@ mod tests {
 
     #[test]
     fn test_apply_chat_error() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -820,7 +860,7 @@ mod tests {
     // T-TUI-05-03: Cancel streaming marks message.
     #[test]
     fn test_cancel_streaming_marks_request_pending() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -842,7 +882,7 @@ mod tests {
 
     #[test]
     fn test_apply_chat_cancelled_preserves_partial_response() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.is_cancelling = true;
         state.messages.push(ChatMessage {
@@ -868,7 +908,7 @@ mod tests {
 
     #[test]
     fn test_apply_follow_up_injected_creates_real_history_boundary() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -884,7 +924,7 @@ mod tests {
 
         apply_chat_event(
             ChatEvent::FollowUpInjected {
-                id: "follow-up-1".into(),
+                follow_up_id: "fu-1".into(),
                 text: "also add tests".into(),
             },
             &mut state,
@@ -899,9 +939,183 @@ mod tests {
         assert!(state.messages[2].is_streaming);
     }
 
+    fn queued_follow_up(id: &str, text: &str) -> y_service::FollowUpMessage {
+        y_service::FollowUpMessage {
+            id: id.into(),
+            text: text.into(),
+            created_at: 0,
+            status: y_service::FollowUpStatus::Pending,
+        }
+    }
+
+    fn streaming_assistant_message() -> ChatMessage {
+        ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_apply_follow_up_injected_removes_item_from_queue_projection() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        state.messages.push(streaming_assistant_message());
+        state.follow_up_queue = vec![
+            queued_follow_up("fu-1", "first"),
+            queued_follow_up("fu-2", "second"),
+        ];
+
+        apply_chat_event(
+            ChatEvent::FollowUpInjected {
+                follow_up_id: "fu-1".into(),
+                text: "first".into(),
+            },
+            &mut state,
+        );
+
+        let remaining: Vec<&str> = state
+            .follow_up_queue
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(remaining, ["fu-2"]);
+    }
+
+    #[test]
+    fn test_apply_steer_injected_removes_item_and_announces() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        state.messages.push(streaming_assistant_message());
+        state.follow_up_queue = vec![
+            queued_follow_up("fu-1", "first"),
+            queued_follow_up("fu-2", "steer me"),
+        ];
+
+        apply_chat_event(
+            ChatEvent::SteerInjected {
+                steer_id: "fu-2".into(),
+                text: "steer me".into(),
+            },
+            &mut state,
+        );
+
+        let remaining: Vec<&str> = state
+            .follow_up_queue
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(remaining, ["fu-1"]);
+        // The steer must not break the streaming boundary: no new messages.
+        assert_eq!(state.messages.len(), 1);
+        assert!(state.messages[0].is_streaming);
+        let toast = state.toasts.back().expect("a steer toast is shown");
+        assert!(toast.message.contains("steer me"));
+        assert_eq!(toast.level, crate::tui::state::ToastLevel::Info);
+    }
+
+    #[test]
+    fn test_terminal_events_clear_queue_projection() {
+        for event in [
+            ChatEvent::Response {
+                content: "done".into(),
+                model: "test".into(),
+                input_tokens: 1,
+                output_tokens: 1,
+                last_input_tokens: 1,
+                context_window: 1_000,
+                cost_usd: 0.0,
+            },
+            ChatEvent::Error("boom".into()),
+            ChatEvent::Cancelled,
+        ] {
+            let mut state = AppState::new();
+            state.is_streaming = true;
+            state.messages.push(streaming_assistant_message());
+            state.follow_up_queue = vec![queued_follow_up("fu-1", "first")];
+
+            apply_chat_event(event, &mut state);
+
+            assert!(
+                state.follow_up_queue.is_empty(),
+                "terminal events must clear the queue projection"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_follow_up_queue_projects_service_queue_while_streaming() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = y_service::ServiceConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
+        config.storage.transcript_dir = temp.path().join("transcripts");
+        let services = AppServices::from_config(&config).await.unwrap();
+
+        let session_id = SessionId::new();
+        ChatService::begin_follow_up_run(&services, &session_id);
+        ChatService::add_follow_up(&services, &session_id, "queued one".to_string()).unwrap();
+        ChatService::add_follow_up(&services, &session_id, "queued two".to_string()).unwrap();
+
+        let mut state = AppState::new();
+        state.current_session_id = Some(session_id.to_string());
+        state.is_streaming = true;
+
+        refresh_follow_up_queue(&mut state, &services);
+
+        let texts: Vec<&str> = state
+            .follow_up_queue
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect();
+        assert_eq!(texts, ["queued one", "queued two"]);
+    }
+
+    #[tokio::test]
+    async fn refresh_follow_up_queue_keeps_projection_when_not_streaming() {
+        let config = y_service::ServiceConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
+        let services = AppServices::from_config(&config).await.unwrap();
+
+        let mut state = AppState::new();
+        state.current_session_id = Some(SessionId::new().to_string());
+        state.is_streaming = false;
+        state.follow_up_queue = vec![queued_follow_up("fu-1", "stale")];
+
+        refresh_follow_up_queue(&mut state, &services);
+
+        assert_eq!(state.follow_up_queue.len(), 1);
+        assert_eq!(state.follow_up_queue[0].text, "stale");
+    }
+
+    #[tokio::test]
+    async fn refresh_follow_up_queue_without_session_is_noop() {
+        let config = y_service::ServiceConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
+        let services = AppServices::from_config(&config).await.unwrap();
+
+        let mut state = AppState::new();
+        state.is_streaming = true;
+
+        refresh_follow_up_queue(&mut state, &services);
+
+        assert!(state.follow_up_queue.is_empty());
+    }
+
     #[test]
     fn test_final_response_does_not_duplicate_prior_follow_up_iterations() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -964,7 +1178,7 @@ mod tests {
     // T-TUI-TITLE-01: TitleUpdated event updates session list.
     #[test]
     fn test_apply_title_updated() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.sessions.push(SessionListItem {
             id: "session-1".into(),
             title: String::new(),
@@ -986,7 +1200,7 @@ mod tests {
     // T-TUI-TITLE-02: TitleUpdated for unknown session is no-op.
     #[test]
     fn test_apply_title_updated_unknown_session() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.sessions.push(SessionListItem {
             id: "session-1".into(),
             title: "Original".into(),
@@ -1008,7 +1222,7 @@ mod tests {
     // T-TUI-TOOL-01: rich tool events update one event-ordered card in place.
     #[test]
     fn test_apply_tool_start_and_result_preserve_details() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -1066,7 +1280,7 @@ mod tests {
     // T-TUI-TOOL-02: Multiple tool calls accumulate.
     #[test]
     fn test_apply_multiple_tool_calls() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -1118,7 +1332,7 @@ mod tests {
 
     #[test]
     fn test_same_name_tool_results_complete_by_tool_call_id() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -1168,7 +1382,7 @@ mod tests {
     // T-TUI-REASON-01: StreamReasoningDelta accumulates reasoning content.
     #[test]
     fn test_apply_stream_reasoning_delta() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -1203,7 +1417,7 @@ mod tests {
     // T-TUI-REASON-03: reasoning remains in event order around tool calls.
     #[test]
     fn test_reasoning_segments_preserve_tool_timeline_order() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,
@@ -1267,7 +1481,7 @@ mod tests {
     // T-TUI-REASON-02: reasoning_complete set on Response.
     #[test]
     fn test_reasoning_complete_on_response() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.is_streaming = true;
         state.messages.push(ChatMessage {
             role: MessageRole::Assistant,

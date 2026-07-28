@@ -1,11 +1,17 @@
 use std::fs::OpenOptions;
 use std::io::{self, Write};
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 
 const OSC52_MAX_INPUT_BYTES: usize = 100_000;
+
+/// Prefix of fallback clipboard files written to the temp dir.
+const FALLBACK_FILE_PREFIX: &str = "y-agent-copy-";
+
+/// Fallback files older than this are deleted when a new one is written.
+const FALLBACK_FILE_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipboardRoute {
@@ -82,12 +88,14 @@ fn osc52_sequence(text: &str, tmux: bool) -> Result<String, String> {
 }
 
 fn write_fallback_file(text: &str) -> io::Result<PathBuf> {
+    let dir = std::env::temp_dir();
+    cleanup_stale_fallback_files(&dir);
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let path = std::env::temp_dir().join(format!(
-        "y-agent-copy-{}-{timestamp}.txt",
+    let path = dir.join(format!(
+        "{FALLBACK_FILE_PREFIX}{}-{timestamp}.txt",
         std::process::id()
     ));
     let mut options = OpenOptions::new();
@@ -100,6 +108,44 @@ fn write_fallback_file(text: &str) -> io::Result<PathBuf> {
     let mut file = options.open(&path)?;
     file.write_all(text.as_bytes())?;
     Ok(path)
+}
+
+/// Delete fallback clipboard files older than `FALLBACK_FILE_MAX_AGE` in `dir`.
+///
+/// Only files matching the exact `y-agent-copy-*.txt` pattern are touched.
+/// Cleanup is best-effort: every error is ignored so it can never break a
+/// copy operation.
+fn cleanup_stale_fallback_files(dir: &Path) {
+    let now = SystemTime::now();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(FALLBACK_FILE_PREFIX) {
+            continue;
+        }
+        let is_txt = Path::new(name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"));
+        if !is_txt {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .is_some_and(|modified| {
+                now.duration_since(modified)
+                    .is_ok_and(|age| age > FALLBACK_FILE_MAX_AGE)
+            });
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -124,5 +170,50 @@ mod tests {
         let sequence = osc52_sequence("hello", false).unwrap();
         assert!(sequence.contains("aGVsbG8="));
         assert!(sequence.starts_with("\u{1b}]52;c;"));
+    }
+
+    // T-CLIPBOARD-CLEANUP-01: stale fallback files are removed, fresh and
+    // non-matching files are left untouched.
+    #[test]
+    fn test_cleanup_removes_only_stale_prefixed_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let stale = dir.path().join("y-agent-copy-1-1000.txt");
+        let fresh = dir.path().join("y-agent-copy-1-2000.txt");
+        let unrelated = dir.path().join("other-app-1-1000.txt");
+        let wrong_suffix = dir.path().join("y-agent-copy-1-1000.log");
+        for path in [&stale, &fresh, &unrelated, &wrong_suffix] {
+            std::fs::write(path, "payload").unwrap();
+        }
+
+        // Age the stale and unrelated files beyond the 24h cutoff.
+        let old = std::fs::FileTimes::new()
+            .set_modified(SystemTime::now() - FALLBACK_FILE_MAX_AGE - Duration::from_secs(60));
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_times(old)
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&unrelated)
+            .unwrap()
+            .set_times(old)
+            .unwrap();
+
+        cleanup_stale_fallback_files(dir.path());
+
+        assert!(!stale.exists(), "stale fallback file should be removed");
+        assert!(fresh.exists(), "fresh fallback file should be kept");
+        assert!(unrelated.exists(), "unrelated file should be kept");
+        assert!(wrong_suffix.exists(), "non-.txt file should be kept");
+    }
+
+    // T-CLIPBOARD-CLEANUP-02: cleanup tolerates a missing directory.
+    #[test]
+    fn test_cleanup_ignores_missing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        cleanup_stale_fallback_files(&missing); // Must not panic.
     }
 }

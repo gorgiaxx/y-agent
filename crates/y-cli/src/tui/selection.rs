@@ -102,8 +102,13 @@ pub fn extract_text(lines: &[String], selection: &TextSelection) -> String {
         };
 
         if start_col >= chars.len() {
-            result.push(String::new());
-            continue;
+            // Skip rows whose selection start lies beyond the line's content
+            // instead of emitting a spurious blank line. Genuinely empty
+            // in-range lines (start_col == 0) are kept so interior blank
+            // lines survive extraction.
+            if start_col > 0 {
+                continue;
+            }
         }
 
         let selected: String = chars[start_col..end_col.min(chars.len())].iter().collect();
@@ -139,9 +144,11 @@ mod tests {
 
     #[test]
     fn test_selection_sorted() {
-        let mut sel = TextSelection::default();
-        sel.start = (10, 5);
-        sel.end = (3, 2);
+        let sel = TextSelection {
+            start: (10, 5),
+            end: (3, 2),
+            ..Default::default()
+        };
         let (s, e) = sel.sorted();
         assert_eq!(s, (3, 2));
         assert_eq!(e, (10, 5));
@@ -149,9 +156,11 @@ mod tests {
 
     #[test]
     fn test_selection_contains_single_line() {
-        let mut sel = TextSelection::default();
-        sel.start = (2, 3);
-        sel.end = (2, 8);
+        let sel = TextSelection {
+            start: (2, 3),
+            end: (2, 8),
+            ..Default::default()
+        };
 
         assert!(sel.contains(2, 3));
         assert!(sel.contains(2, 5));
@@ -164,9 +173,11 @@ mod tests {
 
     #[test]
     fn test_selection_contains_multi_line() {
-        let mut sel = TextSelection::default();
-        sel.start = (1, 5);
-        sel.end = (3, 4);
+        let sel = TextSelection {
+            start: (1, 5),
+            end: (3, 4),
+            ..Default::default()
+        };
 
         // Row 1: col >= 5
         assert!(!sel.contains(1, 4));
@@ -190,9 +201,11 @@ mod tests {
     #[test]
     fn test_extract_text_single_line() {
         let lines = vec!["Hello, world!".to_string(), "Second line".to_string()];
-        let mut sel = TextSelection::default();
-        sel.start = (0, 7);
-        sel.end = (0, 12);
+        let sel = TextSelection {
+            start: (0, 7),
+            end: (0, 12),
+            ..Default::default()
+        };
         assert_eq!(extract_text(&lines, &sel), "world");
     }
 
@@ -204,11 +217,37 @@ mod tests {
             "Second line here".to_string(),
             "Third line here".to_string(),
         ];
-        let mut sel = TextSelection::default();
-        sel.start = (1, 6);
-        sel.end = (3, 5);
+        let sel = TextSelection {
+            start: (1, 6),
+            end: (3, 5),
+            ..Default::default()
+        };
         let text = extract_text(&lines, &sel);
         assert_eq!(text, "line here\nSecond line here\nThird");
+    }
+
+    #[test]
+    fn test_extract_text_skips_out_of_range_start_row() {
+        let lines = vec!["short".to_string(), "Second line here".to_string()];
+        let sel = TextSelection {
+            start: (0, 10),
+            end: (1, 6),
+            ..Default::default()
+        };
+        // Row 0's start column is beyond its content; it must not emit a
+        // spurious leading blank line.
+        assert_eq!(extract_text(&lines, &sel), "Second");
+    }
+
+    #[test]
+    fn test_extract_text_preserves_interior_blank_lines() {
+        let lines = vec!["aaa".to_string(), String::new(), "ccc".to_string()];
+        let sel = TextSelection {
+            start: (0, 0),
+            end: (2, 3),
+            ..Default::default()
+        };
+        assert_eq!(extract_text(&lines, &sel), "aaa\n\nccc");
     }
 
     #[test]

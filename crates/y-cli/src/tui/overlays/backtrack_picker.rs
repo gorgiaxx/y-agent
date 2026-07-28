@@ -1,5 +1,8 @@
 //! Prompt backtrack selector for branching from an earlier user message.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -8,6 +11,47 @@ use ratatui::Frame;
 
 use crate::tui::state::{AppState, MessageRole};
 use crate::tui::theme::Theme;
+
+use super::picker::{preview, visible_range};
+
+/// Cache entry: `(messages.len(), session id, user-message indices)`.
+type UserIndexCacheEntry = (usize, Option<String>, Rc<Vec<usize>>);
+
+thread_local! {
+    /// Cached indices of user messages, keyed by `(messages.len(), session id)`.
+    ///
+    /// Heuristic: a message's role never changes once pushed, so the set of
+    /// user-message indices only changes when the list length changes
+    /// (append, clear, truncate) or a different session is loaded. There is
+    /// no message-list generation counter on `AppState`, so this pair is the
+    /// cheapest sound invalidation key available.
+    static USER_INDEX_CACHE: RefCell<Option<UserIndexCacheEntry>> =
+        const { RefCell::new(None) };
+}
+
+/// Indices of user messages in `state.messages`, cached across frames.
+fn user_message_indices(state: &AppState) -> Rc<Vec<usize>> {
+    let key = (state.messages.len(), state.current_session_id.clone());
+    USER_INDEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((len, session_id, indices)) = &*cache {
+            if (*len, session_id.clone()) == key {
+                return indices.clone();
+            }
+        }
+        let indices = Rc::new(
+            state
+                .messages
+                .iter()
+                .enumerate()
+                .filter(|(_, message)| message.role == MessageRole::User)
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>(),
+        );
+        *cache = Some((key.0, key.1, indices.clone()));
+        indices
+    })
+}
 
 /// Render the full-screen prompt backtrack selector.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
@@ -41,21 +85,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
         rows[0],
     );
 
-    let prompts: Vec<_> = state
-        .messages
-        .iter()
-        .enumerate()
-        .filter(|(_, message)| message.role == MessageRole::User)
-        .collect();
+    let prompts = user_message_indices(state);
     let selected_position = state
         .selected_message
-        .and_then(|selected| prompts.iter().position(|(index, _)| *index == selected))
+        .and_then(|selected| prompts.binary_search(&selected).ok())
         .unwrap_or_else(|| prompts.len().saturating_sub(1));
     let visible = visible_range(prompts.len(), selected_position, rows[1].height as usize);
     let preview_width = usize::from(rows[1].width.saturating_sub(25)).max(8);
     let items: Vec<ListItem> = visible
         .map(|position| {
-            let (message_index, message) = prompts[position];
+            let message_index = prompts[position];
+            let message = &state.messages[message_index];
             let selected = state.selected_message == Some(message_index);
             let style = if selected {
                 Style::default()
@@ -106,38 +146,42 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, theme: &Theme) {
     );
 }
 
-fn visible_range(item_count: usize, selected: usize, height: usize) -> std::ops::Range<usize> {
-    if item_count == 0 || height == 0 {
-        return 0..0;
-    }
-    let selected = selected.min(item_count - 1);
-    let start = selected.saturating_add(1).saturating_sub(height);
-    let end = start.saturating_add(height).min(item_count);
-    start..end
-}
-
 fn prompt_preview(value: &str, max_chars: usize) -> String {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() {
-        return "(empty prompt)".to_string();
-    }
-
-    let mut chars = normalized.chars();
-    let preview: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_none() {
-        preview
+    let preview = preview(value, max_chars);
+    if preview.is_empty() {
+        "(empty prompt)".to_string()
     } else {
-        let prefix = preview
-            .chars()
-            .take(max_chars.saturating_sub(3))
-            .collect::<String>();
-        format!("{prefix}...")
+        preview
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::state::{ChatMessage, MessageRole};
+    use chrono::Utc;
+
+    fn message(role: MessageRole, content: &str) -> ChatMessage {
+        ChatMessage {
+            role,
+            content: content.into(),
+            timestamp: Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+        }
+    }
+
+    fn state_with(roles: &[MessageRole]) -> AppState {
+        let mut state = AppState::new();
+        for (i, role) in roles.iter().enumerate() {
+            state.messages.push(message(*role, &format!("msg {i}")));
+        }
+        state
+    }
 
     #[test]
     fn prompt_preview_flattens_and_truncates_content() {
@@ -150,5 +194,82 @@ mod tests {
     fn visible_range_keeps_selection_on_screen() {
         assert_eq!(visible_range(10, 8, 4), 5..9);
         assert_eq!(visible_range(3, 2, 5), 0..3);
+    }
+
+    // T-BACKTRACK-CACHE-01: indices list only user messages, in order.
+    #[test]
+    fn user_message_indices_filters_user_roles() {
+        let state = state_with(&[
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::System,
+            MessageRole::User,
+        ]);
+        let indices = user_message_indices(&state);
+        assert_eq!(&*indices, &[0, 3]);
+    }
+
+    // T-BACKTRACK-CACHE-02: repeated calls with unchanged messages reuse the
+    // cached allocation instead of rebuilding the list every frame.
+    #[test]
+    fn user_message_indices_reuses_cache_for_unchanged_state() {
+        let state = state_with(&[MessageRole::User, MessageRole::Assistant]);
+        let first = user_message_indices(&state);
+        let second = user_message_indices(&state);
+        assert!(
+            Rc::ptr_eq(&first, &second),
+            "unchanged state should hit the cache"
+        );
+    }
+
+    // T-BACKTRACK-CACHE-03: appending a message invalidates the cache.
+    #[test]
+    fn user_message_indices_rebuilds_after_length_change() {
+        let mut state = state_with(&[MessageRole::User, MessageRole::Assistant]);
+        let before = user_message_indices(&state);
+        state.messages.push(message(MessageRole::User, "msg 2"));
+        let after = user_message_indices(&state);
+        assert!(
+            !Rc::ptr_eq(&before, &after),
+            "length change should rebuild the cache"
+        );
+        assert_eq!(&*after, &[0, 2]);
+    }
+
+    // T-BACKTRACK-CACHE-04: a session switch with the same message count
+    // still invalidates the cache (session id is part of the key).
+    #[test]
+    fn user_message_indices_rebuilds_on_session_switch() {
+        let mut state = state_with(&[MessageRole::User, MessageRole::Assistant]);
+        let before = user_message_indices(&state);
+        state.current_session_id = Some("other-session".into());
+        let after = user_message_indices(&state);
+        assert!(
+            !Rc::ptr_eq(&before, &after),
+            "session id change should rebuild the cache"
+        );
+    }
+
+    // T-BACKTRACK-RENDER-01: render does not panic with cached indices and
+    // a selected user message.
+    #[test]
+    fn render_with_selection_does_not_panic() {
+        let mut state = state_with(&[MessageRole::User, MessageRole::Assistant, MessageRole::User]);
+        state.selected_message = Some(2);
+        let theme = Theme::default();
+
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &state, &theme);
+            })
+            .unwrap();
+        // Render twice to exercise the cache-hit path as well.
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &state, &theme);
+            })
+            .unwrap();
     }
 }

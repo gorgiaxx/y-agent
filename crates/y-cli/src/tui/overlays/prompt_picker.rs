@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 use y_service::UserPromptTemplate;
 
+use super::picker::{preview, visible_range, PickerItem, PickerState};
 use crate::tui::theme::Theme;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,76 +16,97 @@ pub enum PromptPickerSelection {
     Template(UserPromptTemplate),
 }
 
+/// A picker choice plus its precomputed lowercase search fields, built once
+/// at load time so per-keystroke filtering only runs `contains`.
+#[derive(Debug, Clone)]
+struct PromptPickerEntry {
+    item: PromptPickerSelection,
+    id_lower: String,
+    name_lower: String,
+    description_lower: String,
+}
+
+impl PromptPickerEntry {
+    fn new(item: PromptPickerSelection) -> Self {
+        let (id_lower, name_lower, description_lower) = match &item {
+            PromptPickerSelection::Default => {
+                ("default prompt".to_string(), String::new(), String::new())
+            }
+            PromptPickerSelection::Template(template) => (
+                template.id.to_ascii_lowercase(),
+                template.name.to_ascii_lowercase(),
+                template
+                    .description
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
+            ),
+        };
+        Self {
+            item,
+            id_lower,
+            name_lower,
+            description_lower,
+        }
+    }
+}
+
+impl PickerItem for PromptPickerEntry {
+    fn matches(&self, query_lower: &str) -> bool {
+        self.id_lower.contains(query_lower)
+            || self.name_lower.contains(query_lower)
+            || self.description_lower.contains(query_lower)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PromptPickerState {
-    items: Vec<PromptPickerSelection>,
-    filtered: Vec<usize>,
-    selected: usize,
-    query: String,
+    core: PickerState<PromptPickerEntry>,
 }
 
 impl PromptPickerState {
     pub fn new(templates: Vec<UserPromptTemplate>, active_template_id: Option<&str>) -> Self {
         let mut items = Vec::with_capacity(templates.len() + 1);
-        items.push(PromptPickerSelection::Default);
-        items.extend(templates.into_iter().map(PromptPickerSelection::Template));
-        let filtered: Vec<usize> = (0..items.len()).collect();
+        items.push(PromptPickerEntry::new(PromptPickerSelection::Default));
+        items.extend(
+            templates
+                .into_iter()
+                .map(|template| PromptPickerEntry::new(PromptPickerSelection::Template(template))),
+        );
         let selected = active_template_id
             .and_then(|active_id| {
-                items.iter().position(|item| {
-                    matches!(item, PromptPickerSelection::Template(template) if template.id == active_id)
+                items.iter().position(|entry| {
+                    matches!(&entry.item, PromptPickerSelection::Template(template) if template.id == active_id)
                 })
             })
             .unwrap_or(0);
-        Self {
-            items,
-            filtered,
-            selected,
-            query: String::new(),
-        }
+        let mut core = PickerState::new(items);
+        core.set_selected(selected);
+        Self { core }
     }
 
     pub fn filtered_len(&self) -> usize {
-        self.filtered.len()
+        self.core.filtered_len()
     }
 
     pub fn selected_choice(&self) -> Option<PromptPickerSelection> {
-        self.filtered
-            .get(self.selected)
-            .and_then(|index| self.items.get(*index))
-            .cloned()
+        self.core.selected_item().map(|entry| entry.item.clone())
     }
 
     pub fn select_prev(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        self.core.select_prev();
     }
 
     pub fn select_next(&mut self) {
-        if self.selected + 1 < self.filtered.len() {
-            self.selected += 1;
-        }
+        self.core.select_next();
     }
 
     pub fn push_char(&mut self, character: char) {
-        self.query.push(character);
-        self.update_filter();
+        self.core.push_char(character);
     }
 
     pub fn pop_char(&mut self) {
-        self.query.pop();
-        self.update_filter();
-    }
-
-    fn update_filter(&mut self) {
-        let query = self.query.to_ascii_lowercase();
-        self.filtered = self
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(_, item)| item_matches(item, &query))
-            .map(|(index, _)| index)
-            .collect();
-        self.selected = 0;
+        self.core.pop_char();
     }
 }
 
@@ -115,21 +137,21 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &PromptPickerState, theme: 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" Search: ", Style::default().fg(theme.muted())),
-            Span::styled(&picker.query, Style::default().fg(theme.text())),
+            Span::styled(picker.core.query(), Style::default().fg(theme.text())),
             Span::styled("_", Style::default().fg(theme.border_focused())),
         ])),
         rows[0],
     );
 
     let visible = visible_range(
-        picker.filtered.len(),
-        picker.selected,
+        picker.filtered_len(),
+        picker.core.selected(),
         usize::from(rows[1].height),
     );
     let items: Vec<ListItem> = visible
         .map(|position| {
-            let item = &picker.items[picker.filtered[position]];
-            let selected = position == picker.selected;
+            let item = &picker.core.items()[picker.core.filtered()[position]].item;
+            let selected = position == picker.core.selected();
             let style = if selected {
                 Style::default()
                     .fg(theme.panel_bg())
@@ -182,56 +204,12 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &PromptPickerState, theme: 
     );
 }
 
-fn item_matches(item: &PromptPickerSelection, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    match item {
-        PromptPickerSelection::Default => "default prompt".contains(query),
-        PromptPickerSelection::Template(template) => {
-            template.id.to_ascii_lowercase().contains(query)
-                || template.name.to_ascii_lowercase().contains(query)
-                || template
-                    .description
-                    .as_deref()
-                    .is_some_and(|description| description.to_ascii_lowercase().contains(query))
-        }
-    }
-}
-
 fn item_label(item: &PromptPickerSelection) -> String {
     match item {
         PromptPickerSelection::Default => " Default prompt".to_string(),
         PromptPickerSelection::Template(template) => {
             format!(" {:<24} {}", preview(&template.name, 24), template.id)
         }
-    }
-}
-
-fn visible_range(item_count: usize, selected: usize, height: usize) -> std::ops::Range<usize> {
-    if item_count == 0 || height == 0 {
-        return 0..0;
-    }
-    let selected = selected.min(item_count - 1);
-    let start = selected.saturating_add(1).saturating_sub(height);
-    let end = start.saturating_add(height).min(item_count);
-    start..end
-}
-
-fn preview(value: &str, max_chars: usize) -> String {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut chars = normalized.chars();
-    let preview: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_none() {
-        preview
-    } else {
-        format!(
-            "{}...",
-            preview
-                .chars()
-                .take(max_chars.saturating_sub(3))
-                .collect::<String>()
-        )
     }
 }
 
@@ -287,5 +265,51 @@ mod tests {
             picker.selected_choice(),
             Some(PromptPickerSelection::Template(ref selected)) if selected.id == "review"
         ));
+    }
+
+    #[test]
+    fn test_prompt_picker_matches_case_insensitively() {
+        let mut picker = PromptPickerState::new(
+            vec![
+                template("daily", "Daily Driver", "General coding"),
+                template("review", "Reviewer", "Review changes"),
+            ],
+            None,
+        );
+
+        for character in "DAILY".chars() {
+            picker.push_char(character);
+        }
+
+        assert_eq!(picker.filtered_len(), 1);
+        assert!(matches!(
+            picker.selected_choice(),
+            Some(PromptPickerSelection::Template(ref selected)) if selected.id == "daily"
+        ));
+    }
+
+    #[test]
+    fn test_prompt_picker_non_ascii_query_does_not_panic() {
+        let mut picker = PromptPickerState::new(
+            vec![
+                template("daily", "日常助手", "通用编码"),
+                template("review", "Reviewer", "Review changes"),
+            ],
+            None,
+        );
+
+        for character in "日常".chars() {
+            picker.push_char(character);
+        }
+
+        assert_eq!(picker.filtered_len(), 1);
+        assert!(matches!(
+            picker.selected_choice(),
+            Some(PromptPickerSelection::Template(ref selected)) if selected.id == "daily"
+        ));
+
+        picker.pop_char();
+        picker.pop_char();
+        assert_eq!(picker.filtered_len(), 3);
     }
 }

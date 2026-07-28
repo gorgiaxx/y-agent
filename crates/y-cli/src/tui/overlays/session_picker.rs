@@ -4,38 +4,55 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
+use super::picker::{truncate, visible_range, PickerItem, PickerState};
 use crate::tui::state::SessionListItem;
 use crate::tui::theme::Theme;
 
+/// A session plus its precomputed lowercase search fields, built once at
+/// load time so per-keystroke filtering only runs `contains`.
+#[derive(Debug, Clone)]
+struct SessionPickerEntry {
+    session: SessionListItem,
+    id_lower: String,
+    title_lower: String,
+}
+
+impl SessionPickerEntry {
+    fn new(session: SessionListItem) -> Self {
+        Self {
+            id_lower: session.id.to_ascii_lowercase(),
+            title_lower: session.title.to_ascii_lowercase(),
+            session,
+        }
+    }
+}
+
+impl PickerItem for SessionPickerEntry {
+    fn matches(&self, query_lower: &str) -> bool {
+        self.id_lower.contains(query_lower) || self.title_lower.contains(query_lower)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SessionPickerState {
-    sessions: Vec<SessionListItem>,
-    filtered: Vec<usize>,
-    selected: usize,
-    query: String,
+    core: PickerState<SessionPickerEntry>,
     current_session_id: Option<String>,
 }
 
 impl SessionPickerState {
     pub fn new(sessions: Vec<SessionListItem>, current_session_id: Option<&str>) -> Self {
-        let filtered = (0..sessions.len()).collect();
         Self {
-            sessions,
-            filtered,
-            selected: 0,
-            query: String::new(),
+            core: PickerState::new(sessions.into_iter().map(SessionPickerEntry::new).collect()),
             current_session_id: current_session_id.map(str::to_string),
         }
     }
 
     pub fn filtered_len(&self) -> usize {
-        self.filtered.len()
+        self.core.filtered_len()
     }
 
     pub fn selected_session(&self) -> Option<&SessionListItem> {
-        self.filtered
-            .get(self.selected)
-            .and_then(|index| self.sessions.get(*index))
+        self.core.selected_item().map(|entry| &entry.session)
     }
 
     pub fn selected_is_current(&self) -> bool {
@@ -44,39 +61,19 @@ impl SessionPickerState {
     }
 
     pub fn select_prev(&mut self) {
-        self.selected = self.selected.saturating_sub(1);
+        self.core.select_prev();
     }
 
     pub fn select_next(&mut self) {
-        if self.selected + 1 < self.filtered.len() {
-            self.selected += 1;
-        }
+        self.core.select_next();
     }
 
     pub fn push_char(&mut self, character: char) {
-        self.query.push(character);
-        self.update_filter();
+        self.core.push_char(character);
     }
 
     pub fn pop_char(&mut self) {
-        self.query.pop();
-        self.update_filter();
-    }
-
-    fn update_filter(&mut self) {
-        let query = self.query.to_ascii_lowercase();
-        self.filtered = self
-            .sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, session)| {
-                query.is_empty()
-                    || session.id.to_ascii_lowercase().contains(&query)
-                    || session.title.to_ascii_lowercase().contains(&query)
-            })
-            .map(|(index, _)| index)
-            .collect();
-        self.selected = 0;
+        self.core.pop_char();
     }
 }
 
@@ -108,21 +105,21 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &SessionPickerState, theme:
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(" Search: ", Style::default().fg(theme.muted())),
-            Span::styled(&picker.query, Style::default().fg(theme.text())),
+            Span::styled(picker.core.query(), Style::default().fg(theme.text())),
             Span::styled("_", Style::default().fg(theme.input_border_focused())),
         ])),
         rows[0],
     );
 
     let visible = visible_range(
-        picker.filtered.len(),
-        picker.selected,
+        picker.filtered_len(),
+        picker.core.selected(),
         rows[1].height as usize,
     );
     let items: Vec<ListItem> = visible
         .map(|position| {
-            let session = &picker.sessions[picker.filtered[position]];
-            let selected = position == picker.selected;
+            let session = &picker.core.items()[picker.core.filtered()[position]].session;
+            let selected = position == picker.core.selected();
             let current = if picker.current_session_id.as_deref() == Some(session.id.as_str()) {
                 " current"
             } else {
@@ -205,32 +202,6 @@ fn picker_area(area: Rect) -> Rect {
     area
 }
 
-fn visible_range(item_count: usize, selected: usize, height: usize) -> std::ops::Range<usize> {
-    if item_count == 0 || height == 0 {
-        return 0..0;
-    }
-    let selected = selected.min(item_count - 1);
-    let start = selected.saturating_add(1).saturating_sub(height);
-    let end = start.saturating_add(height).min(item_count);
-    start..end
-}
-
-fn truncate(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let truncated: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!(
-            "{}...",
-            truncated
-                .chars()
-                .take(max_chars.saturating_sub(3))
-                .collect::<String>()
-        )
-    } else {
-        truncated
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
@@ -278,5 +249,45 @@ mod tests {
     fn test_session_picker_uses_entire_terminal_area() {
         let area = Rect::new(2, 1, 100, 35);
         assert_eq!(picker_area(area), area);
+    }
+
+    #[test]
+    fn test_session_picker_matches_case_insensitively() {
+        let mut picker = SessionPickerState::new(
+            vec![
+                session("alpha-1234", "Release work"),
+                session("beta-5678", "TUI redesign"),
+            ],
+            None,
+        );
+
+        for character in "RELEASE".chars() {
+            picker.push_char(character);
+        }
+
+        assert_eq!(picker.filtered_len(), 1);
+        assert_eq!(picker.selected_session().unwrap().id, "alpha-1234");
+    }
+
+    #[test]
+    fn test_session_picker_non_ascii_query_does_not_panic() {
+        let mut picker = SessionPickerState::new(
+            vec![
+                session("alpha-1234", "发布工作"),
+                session("beta-5678", "TUI redesign"),
+            ],
+            None,
+        );
+
+        for character in "发布".chars() {
+            picker.push_char(character);
+        }
+
+        assert_eq!(picker.filtered_len(), 1);
+        assert_eq!(picker.selected_session().unwrap().id, "alpha-1234");
+
+        picker.pop_char();
+        picker.pop_char();
+        assert_eq!(picker.filtered_len(), 2);
     }
 }

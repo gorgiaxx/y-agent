@@ -133,12 +133,6 @@ impl Theme {
         self.color(Color::Rgb(100, 100, 120), Color::Indexed(245))
     }
 
-    /// Empty-state placeholder text.
-    pub fn empty(&self) -> Color {
-        // RGB(80,80,100) -> index 245 (slightly dimmer than muted)
-        self.color(Color::Rgb(80, 80, 100), Color::Indexed(245))
-    }
-
     // -----------------------------------------------------------------------
     // Role accents
     // -----------------------------------------------------------------------
@@ -184,12 +178,6 @@ impl Theme {
     /// Normal (non-selected) item text.
     pub fn normal(&self) -> Color {
         self.color(Color::Rgb(180, 180, 200), Color::Indexed(252))
-    }
-
-    /// "New Session" action text.
-    pub fn new_session(&self) -> Color {
-        // RGB(100,160,255) -> index 69 (blue)
-        self.color(Color::Rgb(100, 160, 255), Color::Indexed(69))
     }
 
     // -----------------------------------------------------------------------
@@ -420,7 +408,6 @@ mod tests {
         let _ = theme.title();
         let _ = theme.text();
         let _ = theme.muted();
-        let _ = theme.empty();
         let _ = theme.user_accent();
         let _ = theme.assistant_accent();
         let _ = theme.system_accent();
@@ -428,7 +415,6 @@ mod tests {
         let _ = theme.selected();
         let _ = theme.active();
         let _ = theme.normal();
-        let _ = theme.new_session();
         let _ = theme.success();
         let _ = theme.error();
         let _ = theme.warning();

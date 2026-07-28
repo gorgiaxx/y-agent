@@ -99,16 +99,17 @@ fn render_single_toast(frame: &mut Frame, area: Rect, toast: &Toast) {
     }
 
     // Truncate message to fit (char-boundary-aware for multi-byte UTF-8).
+    // Borrow the message when it fits; only the truncation path allocates.
     let max_msg_chars = inner.width as usize - icon.len();
-    let msg = if toast.message.chars().count() > max_msg_chars {
+    let msg: std::borrow::Cow<'_, str> = if toast.message.chars().count() > max_msg_chars {
         let truncated: String = toast
             .message
             .chars()
             .take(max_msg_chars.saturating_sub(1))
             .collect();
-        format!("{truncated}…")
+        std::borrow::Cow::Owned(format!("{truncated}…"))
     } else {
-        toast.message.clone()
+        std::borrow::Cow::Borrowed(toast.message.as_str())
     };
 
     let line = Line::from(vec![
@@ -171,7 +172,6 @@ mod tests {
             message: "hello".into(),
             level: ToastLevel::Error,
             ticks_remaining: 10,
-            id: 1,
         });
 
         terminal
@@ -198,7 +198,6 @@ mod tests {
                     _ => ToastLevel::Error,
                 },
                 ticks_remaining: 10,
-                id: i + 1,
             });
         }
 
@@ -212,9 +211,80 @@ mod tests {
     // T-TOAST-RENDER-06: Constant values are sensible.
     #[test]
     fn test_toast_dimensions() {
-        assert!(TOAST_WIDTH >= 20);
-        assert!(TOAST_HEIGHT >= 3);
-        assert!(MARGIN_RIGHT >= 1);
-        assert!(MARGIN_BOTTOM >= 1);
+        // `black_box` keeps clippy from folding these into constant assertions.
+        assert!(std::hint::black_box(TOAST_WIDTH) >= 20);
+        assert!(std::hint::black_box(TOAST_HEIGHT) >= 3);
+        assert!(std::hint::black_box(MARGIN_RIGHT) >= 1);
+        assert!(std::hint::black_box(MARGIN_BOTTOM) >= 1);
+    }
+
+    /// Extract the full text of a `TestBackend` terminal buffer, one
+    /// buffer row per line.
+    fn buffer_text(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let area = buffer.area;
+        let mut text = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                if let Some(cell) = buffer.cell((x, y)) {
+                    text.push_str(cell.symbol());
+                }
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    // T-TOAST-RENDER-07: a message that fits is rendered verbatim.
+    #[test]
+    fn test_render_short_message_verbatim() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        let mut toasts = VecDeque::new();
+        toasts.push_back(Toast {
+            message: "all good".into(),
+            level: ToastLevel::Success,
+            ticks_remaining: 10,
+        });
+
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &toasts);
+            })
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(
+            text.contains("all good"),
+            "buffer should show message: {text}"
+        );
+    }
+
+    // T-TOAST-RENDER-08: a message too long for the toast is truncated with an ellipsis.
+    #[test]
+    fn test_render_long_message_truncated() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+
+        let mut toasts = VecDeque::new();
+        toasts.push_back(Toast {
+            message: "x".repeat(200),
+            level: ToastLevel::Error,
+            ticks_remaining: 10,
+        });
+
+        terminal
+            .draw(|frame| {
+                render(frame, frame.area(), &toasts);
+            })
+            .unwrap();
+
+        let text = buffer_text(&terminal);
+        assert!(text.contains('…'), "buffer should show ellipsis: {text}");
+        assert!(
+            !text.contains(&"x".repeat(100)),
+            "buffer should not contain the full message"
+        );
     }
 }

@@ -11,6 +11,12 @@ use std::fmt::Write as _;
 use crate::tui::commands::copy::{self, CopyTarget};
 use crate::tui::state::{AppState, ChatMessage, TurnMode};
 
+/// Refusal message for session-destroying commands issued while a response
+/// streams. Shared with the TUI's async command paths (`/switch`, `/delete`,
+/// Resume-overlay confirm) so every entry point refuses with the same text.
+pub const STREAMING_ACTIVE_MESSAGE: &str =
+    "A response is active. Wait for the current turn to finish or press Esc to cancel it.";
+
 /// Result of executing a command.
 #[derive(Debug, Clone)]
 pub enum CommandResult {
@@ -33,6 +39,10 @@ pub enum CommandResult {
     Copy(CopyTarget),
     /// Open the full-screen copy target selector.
     OpenCopyPicker,
+    /// Open the follow-up queue overlay for the active run.
+    OpenQueueOverlay,
+    /// Open the background task and subagent overlay.
+    OpenTasksOverlay,
 }
 
 /// Deferred async commands that require `AppServices` access.
@@ -74,12 +84,11 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
     let cmd_name = parts.first().copied().unwrap_or("");
     let args = parts.get(1).copied().unwrap_or("");
 
-    // Resolve alias via registry.
-    let resolved = crate::tui::commands::registry::CommandRegistry::new()
-        .resolve_alias(cmd_name)
-        .to_string();
+    // Resolve alias via the shared registry (built once per process).
+    let resolved =
+        crate::tui::commands::registry::CommandRegistry::shared().resolve_alias(cmd_name);
 
-    match resolved.as_str() {
+    match resolved {
         "quit" | "exit" => CommandResult::Quit,
 
         "clear" => {
@@ -100,6 +109,12 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             CommandResult::Ok(None)
         }
 
+        // Session-destroying commands are refused mid-turn: the active run
+        // owns the session until it finishes or is cancelled (Esc).
+        "new" | "reset" if state.is_streaming => {
+            CommandResult::Error(STREAMING_ACTIVE_MESSAGE.into())
+        }
+
         "new" => {
             // Reset chat state for a fresh session.
             // Actual DB session creation is deferred to first message (lazy).
@@ -109,6 +124,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             state.current_session_id = None;
             state.user_message_count = 0;
             state.prompt_template_status = crate::tui::state::PromptTemplateStatus::Default;
+            state.follow_up_queue.clear();
             CommandResult::NewSession
         }
 
@@ -249,6 +265,10 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             Err(message) => CommandResult::Error(message),
         },
 
+        "queue" => CommandResult::OpenQueueOverlay,
+
+        "tasks" => CommandResult::OpenTasksOverlay,
+
         _ => CommandResult::Error(format!(
             "Unknown command: /{cmd_name}. Type /help for a list."
         )),
@@ -268,7 +288,7 @@ fn mode_command(mode: TurnMode, args: &str) -> CommandResult {
 
 /// Generate the full help text.
 fn generate_help_text() -> String {
-    let reg = crate::tui::commands::registry::CommandRegistry::new();
+    let reg = crate::tui::commands::registry::CommandRegistry::shared();
     let mut text = String::from("Available commands:\n\n");
 
     let mut current_category = None;
@@ -291,7 +311,7 @@ fn generate_help_text() -> String {
 
 /// Generate help for a specific command.
 fn generate_command_help(cmd_name: &str) -> String {
-    let reg = crate::tui::commands::registry::CommandRegistry::new();
+    let reg = crate::tui::commands::registry::CommandRegistry::shared();
     match reg.find(cmd_name) {
         Some(cmd) => {
             let alias_str = cmd
@@ -299,7 +319,7 @@ fn generate_command_help(cmd_name: &str) -> String {
                 .map(|a| format!(" (alias: /{a})"))
                 .unwrap_or_default();
             format!(
-                "/{} {}\n{}{}\\n\nCategory: {}",
+                "/{} {}\n{}{}\nCategory: {}",
                 cmd.name,
                 cmd.args,
                 cmd.description,
@@ -357,6 +377,25 @@ fn generate_shortcuts_text() -> String {
     );
 
     text.push_str(
+        "  [Follow-up Queue]
+    /queue                    Open the queue for the active run
+    Up / Down / j / k         Navigate queued follow-ups
+    d                         Delete the selected follow-up
+    s                         Steer (or un-steer) the selected follow-up
+    Esc / q                   Close the queue\n\n",
+    );
+
+    text.push_str(
+        "  [Tasks]
+    /tasks                    Show background tasks and subagents
+    Up / Down / j / k         Navigate tasks and subagents
+    Enter                     Toggle the selected task's output
+    d                         Kill the selected background task
+    r                         Refresh the list
+    Esc / q                   Close the overlay\n\n",
+    );
+
+    text.push_str(
         "  [Mouse]
     Click                     Focus conversation or input
     Scroll wheel              Scroll chat history
@@ -387,7 +426,7 @@ mod tests {
     // T-TUI-04-04: /clear clears messages.
     #[test]
     fn test_clear_command() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.messages.push(ChatMessage {
             role: MessageRole::User,
             content: "hello".into(),
@@ -413,7 +452,7 @@ mod tests {
     // T-TUI-04-05: /new resets state and returns NewSession.
     #[test]
     fn test_new_command() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.current_session_id = Some("old-session".into());
         state.user_message_count = 5;
         state.messages.push(ChatMessage {
@@ -440,40 +479,88 @@ mod tests {
         assert!(state.selected_tool.is_none());
     }
 
+    #[test]
+    fn test_new_command_clears_follow_up_queue_projection() {
+        let mut state = AppState::new();
+        state.current_session_id = Some("old-session".into());
+        state.follow_up_queue.push(y_service::FollowUpMessage::new(
+            "queued follow-up".to_string(),
+        ));
+
+        let result = execute("new", &mut state);
+
+        assert!(matches!(result, CommandResult::NewSession));
+        assert!(state.follow_up_queue.is_empty());
+    }
+
+    #[test]
+    fn test_queue_command_opens_queue_overlay() {
+        let mut state = AppState::new();
+        assert!(matches!(
+            execute("queue", &mut state),
+            CommandResult::OpenQueueOverlay
+        ));
+    }
+
+    #[test]
+    fn test_tasks_command_opens_tasks_overlay() {
+        let mut state = AppState::new();
+        assert!(matches!(
+            execute("tasks", &mut state),
+            CommandResult::OpenTasksOverlay
+        ));
+    }
+
     // T-TUI-04-06: unknown command returns error.
     #[test]
     fn test_unknown_command() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("foobar", &mut state);
         assert!(matches!(result, CommandResult::Error(ref msg) if msg.contains("Unknown")));
     }
 
     #[test]
     fn test_quit_command() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("quit", &mut state);
         assert!(matches!(result, CommandResult::Quit));
     }
 
     #[test]
     fn test_quit_alias() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("q", &mut state);
         assert!(matches!(result, CommandResult::Quit));
     }
 
     #[test]
     fn test_help_command() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("help", &mut state);
         assert!(matches!(result, CommandResult::Ok(None)));
         assert_eq!(state.messages.len(), 1);
         assert!(state.messages[0].content.contains("Available commands"));
     }
 
+    // T-TUI-04-08: /help <command> shows details without a literal "\n".
+    #[test]
+    fn test_help_specific_command_has_no_literal_backslash_n() {
+        let mut state = AppState::new();
+        let result = execute("help new", &mut state);
+        assert!(matches!(result, CommandResult::Ok(None)));
+        let content = &state.messages[0].content;
+        assert!(content.contains("/new [label]"), "got: {content}");
+        assert!(content.contains("(alias: /n)"), "got: {content}");
+        assert!(content.contains("Category: Session"), "got: {content}");
+        assert!(
+            !content.contains("\\n"),
+            "help output must not contain a literal backslash-n: {content}"
+        );
+    }
+
     #[test]
     fn test_status_command() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("status", &mut state);
         assert!(matches!(result, CommandResult::Ok(None)));
         assert_eq!(state.messages.len(), 1);
@@ -482,7 +569,7 @@ mod tests {
 
     #[test]
     fn test_reset_command() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.messages.push(ChatMessage {
             role: MessageRole::User,
             content: "msg".into(),
@@ -499,10 +586,44 @@ mod tests {
         assert!(state.messages.is_empty());
     }
 
+    // /new and /reset destroy the visible transcript, so they are refused
+    // while a response is streaming (Esc cancels the turn first).
+    #[test]
+    fn test_new_and_reset_refused_while_streaming() {
+        for command in ["new", "reset"] {
+            let mut state = AppState::new();
+            state.is_streaming = true;
+            state.messages.push(ChatMessage {
+                role: MessageRole::User,
+                content: "in-flight turn".into(),
+                timestamp: Utc::now(),
+                is_streaming: false,
+                is_cancelled: false,
+                reasoning_content: String::new(),
+                reasoning_complete: false,
+                tool_calls: Vec::new(),
+                segments: Vec::new(),
+            });
+
+            let result = execute(command, &mut state);
+
+            assert!(
+                matches!(result, CommandResult::Error(ref msg)
+                    if msg.contains("Wait for the current turn to finish or press Esc to cancel it")),
+                "/{command} must be refused while streaming: {result:?}"
+            );
+            assert_eq!(
+                state.messages.len(),
+                1,
+                "/{command} must not clear the transcript mid-turn"
+            );
+        }
+    }
+
     // T-TUI-04-07: async commands return Async variant.
     #[test]
     fn test_list_returns_async() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("list", &mut state);
         assert!(matches!(
             result,
@@ -512,7 +633,7 @@ mod tests {
 
     #[test]
     fn test_switch_requires_args() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("switch", &mut state);
         assert!(matches!(result, CommandResult::Error(_)));
 
@@ -524,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_delete_requires_args() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("delete", &mut state);
         assert!(matches!(result, CommandResult::Error(_)));
 
@@ -536,7 +657,7 @@ mod tests {
 
     #[test]
     fn test_branch_optional_label() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("branch", &mut state);
         assert!(matches!(
             result,
@@ -551,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_compact_returns_async() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("compact", &mut state);
         assert!(matches!(
             result,
@@ -561,7 +682,7 @@ mod tests {
 
     #[test]
     fn test_stats_returns_async() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("stats", &mut state);
         assert!(matches!(
             result,
@@ -571,7 +692,7 @@ mod tests {
 
     #[test]
     fn test_model_no_args_returns_async_none() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("model", &mut state);
         assert!(matches!(
             result,
@@ -581,7 +702,7 @@ mod tests {
 
     #[test]
     fn test_model_with_args_returns_async_some() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("model deepseek", &mut state);
         assert!(matches!(
             result,
@@ -591,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_agent_returns_async() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         let result = execute("agent", &mut state);
         assert!(matches!(
             result,
@@ -601,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_resume_supports_picker_and_direct_target() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         assert!(matches!(
             execute("resume", &mut state),
             CommandResult::Async(AsyncCommand::ResumeSession(None))
@@ -615,7 +736,7 @@ mod tests {
 
     #[test]
     fn test_prompt_supports_picker_and_direct_target() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         assert!(matches!(
             execute("prompt", &mut state),
             CommandResult::Async(AsyncCommand::PromptTemplate(None))
@@ -629,7 +750,7 @@ mod tests {
 
     #[test]
     fn test_goal_submits_auto_orchestrated_turn() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         assert!(matches!(
             execute("goal finish the release", &mut state),
             CommandResult::SubmitTurn { ref input, mode: TurnMode::Auto }
@@ -643,7 +764,7 @@ mod tests {
 
     #[test]
     fn test_copy_parses_precise_targets() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         assert!(matches!(
             execute("copy", &mut state),
             CommandResult::OpenCopyPicker
@@ -664,7 +785,7 @@ mod tests {
 
     #[test]
     fn test_mode_command_sets_persistent_turn_mode() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         assert!(matches!(
             execute("mode plan", &mut state),
             CommandResult::SetTurnMode(TurnMode::Plan)
@@ -677,7 +798,7 @@ mod tests {
 
     #[test]
     fn test_mode_shorthand_can_set_or_submit() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         assert!(matches!(
             execute("loop", &mut state),
             CommandResult::SetTurnMode(TurnMode::Loop)

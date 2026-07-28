@@ -16,7 +16,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::tui::panels::chat::SPINNER_FRAMES;
 use crate::tui::state::AppState;
 use crate::tui::theme::Theme;
 
@@ -32,6 +34,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // -- Left section --
     let mut left_spans: Vec<Span> = vec![Span::styled(" ", Style::default())];
 
+    // Always-on running indicator while a response streams.
+    let running_spans = build_running_spans(state, t);
+    if !running_spans.is_empty() {
+        left_spans.extend(running_spans);
+        left_spans.push(sep.clone());
+    }
+
     // Session and orchestration mode replace the persistent session sidebar.
     left_spans.push(Span::styled(
         state.current_session_label(),
@@ -44,6 +53,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     ));
     left_spans.push(sep.clone());
     left_spans.push(build_prompt_status_span(state, t));
+    if let Some(queue_span) = build_queue_status_span(state, t) {
+        left_spans.push(sep.clone());
+        left_spans.push(queue_span);
+    }
+    if let Some(bg_span) = build_bg_task_status_span(state, t) {
+        left_spans.push(sep.clone());
+        left_spans.push(bg_span);
+    }
+    if let Some(agents_span) = build_subagent_status_span(state, t) {
+        left_spans.push(sep.clone());
+        left_spans.push(agents_span);
+    }
     left_spans.push(sep.clone());
 
     // Model name.
@@ -78,11 +99,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     // -- Right section --
     let right_str = format!("/ commands  v{} ", state.version);
-    let right_len = right_str.len();
+    let right_len = UnicodeWidthStr::width(right_str.as_str());
 
     // Compute available width for left section.
     let total_width = area.width as usize;
-    let left_len: usize = left_spans.iter().map(|s| s.content.len()).sum();
+    // Display width, not bytes: the bar holds multibyte chars (box-drawing,
+    // em dash) that occupy a single cell but multiple bytes.
+    let left_len: usize = left_spans.iter().map(Span::width).sum();
 
     // Fill gap between left and right.
     let gap = total_width.saturating_sub(left_len + right_len);
@@ -97,7 +120,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     ));
 
     // Truncate if too wide.
-    let total_len: usize = spans.iter().map(|s| s.content.len()).sum();
+    let total_len: usize = spans.iter().map(Span::width).sum();
     if total_len > total_width && total_width > 3 {
         spans = truncate_spans(spans, total_width, t);
     }
@@ -112,6 +135,61 @@ fn build_prompt_status_span(state: &AppState, t: &Theme) -> Span<'static> {
         state.prompt_template_status.label(),
         Style::default().fg(t.active()),
     )
+}
+
+/// Build the always-on "running" segment shown while a response streams.
+///
+/// The spinner frame is driven by `state.tick_counter` (100 ms ticks) and uses
+/// the same braille frames as the chat panel's streaming header marker.
+/// Returns an empty vec when idle.
+fn build_running_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
+    if !state.is_streaming {
+        return Vec::new();
+    }
+    let frame = SPINNER_FRAMES[(state.tick_counter as usize) % SPINNER_FRAMES.len()];
+    vec![Span::styled(
+        format!("{frame} running"),
+        Style::default()
+            .fg(t.streaming_dot())
+            .add_modifier(Modifier::BOLD),
+    )]
+}
+
+/// Build the follow-up queue depth segment (`queue: N`), visible only while
+/// the service-side queue holds pending messages.
+fn build_queue_status_span(state: &AppState, t: &Theme) -> Option<Span<'static>> {
+    let depth = state.follow_up_queue.len();
+    if depth == 0 {
+        return None;
+    }
+    Some(Span::styled(
+        format!("queue: {depth}"),
+        Style::default().fg(t.active()),
+    ))
+}
+
+/// Build the background task count segment (`bg: N`), visible only while
+/// background shell tasks are running.
+fn build_bg_task_status_span(state: &AppState, t: &Theme) -> Option<Span<'static>> {
+    if state.bg_task_count == 0 {
+        return None;
+    }
+    Some(Span::styled(
+        format!("bg: {}", state.bg_task_count),
+        Style::default().fg(t.active()),
+    ))
+}
+
+/// Build the running subagent count segment (`agents: N`), visible only
+/// while one or more subagents are active.
+fn build_subagent_status_span(state: &AppState, t: &Theme) -> Option<Span<'static>> {
+    if state.active_subagent_count == 0 {
+        return None;
+    }
+    Some(Span::styled(
+        format!("agents: {}", state.active_subagent_count),
+        Style::default().fg(t.active()),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -173,22 +251,22 @@ fn build_context_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
     ]
 }
 
-/// Truncate a span list to fit within `max_width` characters, appending an
-/// ellipsis if truncation occurs.
+/// Truncate a span list to fit within `max_width` display columns, appending
+/// an ellipsis if truncation occurs.
 fn truncate_spans(spans: Vec<Span<'static>>, max_width: usize, t: &Theme) -> Vec<Span<'static>> {
     let max = max_width.saturating_sub(1);
     let mut acc = 0;
     let mut result: Vec<Span<'static>> = Vec::new();
 
     for span in spans {
-        let slen = span.content.len();
-        if acc + slen <= max {
+        let span_width = span.width();
+        if acc + span_width <= max {
             result.push(span);
-            acc += slen;
+            acc += span_width;
         } else {
             let remaining = max - acc;
             if remaining > 0 {
-                let partial: String = span.content.chars().take(remaining).collect();
+                let partial = take_display_width(&span.content, remaining);
                 result.push(Span::styled(partial, span.style));
             }
             result.push(Span::styled("\u{2026}", Style::default().fg(t.muted())));
@@ -196,6 +274,22 @@ fn truncate_spans(spans: Vec<Span<'static>>, max_width: usize, t: &Theme) -> Vec
         }
     }
 
+    result
+}
+
+/// Take the longest char prefix whose display width fits within `max_width`.
+/// A wide char that would straddle the boundary is dropped entirely.
+fn take_display_width(value: &str, max_width: usize) -> String {
+    let mut width = 0;
+    let mut result = String::new();
+    for ch in value.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        width += ch_width;
+        result.push(ch);
+    }
     result
 }
 
@@ -255,14 +349,14 @@ mod tests {
 
     #[test]
     fn test_build_context_spans_zero_window() {
-        let state = AppState::default();
+        let state = AppState::new();
         let spans = build_context_spans(&state, &state.theme);
         assert!(spans.is_empty(), "no spans when window is 0 and no tokens");
     }
 
     #[test]
     fn test_prompt_template_status_span_is_always_visible() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         assert_eq!(
             build_prompt_status_span(&state, &state.theme)
                 .content
@@ -283,8 +377,116 @@ mod tests {
     }
 
     #[test]
+    fn test_running_spans_hidden_when_idle() {
+        let state = AppState::new();
+        assert!(build_running_spans(&state, &state.theme).is_empty());
+    }
+
+    #[test]
+    fn test_running_spans_show_spinner_frame_and_follow_tick() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+
+        let spans = build_running_spans(&state, &state.theme);
+        assert_eq!(spans.len(), 1);
+        let text = spans[0].content.as_ref();
+        assert!(text.contains("running"), "expected running label: {text}");
+        assert!(
+            text.contains(SPINNER_FRAMES[0]),
+            "tick 0 must show the first frame: {text}"
+        );
+
+        // The animation tick drives the frame.
+        state.tick_counter = 1;
+        let spans = build_running_spans(&state, &state.theme);
+        let text = spans[0].content.as_ref();
+        assert!(text.contains(SPINNER_FRAMES[1]), "tick 1 frame: {text}");
+
+        // Frame index wraps around the frame table.
+        state.tick_counter = SPINNER_FRAMES.len() as u64;
+        let spans = build_running_spans(&state, &state.theme);
+        assert!(spans[0].content.contains(SPINNER_FRAMES[0]));
+    }
+
+    fn follow_up(text: &str) -> y_service::FollowUpMessage {
+        y_service::FollowUpMessage {
+            id: format!("fu-{text}"),
+            text: text.to_string(),
+            created_at: 0,
+            status: y_service::FollowUpStatus::default(),
+        }
+    }
+
+    #[test]
+    fn test_queue_status_span_hidden_when_queue_empty() {
+        let state = AppState::new();
+        assert!(build_queue_status_span(&state, &state.theme).is_none());
+    }
+
+    #[test]
+    fn test_queue_status_span_shows_pending_count() {
+        let mut state = AppState::new();
+        state.follow_up_queue.push(follow_up("one"));
+        state.follow_up_queue.push(follow_up("two"));
+
+        let span = build_queue_status_span(&state, &state.theme).unwrap();
+        assert_eq!(span.content.as_ref(), "queue: 2");
+    }
+
+    #[test]
+    fn test_bg_and_agents_spans_hidden_at_zero() {
+        let state = AppState::new();
+        assert!(build_bg_task_status_span(&state, &state.theme).is_none());
+        assert!(build_subagent_status_span(&state, &state.theme).is_none());
+    }
+
+    #[test]
+    fn test_bg_task_span_shows_running_count() {
+        let mut state = AppState::new();
+        state.bg_task_count = 2;
+
+        let span = build_bg_task_status_span(&state, &state.theme).unwrap();
+        assert_eq!(span.content.as_ref(), "bg: 2");
+        // The subagent segment stays hidden while its count is zero.
+        assert!(build_subagent_status_span(&state, &state.theme).is_none());
+    }
+
+    #[test]
+    fn test_subagent_span_shows_running_count() {
+        let mut state = AppState::new();
+        state.active_subagent_count = 3;
+
+        let span = build_subagent_status_span(&state, &state.theme).unwrap();
+        assert_eq!(span.content.as_ref(), "agents: 3");
+        // The background task segment stays hidden while its count is zero.
+        assert!(build_bg_task_status_span(&state, &state.theme).is_none());
+    }
+
+    #[test]
+    fn test_bg_and_agents_spans_shown_together() {
+        let mut state = AppState::new();
+        state.bg_task_count = 1;
+        state.active_subagent_count = 4;
+
+        assert_eq!(
+            build_bg_task_status_span(&state, &state.theme)
+                .unwrap()
+                .content
+                .as_ref(),
+            "bg: 1"
+        );
+        assert_eq!(
+            build_subagent_status_span(&state, &state.theme)
+                .unwrap()
+                .content
+                .as_ref(),
+            "agents: 4"
+        );
+    }
+
+    #[test]
     fn test_build_context_spans_with_usage() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.context_window = 128_000;
         state.last_input_tokens = 64_000;
         let spans = build_context_spans(&state, &state.theme);
@@ -307,7 +509,7 @@ mod tests {
 
     #[test]
     fn test_context_color_coding() {
-        let mut state = AppState::default();
+        let mut state = AppState::new();
         state.context_window = 100;
         let t = &state.theme;
 
@@ -343,5 +545,42 @@ mod tests {
             total_chars <= 10,
             "truncated result too long: {total_chars} chars",
         );
+    }
+
+    #[test]
+    fn test_truncate_spans_keeps_multibyte_bar_that_fits() {
+        let t = Theme::default();
+        // 12 box-drawing chars: 12 display cells but 36 bytes. A byte-counted
+        // implementation would wrongly truncate this.
+        let bar: String = "\u{2501}".repeat(6) + &"\u{2500}".repeat(6);
+        let spans = vec![Span::raw(bar.clone())];
+        let result = truncate_spans(spans, 13, &t);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].content.as_ref(), bar.as_str());
+    }
+
+    #[test]
+    fn test_truncate_spans_cuts_by_display_width() {
+        let t = Theme::default();
+        // Each CJK char is 2 cells wide; width budget 7 allows 3 chars (6
+        // cells) plus the ellipsis.
+        let spans = vec![Span::raw("你好世界再")];
+        let result = truncate_spans(spans, 7, &t);
+        let total_width: usize = result.iter().map(Span::width).sum();
+        assert!(
+            total_width <= 7,
+            "truncated result exceeds width budget: {total_width}"
+        );
+        assert_eq!(result[0].content.as_ref(), "你好世");
+        assert_eq!(result[1].content.as_ref(), "\u{2026}");
+    }
+
+    #[test]
+    fn test_take_display_width_drops_straddling_wide_char() {
+        // 3 ASCII chars (3 cells) + 1 CJK char (2 cells) = 5 cells; a budget
+        // of 4 must drop the wide char instead of splitting it.
+        assert_eq!(take_display_width("abc好de", 4), "abc");
+        assert_eq!(take_display_width("abc好de", 5), "abc好");
+        assert_eq!(take_display_width("ab", 10), "ab");
     }
 }
