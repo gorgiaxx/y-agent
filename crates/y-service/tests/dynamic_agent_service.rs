@@ -188,7 +188,9 @@ async fn regression_proposal_approval_rolls_back_and_persists_decision() {
         success_rate_drop: 0.8,
         recommendation: "rollback".to_string(),
     };
-    let first = service.propose_regressions(&[finding.clone()]).unwrap();
+    let first = service
+        .propose_regressions(std::slice::from_ref(&finding))
+        .unwrap();
     let repeated = service.propose_regressions(&[finding]).unwrap();
     assert_eq!(first.len(), 1);
     assert_eq!(repeated[0].id, first[0].id);

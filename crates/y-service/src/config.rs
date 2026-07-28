@@ -387,12 +387,12 @@ api_key_env = "OPENAI_API_KEY"
         let configured_dir = TempDir::new().unwrap();
         std::fs::write(
             configured_dir.path().join("background_auto_wake.toml"),
-            r#"
+            r"
 enabled = true
 max_wakes_per_hour = 4
 cooldown_secs = 90
 allow_during_orchestration = true
-"#,
+",
         )
         .unwrap();
 

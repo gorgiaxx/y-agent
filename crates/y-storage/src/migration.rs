@@ -618,7 +618,12 @@ mod tests {
             .unwrap()
             .filter_map(Result::ok)
             .map(|entry| entry.file_name().to_string_lossy().to_string())
-            .filter(|name| name.starts_with("legacy.db.incompatible-") && name.ends_with(".bak"))
+            .filter(|name| {
+                name.starts_with("legacy.db.incompatible-")
+                    && std::path::Path::new(name)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("bak"))
+            })
             .collect();
         assert_eq!(
             backup_files.len(),

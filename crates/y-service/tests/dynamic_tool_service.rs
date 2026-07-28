@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -174,7 +175,6 @@ async fn rejects_registry_name_collisions_and_recovers_a_truncated_tail() {
         .unwrap();
     drop(service);
 
-    use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
         .append(true)
         .open(&journal)

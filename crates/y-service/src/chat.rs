@@ -3033,13 +3033,15 @@ mod tests {
 
     async fn make_test_container() -> (crate::container::ServiceContainer, tempfile::TempDir) {
         let tmpdir = tempfile::TempDir::new().unwrap();
-        let mut config = crate::config::ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: tmpdir.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let config = crate::config::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: tmpdir.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let container = crate::container::ServiceContainer::from_config(&config)
             .await

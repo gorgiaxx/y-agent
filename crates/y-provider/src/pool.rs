@@ -842,7 +842,7 @@ mod tests {
     }
 
     impl FlakyProvider {
-        fn new(
+        fn new_with_counter(
             id: &str,
             fail_times: usize,
             transient: bool,
@@ -977,11 +977,11 @@ mod tests {
     fn test_config() -> ProviderPoolConfig {
         ProviderPoolConfig {
             providers: vec![],
-            proxy: Default::default(),
+            proxy: crate::config::ProxyConfig::default(),
             default_freeze_duration_secs: 30,
             max_freeze_duration_secs: 3600,
             health_check_interval_secs: 60,
-            selection_strategy: Default::default(),
+            selection_strategy: crate::router::SelectionStrategy::default(),
             max_global_concurrency: None,
             // Disabled by default so existing routing/freeze/failover tests keep
             // their immediate-failure semantics; retry tests opt in explicitly.
@@ -1175,7 +1175,7 @@ mod tests {
     #[tokio::test]
     async fn test_retry_recovers_transient_error_before_freeze() {
         // Fails twice with a 504, succeeds on the third attempt.
-        let (provider, calls) = FlakyProvider::new("flaky", 2, true);
+        let (provider, calls) = FlakyProvider::new_with_counter("flaky", 2, true);
         let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(3));
 
         let result = pool.chat_completion(&test_request(), &gen_route()).await;
@@ -1194,7 +1194,7 @@ mod tests {
     #[tokio::test]
     async fn test_retry_exhausted_then_reports_error_and_freezes() {
         // Always fails with a 504; only 2 retries allowed.
-        let (provider, calls) = FlakyProvider::new("down", usize::MAX, true);
+        let (provider, calls) = FlakyProvider::new_with_counter("down", usize::MAX, true);
         let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(2));
 
         let result = pool.chat_completion(&test_request(), &gen_route()).await;
@@ -1210,7 +1210,7 @@ mod tests {
     #[tokio::test]
     async fn test_non_retryable_error_is_not_retried() {
         // Auth failures are permanent — must not be retried even with retries left.
-        let (provider, calls) = FlakyProvider::new("auth", usize::MAX, false);
+        let (provider, calls) = FlakyProvider::new_with_counter("auth", usize::MAX, false);
         let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(5));
 
         let result = pool.chat_completion(&test_request(), &gen_route()).await;
@@ -1228,7 +1228,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_disabled_makes_single_attempt() {
-        let (provider, calls) = FlakyProvider::new("flaky", usize::MAX, true);
+        let (provider, calls) = FlakyProvider::new_with_counter("flaky", usize::MAX, true);
         // test_config() has retry disabled.
         let pool = ProviderPoolImpl::from_providers(vec![provider], &test_config());
 
@@ -1245,7 +1245,7 @@ mod tests {
     #[tokio::test]
     async fn test_stream_retry_recovers_transient_error_before_freeze() {
         // Stream establishment fails once with a 504, then succeeds.
-        let (provider, calls) = FlakyProvider::new("flaky-stream", 1, true);
+        let (provider, calls) = FlakyProvider::new_with_counter("flaky-stream", 1, true);
         let pool = ProviderPoolImpl::from_providers(vec![provider], &fast_retry_config(3));
 
         let result = pool

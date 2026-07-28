@@ -8,13 +8,15 @@ use y_service::{ServiceConfig, ServiceContainer};
 #[tokio::test]
 async fn planner_bounds_cross_asset_recommendations_and_sets_creation_guard() {
     let dir = tempdir().unwrap();
-    let mut config = ServiceConfig::default();
-    config.storage = y_storage::StorageConfig {
-        db_path: ":memory:".to_string(),
-        pool_size: 1,
-        wal_enabled: false,
-        transcript_dir: dir.path().join("transcripts"),
-        ..y_storage::StorageConfig::default()
+    let config = ServiceConfig {
+        storage: y_storage::StorageConfig {
+            db_path: ":memory:".to_string(),
+            pool_size: 1,
+            wal_enabled: false,
+            transcript_dir: dir.path().join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        },
+        ..Default::default()
     };
     let container = ServiceContainer::from_config(&config).await.unwrap();
     let timestamp = now();

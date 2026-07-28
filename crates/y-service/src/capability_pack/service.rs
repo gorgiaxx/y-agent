@@ -798,13 +798,15 @@ mod tests {
         let root = temp.path();
         let config_dir = root.join("config");
         std::fs::create_dir_all(config_dir.join("prompts")).expect("prompts dir");
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: root.join("state.db").display().to_string(),
-            pool_size: 1,
-            wal_enabled: true,
-            transcript_dir: root.join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let mut config = ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: root.join("state.db").display().to_string(),
+                pool_size: 1,
+                wal_enabled: true,
+                transcript_dir: root.join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         config.prompts_dir = Some(config_dir.join("prompts"));
         config.skills_dir = Some(config_dir.join("skills"));
@@ -904,8 +906,8 @@ sha256 = "{resource_hash}"
             description: None,
             provenance: CapabilityPackProvenance {
                 source_kind: CapabilityPackSourceKind::LocalDirectory,
-                pack_root: root.clone(),
                 manifest_path: root.join("capability-pack.toml"),
+                pack_root: root,
                 manifest_sha256: hash_entry(&resource_path).expect("manifest stand-in hash"),
             },
             resources: vec![ValidatedCapabilityResource {
@@ -921,7 +923,7 @@ sha256 = "{resource_hash}"
         executable_pack_with_config(
             id,
             root,
-            y_tools::McpServerConfig {
+            &y_tools::McpServerConfig {
                 name: "pack-mcp".to_string(),
                 transport: "stdio".to_string(),
                 command: Some("must-not-start".to_string()),
@@ -963,8 +965,8 @@ command = "/bin/true"
             description: None,
             provenance: CapabilityPackProvenance {
                 source_kind: CapabilityPackSourceKind::LocalDirectory,
-                pack_root: root.clone(),
                 manifest_path: root.join("capability-pack.toml"),
+                pack_root: root,
                 manifest_sha256: hash_entry(&resource_path).expect("manifest stand-in hash"),
             },
             resources: vec![ValidatedCapabilityResource {
@@ -997,8 +999,8 @@ root_markers = ["pack.toml"]
             description: None,
             provenance: CapabilityPackProvenance {
                 source_kind: CapabilityPackSourceKind::LocalDirectory,
-                pack_root: root.clone(),
                 manifest_path: root.join("capability-pack.toml"),
+                pack_root: root,
                 manifest_sha256: hash_entry(&resource_path).expect("manifest stand-in hash"),
             },
             resources: vec![ValidatedCapabilityResource {
@@ -1032,7 +1034,7 @@ root_markers = ["pack.toml"]
     fn executable_pack_with_config(
         id: &str,
         root: PathBuf,
-        config: y_tools::McpServerConfig,
+        config: &y_tools::McpServerConfig,
     ) -> ValidatedCapabilityPack {
         executable_pack_with_config_version(id, "1.0.0", root, config)
     }
@@ -1041,11 +1043,11 @@ root_markers = ["pack.toml"]
         id: &str,
         version: &str,
         root: PathBuf,
-        config: y_tools::McpServerConfig,
+        config: &y_tools::McpServerConfig,
     ) -> ValidatedCapabilityPack {
         let resource_path = root.join("pack-mcp.toml");
         std::fs::create_dir_all(&root).expect("pack root");
-        std::fs::write(&resource_path, toml::to_string(&config).expect("MCP TOML"))
+        std::fs::write(&resource_path, toml::to_string(config).expect("MCP TOML"))
             .expect("MCP declaration");
         ValidatedCapabilityPack {
             schema_version: 1,
@@ -1054,8 +1056,8 @@ root_markers = ["pack.toml"]
             description: None,
             provenance: CapabilityPackProvenance {
                 source_kind: CapabilityPackSourceKind::LocalDirectory,
-                pack_root: root.clone(),
                 manifest_path: root.join("capability-pack.toml"),
+                pack_root: root,
                 manifest_sha256: hash_entry(&resource_path).expect("manifest stand-in hash"),
             },
             resources: vec![ValidatedCapabilityResource {
@@ -1092,7 +1094,7 @@ while IFS= read -r _; do :; done
             id,
             version,
             root,
-            y_tools::McpServerConfig {
+            &y_tools::McpServerConfig {
                 name: "pack-mcp".to_string(),
                 transport: "stdio".to_string(),
                 command: Some("/bin/sh".to_string()),
@@ -1903,13 +1905,15 @@ while IFS= read -r _; do :; done
         let root = temp.path();
         let config_dir = root.join("config");
         std::fs::create_dir_all(config_dir.join("prompts")).expect("prompts dir");
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: root.join("state.db").display().to_string(),
-            pool_size: 1,
-            wal_enabled: true,
-            transcript_dir: root.join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let mut config = ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: root.join("state.db").display().to_string(),
+                pool_size: 1,
+                wal_enabled: true,
+                transcript_dir: root.join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         config.prompts_dir = Some(config_dir.join("prompts"));
         config.skills_dir = Some(config_dir.join("skills"));
@@ -2039,13 +2043,15 @@ while IFS= read -r _; do :; done
         let root = temp.path();
         let config_dir = root.join("config");
         std::fs::create_dir_all(config_dir.join("prompts")).expect("prompts dir");
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: root.join("state.db").display().to_string(),
-            pool_size: 1,
-            wal_enabled: true,
-            transcript_dir: root.join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let mut config = ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: root.join("state.db").display().to_string(),
+                pool_size: 1,
+                wal_enabled: true,
+                transcript_dir: root.join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         config.prompts_dir = Some(config_dir.join("prompts"));
         config.skills_dir = Some(config_dir.join("skills"));

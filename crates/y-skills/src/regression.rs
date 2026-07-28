@@ -162,7 +162,7 @@ mod tests {
         }
     }
 
-    /// T-SK-S6-07: Regression detected when success_rate drops >15%.
+    /// T-SK-S6-07: Regression detected when `success_rate` drops >15%.
     #[test]
     fn test_regression_success_rate_drop() {
         let detector = RegressionDetector::new();

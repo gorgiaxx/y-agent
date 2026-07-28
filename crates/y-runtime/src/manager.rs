@@ -671,7 +671,7 @@ mod tests {
         let mgr = Arc::new(RuntimeManager::with_concurrency(config, None, 1));
 
         // Exhaust the semaphore manually.
-        let _permit = mgr.concurrency_semaphore.acquire().await.unwrap();
+        let permit = mgr.concurrency_semaphore.acquire().await.unwrap();
 
         // The next execute should timeout waiting for a permit.
         // Use a very short span for the test.
@@ -691,7 +691,7 @@ mod tests {
         assert_eq!(mgr.available_permits(), 0);
 
         // Release and let the spawned task finish.
-        drop(_permit);
+        drop(permit);
         let result = handle.await.unwrap();
         assert!(result.is_ok());
     }
@@ -765,7 +765,7 @@ mod tests {
             ..RuntimeConfig::default()
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            mgr.reload_config(new_config)
+            mgr.reload_config(new_config);
         }));
         assert!(result.is_ok());
         assert_eq!(mgr.backend(), RuntimeBackend::Docker);

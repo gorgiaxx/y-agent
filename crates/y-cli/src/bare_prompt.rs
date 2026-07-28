@@ -133,10 +133,10 @@ mod tests {
     #[test]
     fn new_subcommands_recognized() {
         assert_eq!(
-            resolve(&vec!["print".to_string(), "hi".to_string()]),
+            resolve(&["print".to_string(), "hi".to_string()]),
             vec!["print".to_string(), "hi".to_string()]
         );
-        assert_eq!(resolve(&vec!["rpc".to_string()]), vec!["rpc".to_string()]);
+        assert_eq!(resolve(&["rpc".to_string()]), vec!["rpc".to_string()]);
     }
 
     #[test]

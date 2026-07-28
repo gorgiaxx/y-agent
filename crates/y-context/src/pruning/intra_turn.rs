@@ -815,9 +815,9 @@ mod tests {
 
     /// Regression: `FileRead` on a missing path returns `"error": "not found"`,
     /// which matches `ERROR_PATTERNS`. The previous implementation pruned the
-    /// tool_result AND the parent assistant (the `tool_call`), so the LLM
+    /// `tool_result` AND the parent assistant (the `tool_call`), so the LLM
     /// reissued the same `FileRead` on the next iteration and entered an
-    /// infinite loop. A tool_result whose parent assistant has `tool_calls`
+    /// infinite loop. A `tool_result` whose parent assistant has `tool_calls`
     /// must be preserved regardless of content heuristics.
     #[test]
     fn test_no_pruning_for_error_tool_results_with_tool_calls() {

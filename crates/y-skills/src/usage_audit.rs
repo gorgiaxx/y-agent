@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(metrics["essay-writer"].actual_usage_count, 0);
     }
 
-    /// T-SK-S7-02: Low usage_rate triggers ObsoleteRule detection.
+    /// T-SK-S7-02: Low `usage_rate` triggers `ObsoleteRule` detection.
     #[test]
     fn test_low_usage_rate_obsolete() {
         let audit = SkillUsageAudit::new();

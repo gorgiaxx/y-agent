@@ -2024,13 +2024,15 @@ mod tests {
     #[tokio::test]
     async fn registered_tool_deny_is_not_bypassed_by_full_access() {
         let temp = tempfile::TempDir::new().unwrap();
-        let mut service_config = crate::ServiceConfig::default();
-        service_config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: temp.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let service_config = crate::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: temp.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let container = ServiceContainer::from_config(&service_config)
             .await
@@ -2246,13 +2248,15 @@ mod tests {
         let workspace = temp.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(workspace.join("tracked.txt"), "before").unwrap();
-        let mut service_config = crate::ServiceConfig::default();
-        service_config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: temp.path().join("state/transcripts"),
-            ..y_storage::StorageConfig::default()
+        let service_config = crate::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: temp.path().join("state/transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let container = ServiceContainer::from_config(&service_config)
             .await
@@ -2288,13 +2292,15 @@ mod tests {
         std::fs::create_dir_all(&workspace).unwrap();
         let file = workspace.join("tracked.txt");
         std::fs::write(&file, "before").unwrap();
-        let mut service_config = crate::ServiceConfig::default();
-        service_config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: temp.path().join("state/transcripts"),
-            ..y_storage::StorageConfig::default()
+        let service_config = crate::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: temp.path().join("state/transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let container = ServiceContainer::from_config(&service_config)
             .await
@@ -2393,14 +2399,18 @@ mod tests {
 
     #[tokio::test]
     async fn dynamic_agent_tools_persist_activate_and_inherit_creator_limits() {
+        use y_diagnostics::TraceStore;
+
         let temp = tempfile::TempDir::new().unwrap();
-        let mut service_config = crate::ServiceConfig::default();
-        service_config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: temp.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let service_config = crate::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: temp.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let mut container = ServiceContainer::from_config(&service_config)
             .await
@@ -2497,7 +2507,6 @@ mod tests {
         .await
         .unwrap();
 
-        use y_diagnostics::TraceStore;
         let trace_store = container.diagnostics.store();
         for version in [1_u64, 2] {
             for sample in 0..5 {
@@ -2684,14 +2693,16 @@ mod tests {
                 root_path: None,
             })
             .unwrap();
-        let mut service_config = crate::ServiceConfig::default();
-        service_config.skills_dir = Some(skills_dir.clone());
-        service_config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: temp.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let service_config = crate::ServiceConfig {
+            skills_dir: Some(skills_dir.clone()),
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: temp.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let mut container = ServiceContainer::from_config(&service_config)
             .await
@@ -2813,13 +2824,15 @@ mod tests {
     #[tokio::test]
     async fn dynamic_tool_lifecycle_dispatch_is_config_gated_and_registry_synchronized() {
         let temp = tempfile::TempDir::new().unwrap();
-        let mut disabled_config = crate::ServiceConfig::default();
-        disabled_config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: temp.path().join("disabled-transcripts"),
-            ..y_storage::StorageConfig::default()
+        let disabled_config = crate::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: temp.path().join("disabled-transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let disabled = ServiceContainer::from_config(&disabled_config)
             .await
@@ -2867,15 +2880,17 @@ mod tests {
         .is_err());
 
         let enabled_temp = tempfile::TempDir::new().unwrap();
-        let mut enabled_config = crate::ServiceConfig::default();
-        enabled_config.tools.allow_dynamic_tools = true;
-        enabled_config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: enabled_temp.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let mut enabled_config = crate::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: enabled_temp.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
+        enabled_config.tools.allow_dynamic_tools = true;
         let enabled = ServiceContainer::from_config(&enabled_config)
             .await
             .unwrap();

@@ -1025,7 +1025,7 @@ mod tests {
                 assert_eq!(name, "my_schema");
                 assert!(strict);
             }
-            _ => panic!("expected JsonSchema"),
+            ResponsesTextFormat::JsonObject => panic!("expected JsonSchema"),
         }
     }
 }

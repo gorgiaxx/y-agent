@@ -574,7 +574,7 @@ fn tool_aliases(name: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use y_core::runtime::RuntimeCapability;
-    use y_core::tool::{ToolCategory, ToolType};
+    use y_core::tool::{ToolCategory, ToolRegistry, ToolType};
 
     const TEST_TOML: &str = r#"
 [categories.file]
@@ -632,7 +632,6 @@ tools = ["ToolSearch"]
             ("WorkflowRun", "Execute a reusable workflow"),
         ] {
             let def = sample_def(name, desc);
-            use y_core::tool::ToolRegistry;
             registry.register(def).await.unwrap();
         }
 
@@ -761,7 +760,6 @@ tools = ["ToolSearch"]
     #[tokio::test]
     async fn keyword_search_returns_unified_bm25_ranking() {
         let (registry, taxonomy, activation_set) = setup().await;
-        use y_core::tool::ToolRegistry;
         for index in 0..20 {
             registry
                 .register(sample_def(
@@ -800,7 +798,6 @@ tools = ["ToolSearch"]
     #[tokio::test]
     async fn exact_workflow_id_outranks_cross_type_lexical_matches() {
         let (registry, taxonomy, activation_set) = setup().await;
-        use y_core::tool::ToolRegistry;
         registry
             .register(sample_def(
                 "ReleaseNotes",
@@ -973,7 +970,6 @@ tools = ["ToolSearch"]
         let (registry, taxonomy, activation_set) = setup().await;
 
         // Register MCP tools.
-        use y_core::tool::ToolRegistry;
         for (name, desc) in &[
             ("mcp_github_search_repos", "Search GitHub repositories"),
             ("mcp_github_list_issues", "List GitHub issues"),

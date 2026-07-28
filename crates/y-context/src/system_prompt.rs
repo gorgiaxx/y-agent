@@ -1093,8 +1093,10 @@ mod tests {
     #[tokio::test]
     async fn test_compute_cache_key_changes_with_mode() {
         use y_prompt::PromptContext;
-        let mut ctx = PromptContext::default();
-        ctx.agent_mode = "general".into();
+        let mut ctx = PromptContext {
+            agent_mode: "general".into(),
+            ..Default::default()
+        };
         let key1 = compute_cache_key(&ctx, "");
 
         ctx.agent_mode = "plan".into();

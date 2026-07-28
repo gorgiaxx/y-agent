@@ -2039,8 +2039,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_creates_all_services() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let result = ServiceContainer::from_config(&config).await;
         assert!(result.is_ok(), "wiring with default config should succeed");
@@ -2060,8 +2062,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_registers_middleware() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         let _tool_guard = sc.guardrail_manager.tool_guard();
@@ -2197,8 +2201,10 @@ mod tests {
         // without calling attach_event_senders, so subsequent requests on the
         // new pool fired MetricsEvents with no listener and the SQL-backed
         // observability panel showed zero in/out tokens until restart.
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
         let container = ServiceContainer::from_config(&config).await.unwrap();
 
         let make_pool_config = |id: &str| y_provider::config::ProviderPoolConfig {
@@ -2308,8 +2314,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_registers_context_providers() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         assert_eq!(sc.context_pipeline.provider_count(), 4);
@@ -2352,8 +2360,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_container_initializes_embedding_enabled_knowledge_wiring() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let mut config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
         config.knowledge.embedding_enabled = true;
         config.knowledge.embedding_api_key = "test-key".to_string();
 
@@ -2369,8 +2379,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_skill_ingestion_service_factory() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let sc = ServiceContainer::from_config(&config).await.unwrap();
         let registry = Arc::new(RwLock::new(y_skills::SkillRegistryImpl::new()));
@@ -2380,8 +2392,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_background_services_starts_scheduler() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let sc = Arc::new(ServiceContainer::from_config(&config).await.unwrap());
         assert!(!sc.scheduler_manager.is_running());
@@ -2416,8 +2430,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_session_state_removes_only_matching_pending_requests() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
         let sc = ServiceContainer::from_config(&config).await.unwrap();
 
         let target_session = SessionId("session-a".to_string());
@@ -2488,7 +2504,7 @@ mod tests {
             result_schema: None,
             category: y_core::tool::ToolCategory::Shell,
             tool_type: y_core::tool::ToolType::BuiltIn,
-            capabilities: Default::default(),
+            capabilities: y_core::runtime::RuntimeCapability::default(),
             is_dangerous: false,
         }
     }

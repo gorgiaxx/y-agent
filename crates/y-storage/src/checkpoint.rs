@@ -389,7 +389,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_write_pending_then_read_committed_is_none() {
-        let (_pool, storage) = setup().await;
+        let (pool, storage) = setup().await;
         let wf_id = WorkflowId::from_string("wf-1");
         let sess_id = SessionId::from_string("sess-1");
 
@@ -398,7 +398,7 @@ mod tests {
             r"INSERT INTO session_metadata (id, root_id, path, session_type, transcript_path)
               VALUES ('sess-1', 'sess-1', '[]', 'main', '/tmp/t.jsonl')",
         )
-        .execute(&_pool)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -418,7 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_commit_makes_state_durable() {
-        let (_pool, storage) = setup().await;
+        let (pool, storage) = setup().await;
         let wf_id = WorkflowId::from_string("wf-1");
         let sess_id = SessionId::from_string("sess-1");
 
@@ -426,7 +426,7 @@ mod tests {
             r"INSERT INTO session_metadata (id, root_id, path, session_type, transcript_path)
               VALUES ('sess-1', 'sess-1', '[]', 'main', '/tmp/t.jsonl')",
         )
-        .execute(&_pool)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -444,7 +444,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_overwrite_pending() {
-        let (_pool, storage) = setup().await;
+        let (pool, storage) = setup().await;
         let wf_id = WorkflowId::from_string("wf-1");
         let sess_id = SessionId::from_string("sess-1");
 
@@ -452,7 +452,7 @@ mod tests {
             r"INSERT INTO session_metadata (id, root_id, path, session_type, transcript_path)
               VALUES ('sess-1', 'sess-1', '[]', 'main', '/tmp/t.jsonl')",
         )
-        .execute(&_pool)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -475,7 +475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_set_interrupted() {
-        let (_pool, storage) = setup().await;
+        let (pool, storage) = setup().await;
         let wf_id = WorkflowId::from_string("wf-1");
         let sess_id = SessionId::from_string("sess-1");
 
@@ -483,7 +483,7 @@ mod tests {
             r"INSERT INTO session_metadata (id, root_id, path, session_type, transcript_path)
               VALUES ('sess-1', 'sess-1', '[]', 'main', '/tmp/t.jsonl')",
         )
-        .execute(&_pool)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -507,7 +507,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_set_completed() {
-        let (_pool, storage) = setup().await;
+        let (pool, storage) = setup().await;
         let wf_id = WorkflowId::from_string("wf-1");
         let sess_id = SessionId::from_string("sess-1");
 
@@ -515,7 +515,7 @@ mod tests {
             r"INSERT INTO session_metadata (id, root_id, path, session_type, transcript_path)
               VALUES ('sess-1', 'sess-1', '[]', 'main', '/tmp/t.jsonl')",
         )
-        .execute(&_pool)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -533,7 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_set_failed() {
-        let (_pool, storage) = setup().await;
+        let (pool, storage) = setup().await;
         let wf_id = WorkflowId::from_string("wf-1");
         let sess_id = SessionId::from_string("sess-1");
 
@@ -541,7 +541,7 @@ mod tests {
             r"INSERT INTO session_metadata (id, root_id, path, session_type, transcript_path)
               VALUES ('sess-1', 'sess-1', '[]', 'main', '/tmp/t.jsonl')",
         )
-        .execute(&_pool)
+        .execute(&pool)
         .await
         .unwrap();
 
@@ -559,7 +559,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_checkpoint_prune_old_steps() {
-        let (_pool, storage) = setup().await;
+        let (pool, storage) = setup().await;
         let wf_id = WorkflowId::from_string("wf-1");
         let sess_id = SessionId::from_string("sess-1");
 
@@ -567,7 +567,7 @@ mod tests {
             r"INSERT INTO session_metadata (id, root_id, path, session_type, transcript_path)
               VALUES ('sess-1', 'sess-1', '[]', 'main', '/tmp/t.jsonl')",
         )
-        .execute(&_pool)
+        .execute(&pool)
         .await
         .unwrap();
 

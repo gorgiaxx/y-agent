@@ -968,7 +968,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("too_many_tokens.txt");
         let mut f = std::fs::File::create(&file_path).unwrap();
-        writeln!(f, "{}", "x".repeat((MAX_OUTPUT_TOKENS as usize + 1) * 4)).unwrap();
+        writeln!(f, "{}", "x".repeat((MAX_OUTPUT_TOKENS + 1) * 4)).unwrap();
 
         let tool = FileReadTool::new();
         let input = make_input(serde_json::json!({

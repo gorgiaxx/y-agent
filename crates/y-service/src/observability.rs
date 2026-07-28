@@ -317,8 +317,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_snapshot_returns_valid_structure() {
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig::in_memory();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let container = ServiceContainer::from_config(&config)
             .await

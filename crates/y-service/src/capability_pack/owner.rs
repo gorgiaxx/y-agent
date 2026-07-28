@@ -832,13 +832,15 @@ mod tests {
         let root = temp.path();
         let config_dir = root.join("config");
         std::fs::create_dir_all(config_dir.join("prompts")).expect("prompts dir");
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: root.join("state.db").display().to_string(),
-            pool_size: 1,
-            wal_enabled: true,
-            transcript_dir: root.join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let mut config = ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: root.join("state.db").display().to_string(),
+                pool_size: 1,
+                wal_enabled: true,
+                transcript_dir: root.join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         config.prompts_dir = Some(config_dir.join("prompts"));
         config.skills_dir = Some(config_dir.join("skills"));

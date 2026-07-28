@@ -234,7 +234,7 @@ mod tests {
         assert!((metrics.avg_duration_ms - 2000.0).abs() < 1.0);
     }
 
-    /// T-SK-S6-01: Enhanced SkillMetrics tracks usage_rate.
+    /// T-SK-S6-01: Enhanced `SkillMetrics` tracks `usage_rate`.
     #[test]
     fn test_skill_metrics_usage_rate() {
         let mut metrics = SkillMetrics::default();
@@ -249,7 +249,7 @@ mod tests {
         assert_eq!(metrics.actual_usage_count, 2);
     }
 
-    /// T-SK-S6-01b: avg_token_usage tracks running average.
+    /// T-SK-S6-01b: `avg_token_usage` tracks running average.
     #[test]
     fn test_skill_metrics_avg_token_usage() {
         let mut metrics = SkillMetrics::default();

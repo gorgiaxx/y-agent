@@ -665,7 +665,7 @@ mod tests {
             result_schema: None,
             category: y_core::tool::ToolCategory::Shell,
             tool_type: y_core::tool::ToolType::BuiltIn,
-            capabilities: Default::default(),
+            capabilities: y_core::runtime::RuntimeCapability::default(),
             is_dangerous: false,
         }
     }

@@ -311,7 +311,7 @@ mod tests {
         // Rate limited now.
         match limiter.check("test_tool").await {
             RateLimitResult::Denied { .. } => {}
-            _ => panic!("expected denied"),
+            RateLimitResult::Allowed => panic!("expected denied"),
         }
 
         // Remove the limit.

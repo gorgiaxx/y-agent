@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn test_compute_cost_zero() {
-        assert_eq!(CostService::compute_cost(0, 0), 0.0);
+        assert!(CostService::compute_cost(0, 0).abs() < 1e-6);
     }
 
     #[test]

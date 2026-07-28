@@ -579,13 +579,13 @@ mod tests {
         assert_eq!(plan.total_runs, 2);
         assert_eq!(plan.successful_runs, 1);
         assert_eq!(plan.failed_runs, 1);
-        assert_eq!(plan.success_rate, 0.5);
-        assert_eq!(plan.average_tokens, 95.0);
+        assert!((plan.success_rate - 0.5).abs() < f64::EPSILON);
+        assert!((plan.average_tokens - 95.0).abs() < f64::EPSILON);
         assert!((plan.average_cost_usd - 0.3).abs() < f64::EPSILON);
 
         let loop_mode = metrics.iter().find(|metric| metric.mode == "loop").unwrap();
         assert_eq!(loop_mode.total_runs, 1);
-        assert_eq!(loop_mode.success_rate, 1.0);
+        assert!((loop_mode.success_rate - 1.0).abs() < f64::EPSILON);
     }
 
     #[tokio::test]
@@ -620,11 +620,11 @@ mod tests {
 
         let version_one = metrics.iter().find(|metric| metric.version == 1).unwrap();
         assert_eq!(version_one.total_runs, 2);
-        assert_eq!(version_one.success_rate, 1.0);
+        assert!((version_one.success_rate - 1.0).abs() < f64::EPSILON);
 
         let version_two = metrics.iter().find(|metric| metric.version == 2).unwrap();
         assert_eq!(version_two.total_runs, 2);
-        assert_eq!(version_two.success_rate, 0.5);
+        assert!((version_two.success_rate - 0.5).abs() < f64::EPSILON);
     }
 
     #[tokio::test]
@@ -785,14 +785,18 @@ mod tests {
                 assert_eq!(agent_name, "chat-turn");
                 assert_eq!(tool_calls_requested, &vec!["Plan".to_string()]);
             }
-            other => panic!("expected llm response, got {other:?}"),
+            other @ HistoricalEntry::ToolResult { .. } => {
+                panic!("expected llm response, got {other:?}")
+            }
         }
 
         match &entries[1] {
             HistoricalEntry::LlmResponse { agent_name, .. } => {
                 assert_eq!(agent_name, "subagent:plan-writer");
             }
-            other => panic!("expected llm response, got {other:?}"),
+            other @ HistoricalEntry::ToolResult { .. } => {
+                panic!("expected llm response, got {other:?}")
+            }
         }
     }
 }

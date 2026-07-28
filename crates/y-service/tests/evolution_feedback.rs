@@ -64,7 +64,7 @@ async fn feedback_is_durable_idempotent_and_updates_asset_evidence() {
     assert_eq!(metrics[0].total_runs, 1);
     assert_eq!(metrics[0].failed_runs, 1);
     assert_eq!(metrics[0].successful_runs, 0);
-    assert_eq!(metrics[0].success_rate, 0.0);
+    assert!(metrics[0].success_rate.abs() < 1e-6);
 }
 
 #[tokio::test]
@@ -138,5 +138,5 @@ async fn repeated_negative_feedback_can_trigger_a_dynamic_agent_regression() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].baseline_version, 1);
     assert_eq!(findings[0].current_version, 2);
-    assert_eq!(findings[0].success_rate_drop, 1.0);
+    assert!((findings[0].success_rate_drop - 1.0).abs() < 1e-6);
 }

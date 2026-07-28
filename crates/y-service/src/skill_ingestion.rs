@@ -818,7 +818,7 @@ mod tests {
     #[derive(Debug)]
     struct MockDelegator {
         response: String,
-        /// Files to write to `output_dir`: relative_path -> content.
+        /// Files to write to `output_dir`: `relative_path` -> content.
         output_files: HashMap<String, String>,
     }
 

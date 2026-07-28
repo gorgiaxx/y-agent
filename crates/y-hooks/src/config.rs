@@ -299,16 +299,17 @@ mod tests {
 
     #[test]
     fn test_handler_config_command() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            handlers: Vec<HandlerConfig>,
+        }
+
         let toml = r#"
             [[handlers]]
             type = "command"
             command = "/usr/local/bin/hook.sh"
         "#;
 
-        #[derive(Deserialize)]
-        struct Wrapper {
-            handlers: Vec<HandlerConfig>,
-        }
         let w: Wrapper = toml::from_str(toml).unwrap();
         assert_eq!(w.handlers.len(), 1);
         assert!(
@@ -319,6 +320,11 @@ mod tests {
 
     #[test]
     fn test_handler_config_http() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            handlers: Vec<HandlerConfig>,
+        }
+
         let toml = r#"
             [[handlers]]
             type = "http"
@@ -326,10 +332,6 @@ mod tests {
             headers = { Authorization = "Bearer $MY_TOKEN" }
         "#;
 
-        #[derive(Deserialize)]
-        struct Wrapper {
-            handlers: Vec<HandlerConfig>,
-        }
         let w: Wrapper = toml::from_str(toml).unwrap();
         assert!(
             matches!(&w.handlers[0], HandlerConfig::Http { url, headers, .. }
@@ -339,6 +341,11 @@ mod tests {
 
     #[test]
     fn test_handler_config_prompt() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            handlers: Vec<HandlerConfig>,
+        }
+
         let toml = r#"
             [[handlers]]
             type = "prompt"
@@ -346,10 +353,6 @@ mod tests {
             model = "haiku"
         "#;
 
-        #[derive(Deserialize)]
-        struct Wrapper {
-            handlers: Vec<HandlerConfig>,
-        }
         let w: Wrapper = toml::from_str(toml).unwrap();
         assert!(
             matches!(&w.handlers[0], HandlerConfig::Prompt { prompt, model }
@@ -359,16 +362,17 @@ mod tests {
 
     #[test]
     fn test_handler_config_agent() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            handlers: Vec<HandlerConfig>,
+        }
+
         let toml = r#"
             [[handlers]]
             type = "agent"
             prompt = "Verify safety: $ARGUMENTS"
         "#;
 
-        #[derive(Deserialize)]
-        struct Wrapper {
-            handlers: Vec<HandlerConfig>,
-        }
         let w: Wrapper = toml::from_str(toml).unwrap();
         assert!(
             matches!(&w.handlers[0], HandlerConfig::Agent { prompt, model }
@@ -487,8 +491,10 @@ mod tests {
 
     #[test]
     fn test_validate_allowed_hook_dirs() {
-        let mut config = HookConfig::default();
-        config.allowed_hook_dirs = vec!["/home/user/.y-agent/hooks".into()];
+        let mut config = HookConfig {
+            allowed_hook_dirs: vec!["/home/user/.y-agent/hooks".into()],
+            ..Default::default()
+        };
         config.hook_handlers.insert(
             "pre_tool_execute".into(),
             vec![HookHandlerGroupConfig {

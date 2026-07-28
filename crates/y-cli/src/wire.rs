@@ -67,8 +67,10 @@ mod tests {
     // T-CLI-002-01: test_wire_creates_all_services
     #[tokio::test]
     async fn test_wire_creates_all_services() {
-        let mut config = YAgentConfig::default();
-        config.storage = y_service::config_types::StorageConfig::in_memory();
+        let config = YAgentConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let result = wire(&config).await;
         assert!(result.is_ok(), "wiring with default config should succeed");
@@ -88,8 +90,10 @@ mod tests {
     // T-CLI-002-02: test_wire_registers_middleware
     #[tokio::test]
     async fn test_wire_registers_middleware() {
-        let mut config = YAgentConfig::default();
-        config.storage = y_service::config_types::StorageConfig::in_memory();
+        let config = YAgentConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let services = wire(&config).await.unwrap();
         let _tool_guard = services.guardrail_manager.tool_guard();
@@ -104,8 +108,10 @@ mod tests {
     // T-CLI-002-05: test_wire_registers_context_providers
     #[tokio::test]
     async fn test_wire_registers_context_providers() {
-        let mut config = YAgentConfig::default();
-        config.storage = y_service::config_types::StorageConfig::in_memory();
+        let config = YAgentConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
 
         let services = wire(&config).await.unwrap();
         assert_eq!(services.context_pipeline.provider_count(), 5);

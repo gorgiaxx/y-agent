@@ -159,13 +159,15 @@ mod tests {
 
     async fn make_test_container() -> (ServiceContainer, TempDir) {
         let tmpdir = tempfile::TempDir::new().expect("tempdir");
-        let mut config = ServiceConfig::default();
-        config.storage = y_storage::StorageConfig {
-            db_path: ":memory:".to_string(),
-            pool_size: 1,
-            wal_enabled: false,
-            transcript_dir: tmpdir.path().join("transcripts"),
-            ..y_storage::StorageConfig::default()
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: tmpdir.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
         };
         let container = ServiceContainer::from_config(&config)
             .await

@@ -6,13 +6,15 @@ use y_service::{ServiceConfig, ServiceContainer, ToolRuntimeEventService};
 async fn setup() -> ServiceContainer {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.keep();
-    let mut config = ServiceConfig::default();
-    config.storage = y_storage::StorageConfig {
-        db_path: root.join("state.db").display().to_string(),
-        pool_size: 1,
-        wal_enabled: true,
-        transcript_dir: root.join("transcripts"),
-        ..y_storage::StorageConfig::default()
+    let config = ServiceConfig {
+        storage: y_storage::StorageConfig {
+            db_path: root.join("state.db").display().to_string(),
+            pool_size: 1,
+            wal_enabled: true,
+            transcript_dir: root.join("transcripts"),
+            ..y_storage::StorageConfig::default()
+        },
+        ..Default::default()
     };
     ServiceContainer::from_config(&config).await.unwrap()
 }

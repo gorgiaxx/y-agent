@@ -180,17 +180,21 @@ mod tests {
 
     #[test]
     fn test_engine_disabled() {
-        let mut config = PruningConfig::default();
-        config.enabled = false;
+        let config = PruningConfig {
+            enabled: false,
+            ..PruningConfig::default()
+        };
         let engine = PruningEngine::with_config(config);
         assert!(!engine.config().enabled);
     }
 
     #[test]
     fn test_engine_with_config() {
-        let mut config = PruningConfig::default();
-        config.token_threshold = 500;
-        config.strategy = PruningStrategyMode::RetryOnly;
+        let config = PruningConfig {
+            token_threshold: 500,
+            strategy: PruningStrategyMode::RetryOnly,
+            ..PruningConfig::default()
+        };
         let engine = PruningEngine::with_config(config);
         assert_eq!(engine.config().token_threshold, 500);
     }

@@ -63,6 +63,36 @@ async fn resumable_sessions_are_strictly_scoped_to_the_canonical_workspace() {
     assert_eq!(listed[0].id, session_a.id);
 }
 
+#[tokio::test]
+async fn resume_target_resolution_does_not_escape_the_current_workspace() {
+    let container = container().await;
+    let workspace_a = tempfile::tempdir().unwrap();
+    let workspace_b = tempfile::tempdir().unwrap();
+    let session_b = SessionService::create_session(
+        &container.session_manager,
+        CreateSessionOptions {
+            parent_id: None,
+            session_type: SessionType::Main,
+            agent_id: None,
+            title: Some("workspace-b".into()),
+        },
+        workspace_b.path(),
+    )
+    .await
+    .unwrap();
+
+    let resolved = SessionService::resolve_resume_target(
+        &container.session_manager,
+        workspace_a.path(),
+        None,
+        &session_b.id.to_string()[..8],
+    )
+    .await
+    .unwrap();
+
+    assert!(resolved.is_none());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn canonical_workspace_aliases_share_resume_history() {

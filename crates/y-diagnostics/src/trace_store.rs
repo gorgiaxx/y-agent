@@ -500,9 +500,9 @@ mod tests {
         let observation = Observation::new(trace.id, ObservationType::Generation, "target");
         let observation_id = observation.id;
         store.insert_observation(observation).await.unwrap();
-        let mut score = Score::numeric(trace.id, "quality", 1.0, ScoreSource::System);
-        score.observation_id = Some(observation_id);
-        store.insert_score(score).await.unwrap();
+        let mut quality_score = Score::numeric(trace.id, "quality", 1.0, ScoreSource::System);
+        quality_score.observation_id = Some(observation_id);
+        store.insert_score(quality_score).await.unwrap();
 
         let other_observation =
             Observation::new(other_trace.id, ObservationType::Generation, "other");

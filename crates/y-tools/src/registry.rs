@@ -494,9 +494,9 @@ mod tests {
         reg.set_check_fn(&ToolName::from_string("GatedTool"), Arc::new(|| false))
             .await;
 
-        let defs = reg.get_all_definitions().await;
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].name.as_str(), "AlwaysAvailable");
+        let definitions = reg.get_all_definitions().await;
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].name.as_str(), "AlwaysAvailable");
     }
 
     #[tokio::test]

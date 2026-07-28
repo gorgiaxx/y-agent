@@ -219,12 +219,13 @@ mod tests {
     #[test]
     fn test_stage_priorities_order() {
         use stage_priorities::*;
-        assert!(BUILD_SYSTEM_PROMPT < INJECT_BOOTSTRAP);
-        assert!(INJECT_BOOTSTRAP < INJECT_MEMORY);
-        assert!(INJECT_MEMORY < INJECT_KNOWLEDGE);
-        assert!(INJECT_KNOWLEDGE < INJECT_SKILLS);
-        assert!(INJECT_SKILLS < INJECT_TOOLS);
-        assert!(INJECT_TOOLS < LOAD_HISTORY);
-        assert!(LOAD_HISTORY < INJECT_CONTEXT_STATUS);
+        use std::hint::black_box;
+        assert!(black_box(BUILD_SYSTEM_PROMPT) < black_box(INJECT_BOOTSTRAP));
+        assert!(black_box(INJECT_BOOTSTRAP) < black_box(INJECT_MEMORY));
+        assert!(black_box(INJECT_MEMORY) < black_box(INJECT_KNOWLEDGE));
+        assert!(black_box(INJECT_KNOWLEDGE) < black_box(INJECT_SKILLS));
+        assert!(black_box(INJECT_SKILLS) < black_box(INJECT_TOOLS));
+        assert!(black_box(INJECT_TOOLS) < black_box(LOAD_HISTORY));
+        assert!(black_box(LOAD_HISTORY) < black_box(INJECT_CONTEXT_STATUS));
     }
 }

@@ -1984,7 +1984,7 @@ mod tests {
     }
 
     /// `use_max_completion_tokens = true` sends `max_completion_tokens`
-    /// instead of `max_tokens`. Required by newer OpenAI reasoning models
+    /// instead of `max_tokens`. Required by newer `OpenAI` reasoning models
     /// (o1, o3, gpt-5) which reject `max_tokens` with HTTP 400.
     #[test]
     fn request_body_uses_max_completion_tokens_when_opted_in() {
@@ -2656,7 +2656,7 @@ mod tests {
     }
 
     /// SSE comment lines / vendor keepalive frames that don't follow the
-    /// OpenAI schema must be tolerated.
+    /// `OpenAI` schema must be tolerated.
     #[tokio::test]
     async fn stream_tolerates_keepalive_frames() {
         use crate::inter_stream::InterStreamEvent;
@@ -2930,10 +2930,7 @@ mod tests {
         let body = provider.build_responses_request_body(&request, false);
         let json = serde_json::to_value(&body).unwrap();
         assert!(
-            json["tools"]
-                .as_array()
-                .map(|a| a.is_empty())
-                .unwrap_or(true),
+            json["tools"].as_array().is_none_or(std::vec::Vec::is_empty),
             "PromptBased mode must not send tools: {json}"
         );
     }

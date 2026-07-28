@@ -1014,8 +1014,7 @@ mod tests {
         let ids: Vec<&str> = results.iter().map(|r| r.chunk.id.as_str()).collect();
         assert!(
             ids.contains(&"l0") && ids.contains(&"l2"),
-            "L0 and L2 at same section_index should both appear, got {:?}",
-            ids
+            "L0 and L2 at same section_index should both appear, got {ids:?}"
         );
     }
 
@@ -1054,8 +1053,7 @@ mod tests {
         let ids: Vec<&str> = results.iter().map(|r| r.chunk.id.as_str()).collect();
         assert!(
             ids.contains(&"l0") && ids.contains(&"l2"),
-            "cross-level content dedup should preserve both L0 and L2, got {:?}",
-            ids
+            "cross-level content dedup should preserve both L0 and L2, got {ids:?}"
         );
     }
 
@@ -1320,14 +1318,14 @@ mod tests {
 
     #[test]
     fn test_cosine_similarity_empty() {
-        assert_eq!(super::cosine_similarity(&[], &[]), 0.0);
+        assert!(super::cosine_similarity(&[], &[]).abs() < 1e-6);
     }
 
     #[test]
     fn test_cosine_similarity_mismatched() {
         let a = vec![1.0, 2.0];
         let b = vec![1.0];
-        assert_eq!(super::cosine_similarity(&a, &b), 0.0);
+        assert!(super::cosine_similarity(&a, &b).abs() < 1e-6);
     }
 
     // --- Embedding-aware Search ---

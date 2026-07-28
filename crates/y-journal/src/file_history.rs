@@ -814,7 +814,7 @@ mod tests {
         // Only msg-001 and msg-003 are still valid (msg-002 was undone).
         let valid: HashSet<String> = ["msg-001", "msg-003"]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         mgr.retain_snapshots(&valid);
 
@@ -832,7 +832,7 @@ mod tests {
 
         let valid: HashSet<String> = ["msg-001", "msg-002"]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         mgr.retain_snapshots(&valid);
 
@@ -840,7 +840,7 @@ mod tests {
     }
 
     /// Reproduces the real chat flow:
-    ///   make_snapshot (prepare_turn) -> track_edit (tool dispatch) -> tool mutates file
+    ///   `make_snapshot` (`prepare_turn`) -> `track_edit` (tool dispatch) -> tool mutates file
     ///
     /// Scenario: create file (msg1), modify (msg2), modify (msg3), undo msg3.
     /// Expected: file content matches state after msg2, not msg1 or deleted.

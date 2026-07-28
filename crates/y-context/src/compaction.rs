@@ -813,8 +813,10 @@ mod tests {
 
     #[test]
     fn test_compact_custom_retain_window() {
-        let mut config = CompactionConfig::default();
-        config.retain_window = 5;
+        let config = CompactionConfig {
+            retain_window: 5,
+            ..CompactionConfig::default()
+        };
         let engine = CompactionEngine::with_config(config);
         let messages: Vec<String> = (0..10).map(|i| format!("msg {i}")).collect();
         let result = engine.compact(&messages);
@@ -851,9 +853,11 @@ mod tests {
             response: "Segment summary of conversation.".to_string(),
             should_fail: false,
         };
-        let mut config = CompactionConfig::default();
-        config.strategy = CompactionStrategy::SegmentedSummarize;
-        config.segment_size = 5;
+        let config = CompactionConfig {
+            strategy: CompactionStrategy::SegmentedSummarize,
+            segment_size: 5,
+            ..CompactionConfig::default()
+        };
         let engine = CompactionEngine::with_llm(config, Box::new(llm));
 
         let messages: Vec<String> = (0..20)
@@ -872,8 +876,10 @@ mod tests {
             response: "Summary of less important messages.".to_string(),
             should_fail: false,
         };
-        let mut config = CompactionConfig::default();
-        config.strategy = CompactionStrategy::SelectiveRetain;
+        let config = CompactionConfig {
+            strategy: CompactionStrategy::SelectiveRetain,
+            ..CompactionConfig::default()
+        };
         let engine = CompactionEngine::with_llm(config, Box::new(llm));
 
         let mut messages: Vec<String> = (0..20).map(|i| format!("message {i} short")).collect();
@@ -953,8 +959,10 @@ mod tests {
         let llm = DeterministicFailingLlm {
             calls: Arc::clone(&calls),
         };
-        let mut config = CompactionConfig::default();
-        config.max_retries = 3;
+        let config = CompactionConfig {
+            max_retries: 3,
+            ..CompactionConfig::default()
+        };
         let engine = CompactionEngine::with_llm(config, Box::new(llm));
         let messages: Vec<String> = (0..20).map(|i| format!("message {i}")).collect();
 
@@ -1009,8 +1017,10 @@ mod tests {
             response: String::new(),
             should_fail: true,
         };
-        let mut config = CompactionConfig::default();
-        config.max_retries = 2;
+        let config = CompactionConfig {
+            max_retries: 2,
+            ..CompactionConfig::default()
+        };
         let engine = CompactionEngine::with_config(config);
 
         let result = engine.call_with_retry(&llm, "test").await;

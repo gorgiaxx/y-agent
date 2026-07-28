@@ -567,8 +567,8 @@ mod tests {
         assert_eq!(meta.provider_type, ProviderType::Ollama);
         assert_eq!(meta.tags, vec!["local", "fast", "free"]);
         // Local provider has zero cost.
-        assert_eq!(meta.cost_per_1k_input, 0.0);
-        assert_eq!(meta.cost_per_1k_output, 0.0);
+        assert!((meta.cost_per_1k_input - 0.0).abs() < 1e-9);
+        assert!((meta.cost_per_1k_output - 0.0).abs() < 1e-9);
     }
 
     #[test]

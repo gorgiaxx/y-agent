@@ -892,7 +892,7 @@ mod tests {
     }
 
     /// Build a `created` agent response that declares one extracted tool.
-    fn created_response_with_tool(skill_name: &str, tool: serde_json::Value) -> String {
+    fn created_response_with_tool(skill_name: &str, tool: &serde_json::Value) -> String {
         serde_json::json!({
             "decision": "created",
             "manifest": {
@@ -932,7 +932,7 @@ mod tests {
 
         let response = created_response_with_tool(
             "ufa-secrets",
-            serde_json::json!({
+            &serde_json::json!({
                 "name": "analyze",
                 "description": "Analyze the Secrets sheet",
                 "type": "python",
@@ -968,7 +968,7 @@ mod tests {
         // No source_path: the agent wrote the script into the output dir itself.
         let response = created_response_with_tool(
             "gen-skill",
-            serde_json::json!({
+            &serde_json::json!({
                 "name": "gen",
                 "description": "Generated helper",
                 "type": "python",
@@ -1001,7 +1001,7 @@ mod tests {
 
         let response = created_response_with_tool(
             "trav",
-            serde_json::json!({
+            &serde_json::json!({
                 "name": "evil",
                 "description": "tries to escape",
                 "type": "python",

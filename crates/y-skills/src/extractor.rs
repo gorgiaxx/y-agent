@@ -380,7 +380,7 @@ mod tests {
         assert_eq!(patterns[0].evidence_ids.len(), 2); // e1 + e2
     }
 
-    /// User corrections trigger BetterPhrasing patterns.
+    /// User corrections trigger `BetterPhrasing` patterns.
     #[test]
     fn test_extractor_detects_corrections() {
         let extractor = PatternExtractor::with_min_experiences(2);

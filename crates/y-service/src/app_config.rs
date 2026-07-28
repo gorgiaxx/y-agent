@@ -814,8 +814,10 @@ log_level = "debug"
     // T-CLI-001-05: test_config_validate_catches_errors
     #[test]
     fn test_config_validate_catches_errors() {
-        let mut config = YAgentConfig::default();
-        config.log_level = "invalid".to_string();
+        let mut config = YAgentConfig {
+            log_level: "invalid".to_string(),
+            ..Default::default()
+        };
 
         let result = validate_config(&config);
         assert!(result.is_err());
@@ -914,18 +916,21 @@ log_level = "debug"
             .with_config_dir(Some(config_dir))
             .with_project_config(Some(project_path))
             .with_user_config_dir(Some(user_dir));
-        let loaded = loader.load_with_provenance().expect("override should work");
-        let config = loaded.config;
+        let load_result = loader.load_with_provenance().expect("override should work");
+        let merged_config = load_result.config;
 
         assert_eq!(
-            config.log_level, "warn",
+            merged_config.log_level, "warn",
             "project config should override config dir"
         );
-        assert_eq!(loaded.project_sources.len(), 2);
-        assert!(loaded.project_sources.iter().all(|source| source.applied));
+        assert_eq!(load_result.project_sources.len(), 2);
+        assert!(load_result
+            .project_sources
+            .iter()
+            .all(|source| source.applied));
         assert_eq!(
-            loaded.project_sources[0].workspace_path,
-            loaded.project_sources[1].workspace_path
+            load_result.project_sources[0].workspace_path,
+            load_result.project_sources[1].workspace_path
         );
     }
 

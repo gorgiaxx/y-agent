@@ -1253,7 +1253,7 @@ mod tests {
     }
 
     /// Opt-in Azure behavior: send `max_completion_tokens`, omit `max_tokens`.
-    /// Required by newer Azure-hosted OpenAI reasoning deployments.
+    /// Required by newer Azure-hosted `OpenAI` reasoning deployments.
     #[test]
     fn azure_request_body_uses_max_completion_tokens_when_opted_in() {
         let provider = AzureOpenAiProvider::new(

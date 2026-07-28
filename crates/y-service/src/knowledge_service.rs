@@ -1985,8 +1985,10 @@ mod tests {
 
     #[tokio::test]
     async fn configured_similarity_threshold_is_owned_by_the_retriever() {
-        let mut strict_config = KnowledgeConfig::default();
-        strict_config.min_similarity_threshold = 0.99;
+        let strict_config = KnowledgeConfig {
+            min_similarity_threshold: 0.99,
+            ..Default::default()
+        };
         let strict = KnowledgeService::new(strict_config);
         let handle = strict.knowledge_handle();
         index_threshold_test_chunks(&mut handle.lock().unwrap());
@@ -2002,8 +2004,10 @@ mod tests {
         assert_eq!(strict_results.len(), 1);
         assert_eq!(strict_results[0].chunk_id, "threshold-exact");
 
-        let mut permissive_config = KnowledgeConfig::default();
-        permissive_config.min_similarity_threshold = 0.0;
+        let permissive_config = KnowledgeConfig {
+            min_similarity_threshold: 0.0,
+            ..Default::default()
+        };
         let permissive = KnowledgeService::new(permissive_config);
         let permissive_handle = permissive.knowledge_handle();
         index_threshold_test_chunks(&mut permissive_handle.lock().unwrap());

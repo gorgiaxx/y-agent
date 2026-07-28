@@ -198,7 +198,7 @@ mod tests {
         }
     }
 
-    /// T-SK-S6-02: ExperienceRecord with tool_calls and TokenUsage.
+    /// T-SK-S6-02: `ExperienceRecord` with `tool_calls` and `TokenUsage`.
     #[test]
     fn test_experience_with_tool_calls() {
         let record = sample_record(Some("skill-1"), ExperienceOutcome::Success);

@@ -56,7 +56,7 @@ fn bench_tool_dispatch(c: &mut Criterion) {
         b.iter(|| {
             // Simulate lookup + validation cycle
             let tool = registry.get(black_box("tool_25")).unwrap();
-            let _name = &tool.name;
+            black_box(&tool.name);
         });
     });
 }

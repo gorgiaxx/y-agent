@@ -83,7 +83,7 @@ async fn test_request_execution_revision_delivers_feedback_once() {
 #[tokio::test]
 async fn test_plan_review_wait_is_cancelled_by_root_stop() {
     let (container, _tmpdir) = make_test_container().await;
-    let plan = make_simple_plan(vec!["t1"]);
+    let plan = make_simple_plan(&["t1"]);
     let session = SessionId("review-cancel-session".into());
     let plan_path = std::path::Path::new("/tmp/review-cancel.md");
     let (progress, _receiver) = TurnEventSender::channel();
@@ -1018,7 +1018,7 @@ fn test_build_task_dag_with_dependencies() {
             id: "task-1".into(),
             phase: 1,
             title: "Create model".into(),
-            description: "".into(),
+            description: String::new(),
             depends_on: vec![],
             status: TaskStatus::Pending,
             estimated_iterations: 10,
@@ -1029,7 +1029,7 @@ fn test_build_task_dag_with_dependencies() {
             id: "task-2".into(),
             phase: 2,
             title: "Use model in API".into(),
-            description: "".into(),
+            description: String::new(),
             depends_on: vec!["task-1".into()],
             status: TaskStatus::Pending,
             estimated_iterations: 10,
@@ -1040,7 +1040,7 @@ fn test_build_task_dag_with_dependencies() {
             id: "task-3".into(),
             phase: 3,
             title: "Independent test".into(),
-            description: "".into(),
+            description: String::new(),
             depends_on: vec![],
             status: TaskStatus::Pending,
             estimated_iterations: 10,
@@ -1074,7 +1074,7 @@ fn test_build_task_dag_detects_cycle() {
             id: "task-1".into(),
             phase: 1,
             title: "A".into(),
-            description: "".into(),
+            description: String::new(),
             depends_on: vec!["task-2".into()],
             status: TaskStatus::Pending,
             estimated_iterations: 10,
@@ -1085,7 +1085,7 @@ fn test_build_task_dag_detects_cycle() {
             id: "task-2".into(),
             phase: 2,
             title: "B".into(),
-            description: "".into(),
+            description: String::new(),
             depends_on: vec!["task-1".into()],
             status: TaskStatus::Pending,
             estimated_iterations: 10,
@@ -1103,7 +1103,7 @@ fn test_build_task_dag_detects_missing_dependency() {
         id: "task-1".into(),
         phase: 1,
         title: "A".into(),
-        description: "".into(),
+        description: String::new(),
         depends_on: vec!["nonexistent".into()],
         status: TaskStatus::Pending,
         estimated_iterations: 10,
@@ -1237,7 +1237,7 @@ fn test_repair_json_escapes_invalid_escape_in_regex() {
     let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
     assert_eq!(
         parsed["overview"].as_str().unwrap(),
-        r#"match \d+\s*\w tokens"#
+        r"match \d+\s*\w tokens"
     );
 }
 
@@ -1249,7 +1249,7 @@ fn test_repair_json_escapes_windows_path() {
     let input = r#"{"path": "C:\Users\Admin\Data"}"#;
     let repaired = repair_json(input);
     let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
-    assert_eq!(parsed["path"].as_str().unwrap(), r#"C:\Users\Admin\Data"#);
+    assert_eq!(parsed["path"].as_str().unwrap(), r"C:\Users\Admin\Data");
 }
 
 #[test]
@@ -1277,7 +1277,7 @@ fn test_repair_json_escapes_invalid_unicode_escape() {
     let input = r#"{"s": "bad \u12 escape"}"#;
     let repaired = repair_json(input);
     let parsed: serde_json::Value = serde_json::from_str(&repaired).unwrap();
-    assert_eq!(parsed["s"].as_str().unwrap(), r#"bad \u12 escape"#);
+    assert_eq!(parsed["s"].as_str().unwrap(), r"bad \u12 escape");
 }
 
 #[test]
@@ -1317,7 +1317,7 @@ fn test_repair_json_then_parse_plan_with_regex_in_description() {
     assert_eq!(plan.tasks.len(), 1);
     assert_eq!(
         plan.tasks[0].description,
-        r#"Validate with pattern \d{3}-\d{4} and \w+"#
+        r"Validate with pattern \d{3}-\d{4} and \w+"
     );
 }
 
@@ -1672,7 +1672,7 @@ fn test_is_transient_llm_error_without_provider_error_is_not_transient() {
 // Cancellation and resume detection
 // ---------------------------------------------------------------------------
 
-fn make_simple_plan(tasks: Vec<&str>) -> StructuredPlan {
+fn make_simple_plan(tasks: &[&str]) -> StructuredPlan {
     StructuredPlan {
         plan_title: "Test Plan".into(),
         plan_file: "/tmp/test-plan.md".into(),
@@ -1688,7 +1688,7 @@ fn make_simple_plan(tasks: Vec<&str>) -> StructuredPlan {
             .map(|(i, id)| PlanTask {
                 id: (*id).into(),
                 phase: i + 1,
-                title: format!("Task {}", id),
+                title: format!("Task {id}"),
                 description: String::new(),
                 depends_on: if i > 0 {
                     vec![tasks[i - 1].into()]
@@ -1707,7 +1707,7 @@ fn make_simple_plan(tasks: Vec<&str>) -> StructuredPlan {
 #[tokio::test]
 async fn test_plan_progress_reuses_owner_tool_call_id() {
     let (sender, mut receiver) = TurnEventSender::channel();
-    let plan = make_simple_plan(vec!["t1"]);
+    let plan = make_simple_plan(&["t1"]);
     let plan_path = Path::new("/tmp/test-plan.md");
 
     emit_plan_execution_progress(
@@ -1742,7 +1742,7 @@ async fn test_plan_progress_reuses_owner_tool_call_id() {
 async fn test_cancelled_plan_run_is_detectable_for_resume() {
     let (container, _tmpdir) = make_test_container().await;
     let session = SessionId("resume-session".into());
-    let plan = make_simple_plan(vec!["t1", "t2", "t3"]);
+    let plan = make_simple_plan(&["t1", "t2", "t3"]);
     let plan_json = serde_json::to_string(&plan).unwrap();
 
     container
@@ -1799,7 +1799,7 @@ async fn test_cancelled_plan_run_is_detectable_for_resume() {
 async fn test_completed_plan_run_all_tasks_done_is_not_resumable() {
     let (container, _tmpdir) = make_test_container().await;
     let session = SessionId("done-session".into());
-    let plan = make_simple_plan(vec!["t1", "t2"]);
+    let plan = make_simple_plan(&["t1", "t2"]);
     let plan_json = serde_json::to_string(&plan).unwrap();
 
     container
@@ -1853,7 +1853,7 @@ async fn test_completed_plan_run_all_tasks_done_is_not_resumable() {
 async fn test_partial_failure_run_is_resumable() {
     let (container, _tmpdir) = make_test_container().await;
     let session = SessionId("partial-session".into());
-    let plan = make_simple_plan(vec!["t1", "t2", "t3"]);
+    let plan = make_simple_plan(&["t1", "t2", "t3"]);
     let plan_json = serde_json::to_string(&plan).unwrap();
 
     container
@@ -1907,7 +1907,7 @@ fn test_cancelled_tool_error_round_trips() {
 async fn test_resume_plan_with_empty_from_task_id_invalidates_nothing() {
     let (container, _tmpdir) = make_test_container().await;
     let session = SessionId("empty-resume-session".into());
-    let plan = make_simple_plan(vec!["t1", "t2"]);
+    let plan = make_simple_plan(&["t1", "t2"]);
     let plan_json = serde_json::to_string(&plan).unwrap();
 
     container

@@ -5,7 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use y_core::runtime::{ExecutionResult, ResourceUsage, RuntimeCapability};
+use y_core::runtime::{
+    ExecutionRequest, ExecutionResult, ResourceUsage, RuntimeAdapter, RuntimeCapability,
+};
 use y_core::tool::{
     Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
 };
@@ -94,7 +96,6 @@ async fn e2e_tool_with_mock_runtime() {
         },
     );
 
-    use y_core::runtime::{ExecutionRequest, RuntimeAdapter};
     let req = ExecutionRequest {
         command: "echo hello".into(),
         args: vec![],
@@ -136,5 +137,5 @@ async fn e2e_tool_registry_simulation() {
     assert_eq!(output.content["echo"], "from registry");
 
     // Missing tool
-    assert!(tools.get("nonexistent").is_none());
+    assert!(!tools.contains_key("nonexistent"));
 }
