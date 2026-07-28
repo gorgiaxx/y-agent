@@ -631,6 +631,56 @@ Knowledge, skills, tools, and workflows have different roles:
 - Tools perform deterministic external actions.
 - Workflows coordinate reusable multi-step execution.
 
+## Typed Turn Content Boundary
+
+User turns may contain text and typed attachments. `y-core` owns the stable
+attachment/content contract, including MIME type, size, identity, and payload
+provenance. Presentation clients may acquire clipboard or file data and render
+draft chips, but they do not decide provider compatibility or encode provider
+wire formats.
+
+`y-service` validates attachment size and type, persists durable references,
+checks model capabilities before execution, and materializes provider-ready
+content for the selected attempt. Session transcripts persist bounded metadata
+and content-addressed file references rather than unbounded inline base64.
+`y-provider` adapters translate validated typed content into their native wire
+shape. Generic JSON message metadata remains a backward-compatible transport
+envelope, not the public business contract for new attachment flows.
+
+Large text pastes are presentation-layer draft fragments. The TUI may collapse
+them into atomic display tokens, but it must reconstruct the exact text before
+submitting the service-owned turn request.
+
+## Interactive TUI Boundary
+
+TUI shortcuts resolve through stable semantic action IDs and explicit contexts.
+Dispatch, visible help, footer hints, terminal fallbacks, and user overrides use
+the same registry; presentation code must not maintain a second shortcut table.
+Persistent prompt history and unfinished drafts are bounded, atomically written,
+and stored outside transcripts. Composer fragments and attachment chips remain
+presentation state until the exact turn is submitted to `y-service`.
+
+Session rename, archive, deletion, branching, pinning, and quick-slot ownership
+belong to `y-service`. The TUI may render a searchable workspace-scoped hub and
+collect confirmations, but it must not mutate session storage or hub preferences
+directly. Direct `!command` composer input also enters through a service-owned
+`ShellExec` permission preflight and runtime path; a presentation confirmation
+may satisfy `Ask`, but can never override `Deny`.
+
+## Provider Attempt Contract
+
+Provider construction resolves a versioned provider profile and model profile,
+then applies explicit user configuration as the final override. Profiles own
+wire defaults and model capabilities; adapters own authentication and protocol
+translation. Capability routing happens before sending a request.
+
+The provider pool owns same-provider retries, jitter, request/stream phase
+timeouts, the total retry budget, health accounting, and empty or interrupted
+stream reporting. `y-service` may advance to another eligible route only after
+a transient pre-output failure and only when the current turn has produced no
+visible content, reasoning, or tool result. Each attempt records provider,
+model, profile, phase, retry classification, timing, and partial-output state.
+
 ## Observability Boundary
 
 The built-in diagnostics model records traces, generations, tool calls,
