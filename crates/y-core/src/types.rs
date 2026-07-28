@@ -111,6 +111,41 @@ pub fn generate_message_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Payload provenance for a user attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum AttachmentSource {
+    /// Provider-ready inline data retained for backward-compatible clients.
+    InlineBase64 { base64_data: String },
+    /// Durable local reference owned and materialized by the service layer.
+    File { path: String },
+}
+
+/// Provider-neutral user attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    pub id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(flatten)]
+    pub source: AttachmentSource,
+}
+
+/// Ordered content in a user turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum ContentPart {
+    Text { text: String },
+    Attachment(Attachment),
+}
+
 /// A single message in a conversation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
@@ -128,6 +163,33 @@ pub struct Message {
     pub timestamp: Timestamp,
     #[serde(default)]
     pub metadata: serde_json::Value,
+}
+
+impl Message {
+    /// Decode the backward-compatible metadata envelope into typed attachments.
+    pub fn attachments(&self) -> Result<Vec<Attachment>, serde_json::Error> {
+        let Some(value) = self.metadata.get("attachments") else {
+            return Ok(Vec::new());
+        };
+        serde_json::from_value(value.clone())
+    }
+
+    /// Store typed attachments in the metadata envelope consumed by persisted
+    /// transcripts and existing clients.
+    pub fn set_attachments(&mut self, attachments: &[Attachment]) -> Result<(), serde_json::Error> {
+        if !self.metadata.is_object() {
+            self.metadata = serde_json::json!({});
+        }
+        let Some(metadata) = self.metadata.as_object_mut() else {
+            return Ok(());
+        };
+        if attachments.is_empty() {
+            metadata.remove("attachments");
+        } else {
+            metadata.insert("attachments".into(), serde_json::to_value(attachments)?);
+        }
+        Ok(())
+    }
 }
 
 /// A tool call requested by the LLM.
@@ -276,5 +338,85 @@ mod tests {
         };
 
         assert_eq!(usage.total_input_tokens(), u32::MAX);
+    }
+
+    #[test]
+    fn test_attachment_inline_payload_preserves_legacy_json_shape() {
+        let attachment = Attachment {
+            id: "image-1".into(),
+            filename: "clipboard.png".into(),
+            mime_type: "image/png".into(),
+            size: 8,
+            sha256: None,
+            width: None,
+            height: None,
+            source: AttachmentSource::InlineBase64 {
+                base64_data: "iVBORw==".into(),
+            },
+        };
+
+        let value = serde_json::to_value(&attachment).unwrap();
+
+        assert_eq!(value["base64_data"], "iVBORw==");
+        assert!(value.get("source").is_none());
+    }
+
+    #[test]
+    fn test_message_attachment_helpers_round_trip_typed_values() {
+        let attachment = Attachment {
+            id: "image-1".into(),
+            filename: "clipboard.png".into(),
+            mime_type: "image/png".into(),
+            size: 8,
+            sha256: None,
+            width: None,
+            height: None,
+            source: AttachmentSource::File {
+                path: "/tmp/clipboard.png".into(),
+            },
+        };
+        let mut message = Message {
+            message_id: generate_message_id(),
+            role: Role::User,
+            content: "inspect this".into(),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+            timestamp: now(),
+            metadata: serde_json::Value::Null,
+        };
+
+        message.set_attachments(&[attachment.clone()]).unwrap();
+
+        assert_eq!(message.attachments().unwrap(), vec![attachment]);
+        assert_eq!(
+            message.metadata["attachments"][0]["path"],
+            "/tmp/clipboard.png"
+        );
+    }
+
+    #[test]
+    fn test_content_parts_keep_text_and_attachment_order() {
+        let parts = vec![
+            ContentPart::Text {
+                text: "before".into(),
+            },
+            ContentPart::Attachment(Attachment {
+                id: "image-1".into(),
+                filename: "clipboard.png".into(),
+                mime_type: "image/png".into(),
+                size: 8,
+                sha256: None,
+                width: None,
+                height: None,
+                source: AttachmentSource::InlineBase64 {
+                    base64_data: "iVBORw==".into(),
+                },
+            }),
+        ];
+
+        let encoded = serde_json::to_value(&parts).unwrap();
+
+        assert_eq!(encoded[0]["type"], "text");
+        assert_eq!(encoded[1]["type"], "attachment");
     }
 }

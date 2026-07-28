@@ -486,6 +486,8 @@ pub trait LlmProvider: Send + Sync {
 pub struct RouteRequest {
     /// Required tags the provider must have.
     pub required_tags: Vec<String>,
+    /// Required model capabilities such as vision or image generation.
+    pub required_capabilities: Vec<ProviderCapability>,
     /// Preferred provider by ID (exact match, highest priority).
     pub preferred_provider_id: Option<ProviderId>,
     /// Preferred model (exact match, optional).
@@ -509,6 +511,8 @@ pub enum RoutePriority {
 #[derive(Debug, Clone)]
 pub struct ProviderStatus {
     pub id: ProviderId,
+    pub model: String,
+    pub profile_id: String,
     pub is_frozen: bool,
     pub frozen_since: Option<Timestamp>,
     pub thaw_at: Option<Timestamp>,
