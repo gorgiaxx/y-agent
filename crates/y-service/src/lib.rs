@@ -51,6 +51,7 @@ pub mod lsp;
 pub mod mcp_service;
 pub mod message_builder;
 pub mod observability;
+pub mod operator_shell;
 pub mod orchestrator_dispatcher;
 pub mod plan_orchestrator;
 pub mod prompt_templates;
@@ -117,6 +118,10 @@ pub use mcp_service::McpService;
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,
+};
+pub use operator_shell::{
+    OperatorShellDecision, OperatorShellError, OperatorShellOutput, OperatorShellRequest,
+    OperatorShellService,
 };
 pub use prompt_templates::{
     decode_session_prompt_config, delete_user_prompt_template, encode_session_prompt_config,

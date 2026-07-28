@@ -9,7 +9,7 @@ use y_core::provider::{
     GeneratedImage, ImageGenerationOptions, RequestMode, ThinkingConfig, ThinkingEffort,
 };
 use y_core::trust::TrustTier;
-use y_core::types::{Message, SessionId};
+use y_core::types::{Attachment, Message, SessionId};
 
 use crate::agent_service::AgentExecutionError;
 
@@ -727,6 +727,9 @@ pub struct PrepareTurnRequest {
     pub knowledge_collections: Option<Vec<String>>,
     pub thinking: Option<ThinkingConfig>,
     pub user_message_metadata: Option<serde_json::Value>,
+    /// Typed user attachments. The service serializes these into the persisted
+    /// compatibility envelope after applying attachment policy.
+    pub attachments: Vec<Attachment>,
     pub plan_mode: Option<String>,
     pub operation_mode: Option<OperationMode>,
     pub mcp_mode: Option<String>,
@@ -831,6 +834,8 @@ pub enum PrepareTurnError {
     SessionCreationFailed(String),
     #[error("failed to persist user message: {0}")]
     PersistFailed(String),
+    #[error("invalid attachment: {0}")]
+    AttachmentInvalid(String),
     #[error("failed to read transcript: {0}")]
     TranscriptReadFailed(String),
     #[error("session agent not found: {0}")]

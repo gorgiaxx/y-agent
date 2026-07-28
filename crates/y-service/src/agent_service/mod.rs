@@ -27,7 +27,7 @@ mod pruning;
 mod result;
 mod skill_evolution_tools;
 mod subagent;
-mod tool_dispatch;
+pub(crate) mod tool_dispatch;
 mod tool_handling;
 
 use uuid::Uuid;

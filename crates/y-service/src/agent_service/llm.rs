@@ -6,8 +6,8 @@ use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use y_core::provider::{
-    ChatRequest, GeneratedImage, ImageContentDelta, ProviderError, ProviderPool, RequestMode,
-    RouteRequest,
+    ChatRequest, GeneratedImage, ImageContentDelta, ProviderCapability, ProviderError,
+    ProviderPool, RequestMode, RouteRequest,
 };
 use y_core::types::ProviderId;
 
@@ -108,7 +108,26 @@ fn build_route_request_with_tags(
         preferred_provider_id: config.provider_id.as_ref().map(ProviderId::from_string),
         preferred_model: config.preferred_models.first().cloned(),
         required_tags,
+        required_capabilities: required_capabilities(config),
         ..RouteRequest::default()
+    }
+}
+
+fn required_capabilities(config: &AgentExecutionConfig) -> Vec<ProviderCapability> {
+    if config.request_mode == RequestMode::ImageGeneration {
+        return vec![ProviderCapability::ImageGeneration];
+    }
+    let has_image_attachments = config.messages.iter().any(|message| {
+        message.attachments().is_ok_and(|attachments| {
+            attachments
+                .iter()
+                .any(|attachment| attachment.mime_type.starts_with("image/"))
+        })
+    });
+    if has_image_attachments {
+        vec![ProviderCapability::Vision]
+    } else {
+        Vec::new()
     }
 }
 
@@ -145,6 +164,12 @@ pub(crate) fn resolve_preflight_context_window(
                             .iter()
                             .all(|tag| candidate.tags.contains(tag))
                     })
+                    .filter(|candidate| {
+                        route
+                            .required_capabilities
+                            .iter()
+                            .all(|capability| candidate.capabilities.contains(capability))
+                    })
                     .map(|candidate| candidate.context_window);
             }
             metadata
@@ -154,6 +179,10 @@ pub(crate) fn resolve_preflight_context_window(
                         .required_tags
                         .iter()
                         .all(|tag| candidate.tags.contains(tag))
+                        && route
+                            .required_capabilities
+                            .iter()
+                            .all(|capability| candidate.capabilities.contains(capability))
                 })
                 .map(|candidate| candidate.context_window)
                 .min()
@@ -337,40 +366,97 @@ pub(crate) async fn call_llm(
         return Err(y_core::provider::ProviderError::NoProviderAvailable { tags: vec![] });
     };
 
-    let mut last_no_provider_error = None;
+    let can_replay_turn = !request_has_current_turn_tool_result(request);
+    let mut last_route_error = None;
     let route_iter = std::iter::once(primary_route).chain(fallback_routes.iter());
-    for route in route_iter {
-        let result = if progress.is_some() {
-            call_llm_streaming(
-                pool,
-                request,
-                route,
-                progress,
-                cancel,
-                agent_name,
-                partial_out,
-            )
-            .await
-        } else {
-            call_llm_non_streaming(pool, request, route, cancel).await
-        };
+    for (route_index, route) in route_iter.enumerate() {
+        for attempt in 0..=1 {
+            tracing::info!(
+                route_index,
+                attempt = attempt + 1,
+                preferred_provider_id = ?route.preferred_provider_id,
+                preferred_model = ?route.preferred_model,
+                required_tags = ?route.required_tags,
+                required_capabilities = ?route.required_capabilities,
+                partial_output = false,
+                "starting provider route attempt"
+            );
+            let result = if progress.is_some() {
+                call_llm_streaming(
+                    pool,
+                    request,
+                    route,
+                    progress,
+                    cancel,
+                    agent_name,
+                    partial_out,
+                )
+                .await
+            } else {
+                call_llm_non_streaming(pool, request, route, cancel).await
+            };
 
-        match result {
-            Ok(response) => return Ok(response),
-            Err(error @ ProviderError::NoProviderAvailable { .. }) => {
-                last_no_provider_error = Some(error);
-                partial_out.content.clear();
-                partial_out.reasoning.clear();
+            match result {
+                Ok(response) => return Ok(response),
+                Err(error @ ProviderError::NoProviderAvailable { .. }) => {
+                    tracing::warn!(
+                        route_index,
+                        attempt = attempt + 1,
+                        error = %error,
+                        partial_output = false,
+                        "provider route unavailable"
+                    );
+                    if last_route_error.is_none() {
+                        last_route_error = Some(error);
+                    }
+                    partial_out.content.clear();
+                    partial_out.reasoning.clear();
+                    break;
+                }
+                Err(error) => {
+                    let safe_to_replay = can_replay_turn
+                        && partial_out.content.is_empty()
+                        && partial_out.reasoning.is_empty();
+                    let transient = !matches!(error, ProviderError::Cancelled)
+                        && y_provider::error_classifier::classify_provider_error(&error)
+                            .is_transient();
+                    tracing::warn!(
+                        route_index,
+                        attempt = attempt + 1,
+                        retry_reason = ?y_provider::error_classifier::classify_provider_error(&error),
+                        safe_to_replay,
+                        partial_output = !partial_out.content.is_empty()
+                            || !partial_out.reasoning.is_empty(),
+                        error = %error,
+                        "provider route attempt failed"
+                    );
+                    if safe_to_replay && transient {
+                        last_route_error = Some(error);
+                        if attempt == 0 {
+                            continue;
+                        }
+                        break;
+                    }
+                    return Err(error);
+                }
             }
-            Err(error) => return Err(error),
         }
     }
 
     Err(
-        last_no_provider_error.unwrap_or_else(|| ProviderError::NoProviderAvailable {
+        last_route_error.unwrap_or_else(|| ProviderError::NoProviderAvailable {
             tags: primary_route.required_tags.clone(),
         }),
     )
+}
+
+fn request_has_current_turn_tool_result(request: &ChatRequest) -> bool {
+    request
+        .messages
+        .iter()
+        .rev()
+        .take_while(|message| message.role != y_core::types::Role::User)
+        .any(|message| message.role == y_core::types::Role::Tool)
 }
 
 async fn call_llm_non_streaming(
@@ -628,13 +714,13 @@ mod tests {
         ImageContentDelta, ProviderCapability, ProviderError, ProviderMetadata, ProviderPool,
         ProviderStatus, ProviderType, RequestMode, RoutePriority, RouteRequest, ToolCallingMode,
     };
-    use y_core::types::{Message, ProviderId, Role, TokenUsage};
+    use y_core::types::{Attachment, AttachmentSource, Message, ProviderId, Role, TokenUsage};
 
     use y_core::provider::FinishReason;
     use y_core::types::ToolCallRequest;
 
     use super::{
-        build_route_requests, build_streaming_raw_response, call_llm,
+        build_route_request, build_route_requests, build_streaming_raw_response, call_llm,
         resolve_preflight_context_window, PartialStreamingContent, TurnEvent,
     };
     use crate::agent_service::AgentExecutionConfig;
@@ -831,6 +917,60 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct TransientThenSuccessPool {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ProviderPool for TransientThenSuccessPool {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            if self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                return Err(ProviderError::ServerError {
+                    provider: "primary".into(),
+                    message: "temporary outage".into(),
+                });
+            }
+            Ok(ChatResponse {
+                id: "response-2".into(),
+                model: "fallback-model".into(),
+                content: Some("recovered".into()),
+                reasoning_content: None,
+                tool_calls: Vec::new(),
+                usage: TokenUsage::default(),
+                finish_reason: FinishReason::Stop,
+                raw_request: None,
+                raw_response: None,
+                provider_id: Some(ProviderId::from_string("fallback")),
+                generated_images: Vec::new(),
+            })
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+            _route: &RouteRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            panic!("streaming is not used in this test")
+        }
+
+        fn report_error(&self, _provider_id: &ProviderId, _error: &ProviderError) {}
+
+        async fn provider_statuses(&self) -> Vec<ProviderStatus> {
+            Vec::new()
+        }
+
+        async fn freeze(&self, _provider_id: &ProviderId, _reason: String) {}
+
+        async fn thaw(&self, _provider_id: &ProviderId) -> Result<(), ProviderError> {
+            Ok(())
+        }
+    }
+
     fn test_request() -> ChatRequest {
         ChatRequest {
             messages: vec![Message {
@@ -894,6 +1034,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_route_requires_vision_when_history_contains_attachment() {
+        let mut config = test_execution_config();
+        config.messages[0]
+            .set_attachments(&[Attachment {
+                id: "image-1".into(),
+                filename: "clipboard.png".into(),
+                mime_type: "image/png".into(),
+                size: 8,
+                sha256: None,
+                width: None,
+                height: None,
+                source: AttachmentSource::InlineBase64 {
+                    base64_data: "iVBORw==".into(),
+                },
+            }])
+            .unwrap();
+
+        let route = build_route_request(&config);
+
+        assert_eq!(
+            route.required_capabilities,
+            vec![ProviderCapability::Vision]
+        );
+    }
+
+    #[test]
+    fn test_route_does_not_require_vision_for_text_attachment() {
+        let mut config = test_execution_config();
+        config.messages[0]
+            .set_attachments(&[Attachment {
+                id: "file-1".into(),
+                filename: "notes.txt".into(),
+                mime_type: "text/plain".into(),
+                size: 5,
+                sha256: None,
+                width: None,
+                height: None,
+                source: AttachmentSource::InlineBase64 {
+                    base64_data: "aGVsbG8=".into(),
+                },
+            }])
+            .unwrap();
+
+        let route = build_route_request(&config);
+
+        assert!(route.required_capabilities.is_empty());
+    }
+
     #[tokio::test]
     async fn test_call_llm_falls_back_to_general_tags_when_translation_provider_missing() {
         let pool = RecordingPool::default();
@@ -919,6 +1108,83 @@ mod tests {
             routes.as_slice(),
             &[vec!["translation".to_string()], vec!["general".to_string()]]
         );
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_retries_route_after_safe_pre_output_provider_failure() {
+        let pool = TransientThenSuccessPool::default();
+        let request = test_request();
+        let routes = [RouteRequest::default()];
+
+        let (response, _) = call_llm(
+            &pool,
+            &request,
+            &routes,
+            None,
+            None,
+            "chat-turn",
+            &mut PartialStreamingContent::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.content.as_deref(), Some("recovered"));
+        assert_eq!(pool.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_does_not_retry_after_partial_output() {
+        let pool = TransientThenSuccessPool::default();
+        let request = test_request();
+        let routes = [RouteRequest::default()];
+        let mut partial = PartialStreamingContent {
+            content: "already shown".into(),
+            reasoning: String::new(),
+        };
+
+        let result = call_llm(
+            &pool,
+            &request,
+            &routes,
+            None,
+            None,
+            "chat-turn",
+            &mut partial,
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProviderError::ServerError { .. })));
+        assert_eq!(pool.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_call_llm_does_not_retry_after_current_turn_tool_result() {
+        let pool = TransientThenSuccessPool::default();
+        let mut request = test_request();
+        request.messages.push(Message {
+            message_id: "msg-tool".into(),
+            role: Role::Tool,
+            content: "side effect completed".into(),
+            tool_call_id: Some("call-1".into()),
+            tool_calls: vec![],
+            timestamp: chrono::Utc::now(),
+            metadata: serde_json::Value::Null,
+        });
+        let routes = [RouteRequest::default()];
+
+        let result = call_llm(
+            &pool,
+            &request,
+            &routes,
+            None,
+            None,
+            "chat-turn",
+            &mut PartialStreamingContent::default(),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ProviderError::ServerError { .. })));
+        assert_eq!(pool.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

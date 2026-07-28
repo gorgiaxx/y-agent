@@ -13,15 +13,19 @@
 //! so that sub-agents (A2A) share the same execution path. `ChatService` is now
 //! a thin session-management wrapper.
 
+use std::fmt::Write as _;
+use std::path::Path;
 use std::time::Instant;
 
+use base64::Engine as _;
+use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
 use y_agent::agent::definition::AgentDefinition;
 use y_context::AssembledContext;
 use y_core::provider::{RequestMode, ThinkingConfig, ToolCallingMode};
 use y_core::session::{ChatMessageRecord, ChatMessageStatus, ChatMessageStore, SessionNode};
-use y_core::types::{Message, Role, SessionId};
+use y_core::types::{Attachment, Message, Role, SessionId};
 use y_skills::experience::{
     EvidenceEntry, EvidenceProvenance, ExperienceOutcome, TokenUsage as SkillTokenUsage,
     ToolCallRecord as SkillToolCallRecord,
@@ -66,7 +70,128 @@ struct ResolvedTurnConfig {
     mcp_servers: Vec<String>,
     working_directory: Option<String>,
 }
+
+fn attachment_extension(mime_type: &str) -> &'static str {
+    match mime_type.to_ascii_lowercase().as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "application/pdf" => "pdf",
+        "text/plain" => "txt",
+        _ => "bin",
+    }
+}
+
 impl ChatService {
+    fn build_user_message_metadata(
+        skills: &[String],
+        extra: Option<&serde_json::Value>,
+        request_mode: RequestMode,
+        attachments: &[Attachment],
+    ) -> serde_json::Value {
+        let mut metadata = serde_json::Map::new();
+        if !skills.is_empty() {
+            metadata.insert("skills".into(), serde_json::json!(skills));
+        }
+        if let Some(extra) = extra.and_then(serde_json::Value::as_object) {
+            for (key, value) in extra {
+                metadata.insert(key.clone(), value.clone());
+            }
+        }
+        if !attachments.is_empty() {
+            metadata.insert("attachments".into(), serde_json::json!(attachments));
+        }
+        if request_mode != RequestMode::TextChat {
+            metadata.insert(
+                "request_mode".into(),
+                serde_json::to_value(request_mode).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        if metadata.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::Object(metadata)
+        }
+    }
+
+    async fn materialize_attachments(
+        data_dir: &Path,
+        session_id: &SessionId,
+        attachments: Vec<Attachment>,
+    ) -> Result<Vec<Attachment>, String> {
+        const MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
+
+        if attachments.is_empty() {
+            return Ok(Vec::new());
+        }
+        let directory = data_dir.join("attachments").join(session_id.as_str());
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .map_err(|error| format!("could not create attachment directory: {error}"))?;
+        let mut persisted = Vec::with_capacity(attachments.len());
+        for mut attachment in attachments {
+            let bytes = match &attachment.source {
+                y_core::types::AttachmentSource::InlineBase64 { base64_data } => {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(base64_data)
+                        .map_err(|error| {
+                            format!(
+                                "attachment '{}' is not valid base64: {error}",
+                                attachment.filename
+                            )
+                        })?
+                }
+                y_core::types::AttachmentSource::File { path } => {
+                    tokio::fs::read(path).await.map_err(|error| {
+                        format!(
+                            "could not read attachment '{}': {error}",
+                            attachment.filename
+                        )
+                    })?
+                }
+            };
+            if bytes.len() > MAX_ATTACHMENT_BYTES {
+                return Err(format!(
+                    "attachment '{}' exceeds the {} MB limit",
+                    attachment.filename,
+                    MAX_ATTACHMENT_BYTES / (1024 * 1024)
+                ));
+            }
+            let actual_size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+            if attachment.size != 0 && attachment.size != actual_size {
+                return Err(format!(
+                    "attachment '{}' declared size {} but contains {actual_size} bytes",
+                    attachment.filename, attachment.size
+                ));
+            }
+            let digest = Sha256::digest(&bytes);
+            let sha256 = digest.iter().fold(
+                String::with_capacity(digest.len() * 2),
+                |mut encoded, byte| {
+                    let _ = write!(encoded, "{byte:02x}");
+                    encoded
+                },
+            );
+            let extension = attachment_extension(&attachment.mime_type);
+            let destination = directory.join(format!("{}.{extension}", Uuid::new_v4()));
+            let temporary = destination.with_extension(format!("{extension}.tmp"));
+            tokio::fs::write(&temporary, &bytes)
+                .await
+                .map_err(|error| format!("could not persist attachment: {error}"))?;
+            tokio::fs::rename(&temporary, &destination)
+                .await
+                .map_err(|error| format!("could not commit attachment: {error}"))?;
+            attachment.size = actual_size;
+            attachment.sha256 = Some(sha256);
+            attachment.source = y_core::types::AttachmentSource::File {
+                path: destination.to_string_lossy().into_owned(),
+            };
+            persisted.push(attachment);
+        }
+        Ok(persisted)
+    }
+
     // -- Steering management -----------------------------------------------
 
     /// Promote one queued TODO to the session's single pending steer slot.
@@ -935,30 +1060,16 @@ impl ChatService {
         let request_mode = request.request_mode.unwrap_or_default();
 
         // 2. Build and persist the user message.
-        let metadata = {
-            let mut meta = serde_json::Map::new();
-            if !skills.is_empty() {
-                meta.insert("skills".into(), serde_json::json!(skills));
-            }
-            if let Some(extra) = &request.user_message_metadata {
-                if let Some(obj) = extra.as_object() {
-                    for (k, v) in obj {
-                        meta.insert(k.clone(), v.clone());
-                    }
-                }
-            }
-            if request_mode != RequestMode::TextChat {
-                meta.insert(
-                    "request_mode".into(),
-                    serde_json::to_value(request_mode).unwrap_or(serde_json::Value::Null),
-                );
-            }
-            if meta.is_empty() {
-                serde_json::Value::Null
-            } else {
-                serde_json::Value::Object(meta)
-            }
-        };
+        let attachments =
+            Self::materialize_attachments(&container.data_dir, &session_id, request.attachments)
+                .await
+                .map_err(PrepareTurnError::AttachmentInvalid)?;
+        let metadata = Self::build_user_message_metadata(
+            &skills,
+            request.user_message_metadata.as_ref(),
+            request_mode,
+            &attachments,
+        );
         let user_msg = Message {
             message_id: generate_message_id(),
             role: Role::User,
@@ -2513,6 +2624,93 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_user_message_metadata_serializes_typed_attachments() {
+        let attachments = vec![y_core::types::Attachment {
+            id: "image-1".into(),
+            filename: "clipboard.png".into(),
+            mime_type: "image/png".into(),
+            size: 8,
+            sha256: None,
+            width: None,
+            height: None,
+            source: y_core::types::AttachmentSource::InlineBase64 {
+                base64_data: "iVBORw==".into(),
+            },
+        }];
+
+        let metadata = ChatService::build_user_message_metadata(
+            &[],
+            None,
+            y_core::provider::RequestMode::TextChat,
+            &attachments,
+        );
+
+        assert_eq!(metadata["attachments"][0]["id"], "image-1");
+        assert_eq!(metadata["attachments"][0]["base64_data"], "iVBORw==");
+    }
+
+    #[tokio::test]
+    async fn test_materialize_attachments_persists_bounded_file_reference() {
+        let directory = tempfile::tempdir().unwrap();
+        let session_id = y_core::types::SessionId::from_string("session-1");
+        let attachment = y_core::types::Attachment {
+            id: "image-1".into(),
+            filename: "clipboard.png".into(),
+            mime_type: "image/png".into(),
+            size: 5,
+            sha256: None,
+            width: Some(1),
+            height: Some(1),
+            source: y_core::types::AttachmentSource::InlineBase64 {
+                base64_data: "aGVsbG8=".into(),
+            },
+        };
+
+        let persisted =
+            ChatService::materialize_attachments(directory.path(), &session_id, vec![attachment])
+                .await
+                .unwrap();
+
+        let y_core::types::AttachmentSource::File { path } = &persisted[0].source else {
+            panic!("attachment should be persisted by file reference");
+        };
+        assert_eq!(std::fs::read(path).unwrap(), b"hello");
+        assert!(persisted[0]
+            .sha256
+            .as_deref()
+            .is_some_and(|hash| hash.len() == 64));
+        let json = serde_json::to_string(&persisted).unwrap();
+        assert!(!json.contains("aGVsbG8="));
+    }
+
+    #[tokio::test]
+    async fn test_materialize_attachments_rejects_declared_size_mismatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let attachment = y_core::types::Attachment {
+            id: "image-1".into(),
+            filename: "clipboard.png".into(),
+            mime_type: "image/png".into(),
+            size: 99,
+            sha256: None,
+            width: None,
+            height: None,
+            source: y_core::types::AttachmentSource::InlineBase64 {
+                base64_data: "aGVsbG8=".into(),
+            },
+        };
+
+        let error = ChatService::materialize_attachments(
+            directory.path(),
+            &y_core::types::SessionId::from_string("session-1"),
+            vec![attachment],
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.contains("declared size"));
+    }
+
+    #[test]
     fn test_tool_results_metadata_preserves_tool_call_id() {
         let metadata = ChatService::build_tool_results_metadata(&[ToolCallRecord {
             tool_call_id: "call-read-1".into(),
@@ -3309,6 +3507,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3443,6 +3642,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3468,6 +3668,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3492,6 +3693,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3523,6 +3725,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3564,6 +3767,7 @@ mod tests {
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -3636,6 +3840,7 @@ mod tests {
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -3735,6 +3940,7 @@ mod tests {
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -3840,6 +4046,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3869,6 +4076,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3890,6 +4098,7 @@ mod tests {
             knowledge_collections: None,
             thinking: None,
             user_message_metadata: None,
+            attachments: Vec::new(),
             plan_mode: None,
             operation_mode: None,
             mcp_mode: None,
@@ -3957,6 +4166,7 @@ thinking_effort = "high"
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -4025,6 +4235,7 @@ skills = ["workspace-skill"]
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -4048,6 +4259,7 @@ skills = ["workspace-skill"]
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -4108,6 +4320,7 @@ max_iterations = 1
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -4129,6 +4342,7 @@ max_iterations = 1
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -4423,6 +4637,7 @@ max_iterations = 1
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -4495,6 +4710,7 @@ max_iterations = 1
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,
@@ -4577,6 +4793,7 @@ max_iterations = 1
                 knowledge_collections: None,
                 thinking: None,
                 user_message_metadata: None,
+                attachments: Vec::new(),
                 plan_mode: None,
                 operation_mode: None,
                 mcp_mode: None,

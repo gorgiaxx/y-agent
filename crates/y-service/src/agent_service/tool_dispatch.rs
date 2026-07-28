@@ -21,6 +21,12 @@ use super::{AgentExecutionConfig, ToolCallRecord, ToolExecContext, TurnEvent, Tu
 use crate::chat_types::OperationMode;
 use crate::user_interaction_orchestrator::INTERACTION_TIMEOUT;
 
+struct PermissionAgentContext<'a> {
+    trust_tier: Option<TrustTier>,
+    allowed_tools: &'a [String],
+    name: &'a str,
+}
+
 async fn evaluate_registered_tool_permission(
     container: &ServiceContainer,
     config: &AgentExecutionConfig,
@@ -29,16 +35,58 @@ async fn evaluate_registered_tool_permission(
     working_dir: Option<&str>,
     additional_read_dirs: &[String],
 ) -> PermissionResult {
+    evaluate_tool_permission(
+        container,
+        tc,
+        session_id,
+        working_dir,
+        additional_read_dirs,
+        PermissionAgentContext {
+            trust_tier: config.trust_tier,
+            allowed_tools: &config.agent_allowed_tools,
+            name: &config.agent_name,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn evaluate_operator_tool_permission(
+    container: &ServiceContainer,
+    tc: &ToolCallRequest,
+    session_id: &SessionId,
+    working_dir: Option<&str>,
+    additional_read_dirs: &[String],
+) -> PermissionResult {
+    evaluate_tool_permission(
+        container,
+        tc,
+        session_id,
+        working_dir,
+        additional_read_dirs,
+        PermissionAgentContext {
+            trust_tier: None,
+            allowed_tools: &[],
+            name: "operator",
+        },
+    )
+    .await
+}
+
+async fn evaluate_tool_permission(
+    container: &ServiceContainer,
+    tc: &ToolCallRequest,
+    session_id: &SessionId,
+    working_dir: Option<&str>,
+    additional_read_dirs: &[String],
+    agent: PermissionAgentContext<'_>,
+) -> PermissionResult {
     let tool_name = ToolName::from_string(&tc.name);
     let definition = container.tool_registry.get_definition(&tool_name).await;
     let session_mode = session_permission_mode(container, session_id).await;
     let operation_mode = session_operation_mode(container, session_id).await;
     let permission_context = container.guardrail_manager.permission_context(session_mode);
-    let builtin_auto_allow = config.trust_tier == Some(TrustTier::BuiltIn)
-        && config
-            .agent_allowed_tools
-            .iter()
-            .any(|tool| tool == &tc.name);
+    let builtin_auto_allow = agent.trust_tier == Some(TrustTier::BuiltIn)
+        && agent.allowed_tools.iter().any(|tool| tool == &tc.name);
 
     let mut tool_result = if let Some(tool) = container.tool_registry.get_tool(&tool_name).await {
         let input = ToolInput {
@@ -63,13 +111,13 @@ async fn evaluate_registered_tool_permission(
     {
         tracing::debug!(
             tool = %tc.name,
-            agent = %config.agent_name,
+            agent = %agent.name,
             "built-in agent declared tool supplied an allow signal"
         );
         tool_result = PermissionResult {
             behavior: PermissionBehavior::Allow,
             reason: PermissionReason::ToolCheck {
-                detail: format!("built-in agent '{}' declared tool", config.agent_name),
+                detail: format!("built-in agent '{}' declared tool", agent.name),
             },
             message: None,
             updated_input: tool_result.updated_input,
@@ -135,7 +183,7 @@ fn permission_updated_tool_call(
     })
 }
 
-fn permission_reason_text(reason: &PermissionReason) -> String {
+pub(crate) fn permission_reason_text(reason: &PermissionReason) -> String {
     match reason {
         PermissionReason::Rule { rule_display } => rule_display.clone(),
         PermissionReason::ToolCheck { detail } => detail.clone(),

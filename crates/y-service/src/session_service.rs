@@ -1,7 +1,9 @@
 //! Service-owned workspace identity and resume behavior.
 
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use y_core::session::{CreateSessionOptions, SessionFilter, SessionNode, SessionState};
 use y_core::types::{AgentId, SessionId};
 use y_session::SessionManager;
@@ -10,6 +12,21 @@ use crate::workspace::{canonical_workspace_path, WorkspaceService};
 
 /// Shared business operations for interactive session creation and resume.
 pub struct SessionService;
+
+#[derive(Debug, Clone)]
+pub struct SessionHubItem {
+    pub session: SessionNode,
+    pub pinned: bool,
+    pub quick_slot: Option<u8>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct SessionHubPreferences {
+    #[serde(default)]
+    pinned: HashSet<String>,
+    #[serde(default)]
+    quick_slots: BTreeMap<u8, String>,
+}
 
 impl SessionService {
     /// Create an interactive session bound to one canonical workspace.
@@ -103,6 +120,137 @@ impl SessionService {
             .map_err(Into::into)
     }
 
+    pub async fn rename_session(
+        manager: &SessionManager,
+        session_id: &SessionId,
+        title: &str,
+    ) -> anyhow::Result<()> {
+        let title = title.trim();
+        if title.is_empty() {
+            anyhow::bail!("session title cannot be empty");
+        }
+        if title.chars().count() > 120 {
+            anyhow::bail!("session title cannot exceed 120 characters");
+        }
+        manager
+            .set_manual_title(session_id, Some(title.to_string()))
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn archive_session(
+        manager: &SessionManager,
+        session_id: &SessionId,
+    ) -> anyhow::Result<()> {
+        manager
+            .transition_state(session_id, SessionState::Archived)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn delete_session(
+        manager: &SessionManager,
+        session_id: &SessionId,
+    ) -> anyhow::Result<()> {
+        manager.delete_session(session_id).await.map_err(Into::into)
+    }
+
+    pub async fn fork_session(
+        manager: &SessionManager,
+        source_id: &SessionId,
+        message_index: usize,
+        title: Option<String>,
+    ) -> anyhow::Result<SessionNode> {
+        manager
+            .fork_session(source_id, message_index, title)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn list_session_hub(
+        manager: &SessionManager,
+        workspace: &Path,
+        preferences_path: &Path,
+    ) -> anyhow::Result<Vec<SessionHubItem>> {
+        let workspace_path = canonical_workspace_path(workspace)?;
+        let preferences = load_hub_preferences(preferences_path).await?;
+        let mut sessions = manager
+            .list_sessions(&SessionFilter {
+                workspace_path: Some(workspace_path),
+                ..SessionFilter::default()
+            })
+            .await?;
+        sessions.retain(|session| {
+            session.session_type.is_user_facing()
+                && matches!(session.state, SessionState::Active | SessionState::Archived)
+        });
+        let mut items = sessions
+            .into_iter()
+            .map(|session| {
+                let id = session.id.to_string();
+                SessionHubItem {
+                    pinned: preferences.pinned.contains(&id),
+                    quick_slot: preferences
+                        .quick_slots
+                        .iter()
+                        .find_map(|(slot, assigned)| (assigned == &id).then_some(*slot)),
+                    session,
+                }
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            right
+                .pinned
+                .cmp(&left.pinned)
+                .then_with(|| right.session.updated_at.cmp(&left.session.updated_at))
+        });
+        Ok(items)
+    }
+
+    pub async fn set_pinned(
+        preferences_path: &Path,
+        session_id: &SessionId,
+        pinned: bool,
+    ) -> anyhow::Result<()> {
+        let mut preferences = load_hub_preferences(preferences_path).await?;
+        if pinned {
+            preferences.pinned.insert(session_id.to_string());
+        } else {
+            preferences.pinned.remove(session_id.as_str());
+        }
+        save_hub_preferences(preferences_path, &preferences).await
+    }
+
+    pub async fn assign_quick_slot(
+        preferences_path: &Path,
+        slot: u8,
+        session_id: &SessionId,
+    ) -> anyhow::Result<()> {
+        if !(1..=9).contains(&slot) {
+            anyhow::bail!("quick slot must be between 1 and 9");
+        }
+        let mut preferences = load_hub_preferences(preferences_path).await?;
+        let id = session_id.to_string();
+        preferences
+            .quick_slots
+            .retain(|_, assigned| assigned != &id);
+        preferences.quick_slots.insert(slot, id);
+        save_hub_preferences(preferences_path, &preferences).await
+    }
+
+    /// Remove pin and quick-slot references for a deleted session.
+    pub async fn remove_hub_preferences(
+        preferences_path: &Path,
+        session_id: &SessionId,
+    ) -> anyhow::Result<()> {
+        let mut preferences = load_hub_preferences(preferences_path).await?;
+        preferences.pinned.remove(session_id.as_str());
+        preferences
+            .quick_slots
+            .retain(|_, assigned| assigned != session_id.as_str());
+        save_hub_preferences(preferences_path, &preferences).await
+    }
+
     /// Backfill missing `SQLite` workspace identities from the legacy TOML map.
     pub async fn backfill_legacy_assignments(
         manager: &SessionManager,
@@ -132,6 +280,35 @@ impl SessionService {
         }
         Ok(updated)
     }
+}
+
+async fn load_hub_preferences(path: &Path) -> anyhow::Result<SessionHubPreferences> {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(Into::into),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(SessionHubPreferences::default())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn save_hub_preferences(
+    path: &Path,
+    preferences: &SessionHubPreferences,
+) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(preferences)?;
+    tokio::fs::write(&temporary, bytes).await?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        tokio::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600)).await?;
+    }
+    tokio::fs::rename(temporary, path).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -222,5 +399,129 @@ mod tests {
                 .len(),
             3
         );
+    }
+
+    #[tokio::test]
+    async fn session_hub_operations_rename_archive_pin_and_assign_slot() {
+        let (manager, transcript_dir) = setup_manager().await;
+        let source = SessionService::create_session(
+            &manager,
+            CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Original".into()),
+            },
+            transcript_dir.path(),
+        )
+        .await
+        .unwrap();
+        let preferences = transcript_dir.path().join("session-hub.json");
+
+        SessionService::rename_session(&manager, &source.id, "Renamed")
+            .await
+            .unwrap();
+        SessionService::set_pinned(&preferences, &source.id, true)
+            .await
+            .unwrap();
+        SessionService::assign_quick_slot(&preferences, 2, &source.id)
+            .await
+            .unwrap();
+
+        let hub = SessionService::list_session_hub(&manager, transcript_dir.path(), &preferences)
+            .await
+            .unwrap();
+        assert_eq!(hub.len(), 1);
+        assert_eq!(hub[0].session.manual_title.as_deref(), Some("Renamed"));
+        assert!(hub[0].pinned);
+        assert_eq!(hub[0].quick_slot, Some(2));
+
+        SessionService::archive_session(&manager, &source.id)
+            .await
+            .unwrap();
+        let hub = SessionService::list_session_hub(&manager, transcript_dir.path(), &preferences)
+            .await
+            .unwrap();
+        assert_eq!(hub[0].session.state, SessionState::Archived);
+    }
+
+    #[tokio::test]
+    async fn assigning_a_quick_slot_replaces_the_previous_session() {
+        let (manager, transcript_dir) = setup_manager().await;
+        let first = SessionService::create_session(
+            &manager,
+            CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("First".into()),
+            },
+            transcript_dir.path(),
+        )
+        .await
+        .unwrap();
+        let second = SessionService::create_session(
+            &manager,
+            CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Second".into()),
+            },
+            transcript_dir.path(),
+        )
+        .await
+        .unwrap();
+        let preferences = transcript_dir.path().join("session-hub.json");
+        SessionService::assign_quick_slot(&preferences, 1, &first.id)
+            .await
+            .unwrap();
+        SessionService::assign_quick_slot(&preferences, 1, &second.id)
+            .await
+            .unwrap();
+
+        let hub = SessionService::list_session_hub(&manager, transcript_dir.path(), &preferences)
+            .await
+            .unwrap();
+        assert_eq!(
+            hub.iter()
+                .find(|item| item.quick_slot == Some(1))
+                .unwrap()
+                .session
+                .id,
+            second.id
+        );
+    }
+
+    #[tokio::test]
+    async fn deleted_session_preferences_are_removed() {
+        let (manager, transcript_dir) = setup_manager().await;
+        let source = SessionService::create_session(
+            &manager,
+            CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("Disposable".into()),
+            },
+            transcript_dir.path(),
+        )
+        .await
+        .unwrap();
+        let preferences = transcript_dir.path().join("session-hub.json");
+        SessionService::set_pinned(&preferences, &source.id, true)
+            .await
+            .unwrap();
+        SessionService::assign_quick_slot(&preferences, 1, &source.id)
+            .await
+            .unwrap();
+
+        SessionService::remove_hub_preferences(&preferences, &source.id)
+            .await
+            .unwrap();
+
+        let saved = load_hub_preferences(&preferences).await.unwrap();
+        assert!(!saved.pinned.contains(source.id.as_str()));
+        assert!(saved.quick_slots.is_empty());
     }
 }
