@@ -112,14 +112,18 @@ impl TagBasedRouter {
                 .required_tags
                 .iter()
                 .all(|tag| meta.tags.contains(tag))
+                && route
+                    .required_capabilities
+                    .iter()
+                    .all(|capability| meta.capabilities.contains(capability))
             {
                 return Ok(idx);
             }
 
             return Err(ProviderError::Other {
                 message: format!(
-                    "preferred provider '{}' does not match required tags {:?}",
-                    preferred_id, route.required_tags
+                    "preferred provider '{}' does not match required tags {:?} and capabilities {:?}",
+                    preferred_id, route.required_tags, route.required_capabilities
                 ),
             });
         }
@@ -135,6 +139,13 @@ impl TagBasedRouter {
                     .required_tags
                     .iter()
                     .all(|tag| meta.tags.contains(tag))
+            })
+            .filter(|(_, provider)| {
+                let metadata = provider.provider.metadata();
+                route
+                    .required_capabilities
+                    .iter()
+                    .all(|capability| metadata.capabilities.contains(capability))
             })
             .filter(|(_, p)| {
                 // Priority-based filtering: idle requests are rejected when at capacity.
@@ -306,6 +317,20 @@ mod tests {
         }
     }
 
+    fn make_routable_with_capabilities(
+        id: &str,
+        capabilities: Vec<ProviderCapability>,
+    ) -> RoutableProvider {
+        let mut provider = MockProvider::new(id, "model", vec!["general"]);
+        provider.meta.capabilities = capabilities;
+        RoutableProvider {
+            provider: Arc::new(provider),
+            freeze_manager: Arc::new(FreezeManager::new(30, 3600)),
+            concurrency_semaphore: Arc::new(tokio::sync::Semaphore::new(5)),
+            max_concurrency: 5,
+        }
+    }
+
     fn make_routable_with_cost(
         id: &str,
         model: &str,
@@ -381,6 +406,47 @@ mod tests {
             result,
             Err(ProviderError::NoProviderAvailable { .. })
         ));
+    }
+
+    #[test]
+    fn test_routing_filters_by_required_capability() {
+        let router = TagBasedRouter::new();
+        let providers = vec![
+            make_routable_with_capabilities("text", vec![ProviderCapability::Text]),
+            make_routable_with_capabilities(
+                "vision",
+                vec![ProviderCapability::Text, ProviderCapability::Vision],
+            ),
+        ];
+        let route = RouteRequest {
+            required_capabilities: vec![ProviderCapability::Vision],
+            ..Default::default()
+        };
+
+        let selected = router.select(&providers, &route).unwrap();
+
+        assert_eq!(
+            providers[selected].provider.metadata().id.as_str(),
+            "vision"
+        );
+    }
+
+    #[test]
+    fn test_routing_rejects_explicit_provider_without_required_capability() {
+        let router = TagBasedRouter::new();
+        let providers = vec![make_routable_with_capabilities(
+            "text",
+            vec![ProviderCapability::Text],
+        )];
+        let route = RouteRequest {
+            preferred_provider_id: Some(y_core::types::ProviderId::from_string("text")),
+            required_capabilities: vec![ProviderCapability::Vision],
+            ..Default::default()
+        };
+
+        let error = router.select(&providers, &route).unwrap_err();
+
+        assert!(error.to_string().contains("capabilities"));
     }
 
     #[test]

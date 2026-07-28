@@ -181,11 +181,38 @@ impl GeminiProvider {
                     }
                 }
 
+                let mut parts = Vec::new();
+                if m.role == y_core::types::Role::User {
+                    if let Some(attachments) = m
+                        .metadata
+                        .get("attachments")
+                        .and_then(serde_json::Value::as_array)
+                    {
+                        for attachment in attachments {
+                            if let Some((mime_type, data)) =
+                                crate::attachment::encoded_data(attachment)
+                            {
+                                if mime_type.starts_with("image/") {
+                                    parts.push(GeminiPart::InlineData {
+                                        inline_data: GeminiInlineData { mime_type, data },
+                                    });
+                                } else if let Some(text) =
+                                    crate::attachment::text_content(attachment)
+                                {
+                                    parts.push(GeminiPart::Text { text });
+                                }
+                            }
+                        }
+                    }
+                }
+                if !m.content.is_empty() || parts.is_empty() {
+                    parts.push(GeminiPart::Text {
+                        text: m.content.clone(),
+                    });
+                }
                 GeminiContent {
                     role: Some(role.to_string()),
-                    parts: vec![GeminiPart::Text {
-                        text: m.content.clone(),
-                    }],
+                    parts,
                 }
             })
             .collect();
@@ -1143,6 +1170,51 @@ mod tests {
         assert_eq!(contents.len(), 2);
         assert_eq!(contents[0].role.as_deref(), Some("user"));
         assert_eq!(contents[1].role.as_deref(), Some("model"));
+    }
+
+    #[test]
+    fn test_gemini_build_contents_includes_image_attachment() {
+        use y_core::types::{Message, Role};
+
+        let request = ChatRequest {
+            messages: vec![Message {
+                message_id: String::new(),
+                role: Role::User,
+                content: "Inspect this".into(),
+                tool_call_id: None,
+                tool_calls: vec![],
+                timestamp: y_core::types::now(),
+                metadata: serde_json::json!({
+                    "attachments": [{
+                        "mime_type": "image/png",
+                        "base64_data": "aGVsbG8="
+                    }]
+                }),
+            }],
+            model: None,
+            request_mode: RequestMode::TextChat,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            tools: vec![],
+            tool_calling_mode: ToolCallingMode::default(),
+            tool_dialect: y_core::provider::ToolDialect::default(),
+            stop: vec![],
+            extra: serde_json::Value::Null,
+            thinking: None,
+            response_format: None,
+            image_generation_options: None,
+        };
+
+        let contents = GeminiProvider::build_contents(&request);
+        let serialized = serde_json::to_value(&contents).unwrap();
+
+        assert_eq!(
+            serialized[0]["parts"][0]["inlineData"]["mimeType"],
+            "image/png"
+        );
+        assert_eq!(serialized[0]["parts"][0]["inlineData"]["data"], "aGVsbG8=");
+        assert_eq!(serialized[0]["parts"][1]["text"], "Inspect this");
     }
 
     #[test]

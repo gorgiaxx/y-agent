@@ -39,6 +39,7 @@ pub struct ProviderPoolImpl {
 /// An entry in the pool combining provider, freeze state, semaphore, and metrics.
 struct ProviderEntry {
     provider: Arc<dyn LlmProvider>,
+    profile_id: String,
     freeze_manager: Arc<FreezeManager>,
     semaphore: Arc<tokio::sync::Semaphore>,
     max_concurrency: usize,
@@ -73,6 +74,45 @@ impl Drop for ActiveRequestGuard {
     }
 }
 
+fn report_freeze(provider_id: &ProviderId, freeze_manager: &FreezeManager, error: &ProviderError) {
+    let standard_error = error_classifier::classify_provider_error(error);
+    if !standard_error.should_freeze() {
+        tracing::debug!(
+            provider_id = %provider_id,
+            error = %error,
+            classification = ?standard_error,
+            "error does not warrant provider freeze"
+        );
+        return;
+    }
+    if standard_error.is_permanent() {
+        freeze_manager.freeze_permanent(error.to_string());
+        tracing::warn!(
+            provider_id = %provider_id,
+            error = %error,
+            classification = ?standard_error,
+            "provider permanently frozen"
+        );
+    } else if let Some(duration) = standard_error.freeze_duration() {
+        freeze_manager.freeze(error.to_string(), Some(duration));
+        tracing::info!(
+            provider_id = %provider_id,
+            error = %error,
+            classification = ?standard_error,
+            freeze_secs = duration.as_secs(),
+            "provider frozen with error-type-specific duration"
+        );
+    } else {
+        freeze_manager.freeze(error.to_string(), None);
+        tracing::info!(
+            provider_id = %provider_id,
+            error = %error,
+            classification = ?standard_error,
+            "provider frozen (adaptive duration)"
+        );
+    }
+}
+
 impl ProviderPoolImpl {
     /// Create a new pool from a list of pre-constructed providers.
     ///
@@ -104,8 +144,25 @@ impl ProviderPoolImpl {
                     .get(p.metadata().id.as_str())
                     .copied()
                     .unwrap_or((None, None, None));
+                let profile_id = config
+                    .providers
+                    .iter()
+                    .find(|config| config.id == p.metadata().id.as_str())
+                    .map_or_else(
+                        || "external:unknown".into(),
+                        |config| {
+                            let profile = crate::profiles::resolve(config);
+                            format!(
+                                "{}:{}@{}",
+                                profile.provider_profile_id,
+                                profile.model_profile_id,
+                                profile.catalog_version
+                            )
+                        },
+                    );
                 ProviderEntry {
                     provider: p,
+                    profile_id,
                     freeze_manager: Arc::new(FreezeManager::new(
                         config.default_freeze_duration_secs,
                         config.max_freeze_duration_secs,
@@ -184,6 +241,15 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
         let tool_calling_mode = cfg.resolve_tool_calling_mode();
         let tool_dialect = cfg.resolve_tool_dialect();
         let capabilities = cfg.resolve_capabilities();
+        let context_window = cfg.resolved_context_window();
+        let profile = crate::profiles::resolve(cfg);
+        tracing::info!(
+            provider_id = %cfg.id,
+            provider_profile = profile.provider_profile_id,
+            model_profile = profile.model_profile_id,
+            profile_catalog = profile.catalog_version,
+            "resolved provider compatibility profile"
+        );
 
         // DeepSeek uses an OpenAI-compatible REST API with a default base URL.
         let base_url_for_deepseek = || {
@@ -204,7 +270,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.tags.clone(),
                     capabilities.clone(),
                     cfg.max_concurrency,
-                    cfg.context_window,
+                    context_window,
                     tool_calling_mode,
                     tool_dialect,
                     &cfg.headers,
@@ -218,12 +284,12 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
         // because several upstream gateways (older vLLM, some Chinese
         // providers, stricter proxies) reject the `stream_options` field
         // with HTTP 400.
-        let include_usage = cfg.include_usage.unwrap_or(false);
+        let include_usage = cfg.resolved_include_usage();
         // `use_max_completion_tokens` selects between the legacy `max_tokens`
         // wire field and the `max_completion_tokens` field required by newer
         // OpenAI reasoning models (o1, o3, gpt-5). Default `false` preserves
         // compatibility with the broader OpenAI-compatible ecosystem.
-        let use_max_completion_tokens = cfg.use_max_completion_tokens.unwrap_or(false);
+        let use_max_completion_tokens = cfg.resolved_use_max_completion_tokens();
         // The reasoning wire shape follows the provider type: `openai`
         // (Response API) uses the nested `reasoning: { effort }` object, while
         // OpenAI-compatible Chat Completions backends use the top-level
@@ -246,7 +312,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.tags.clone(),
                     capabilities.clone(),
                     cfg.max_concurrency,
-                    cfg.context_window,
+                    context_window,
                     tool_calling_mode,
                     tool_dialect,
                     &cfg.headers,
@@ -269,7 +335,7 @@ pub fn build_providers(config: &ProviderPoolConfig) -> Vec<Arc<dyn LlmProvider>>
                     cfg.tags.clone(),
                     capabilities.clone(),
                     cfg.max_concurrency,
-                    cfg.context_window,
+                    context_window,
                     tool_calling_mode,
                     tool_dialect,
                     &cfg.headers,
@@ -457,6 +523,15 @@ impl ProviderPool for ProviderPoolImpl {
         let routable = self.routable_providers();
         let idx = self.router.select(&routable, route)?;
         let entry = &self.providers[idx];
+        let metadata = entry.provider.metadata();
+        tracing::info!(
+            provider_id = %metadata.id,
+            model = %metadata.model,
+            profile_id = %entry.profile_id,
+            phase = "request",
+            partial_output = false,
+            "provider attempt selected"
+        );
 
         // Acquire global semaphore permit if configured.
         let _global_permit = if let Some(ref sem) = self.global_semaphore {
@@ -483,15 +558,49 @@ impl ProviderPool for ProviderPoolImpl {
         // Retry transient (5xx / network) errors against the same provider
         // before falling through to freeze/failover, per the retry policy.
         let mut attempt: u32 = 0;
+        let retry_started = std::time::Instant::now();
         let result = loop {
-            match entry.provider.chat_completion(&effective_request).await {
+            let call = entry.provider.chat_completion(&effective_request);
+            let remaining_budget = Duration::from_millis(self.retry.total_retry_timeout_ms)
+                .saturating_sub(retry_started.elapsed());
+            if remaining_budget.is_zero() {
+                break Err(ProviderError::NetworkError {
+                    status: None,
+                    message: format!(
+                        "total retry timeout after {} ms",
+                        self.retry.total_retry_timeout_ms
+                    ),
+                });
+            }
+            let attempt_result = tokio::time::timeout(
+                Duration::from_millis(self.retry.request_timeout_ms).min(remaining_budget),
+                call,
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(ProviderError::NetworkError {
+                    status: None,
+                    message: format!("request timeout after {} ms", self.retry.request_timeout_ms),
+                })
+            });
+            match attempt_result {
                 Ok(response) => break Ok(response),
                 Err(e) if attempt < self.retry.max_retries && self.should_retry(&e) => {
                     attempt += 1;
                     let delay = self.retry.delay_for(attempt);
+                    if retry_started.elapsed().saturating_add(delay)
+                        >= Duration::from_millis(self.retry.total_retry_timeout_ms)
+                    {
+                        break Err(e);
+                    }
                     tracing::warn!(
                         provider_id = %entry.provider.metadata().id,
+                        model = %entry.provider.metadata().model,
+                        profile_id = %entry.profile_id,
+                        phase = "request",
                         error = %e,
+                        retry_reason = ?error_classifier::classify_provider_error(&e),
+                        partial_output = false,
                         attempt,
                         max_retries = self.retry.max_retries,
                         delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
@@ -509,6 +618,18 @@ impl ProviderPool for ProviderPoolImpl {
         match result {
             Ok(mut response) => {
                 let meta = entry.provider.metadata();
+                tracing::info!(
+                    provider_id = %meta.id,
+                    model = %meta.model,
+                    profile_id = %entry.profile_id,
+                    phase = "request",
+                    request_id = %response.id,
+                    attempt_count = attempt + 1,
+                    elapsed_ms = u64::try_from(retry_started.elapsed().as_millis())
+                        .unwrap_or(u64::MAX),
+                    partial_output = false,
+                    "provider attempt completed"
+                );
                 entry.metrics.record_success_with_cost(
                     response.usage.input_tokens,
                     response.usage.output_tokens,
@@ -519,6 +640,17 @@ impl ProviderPool for ProviderPoolImpl {
                 Ok(response)
             }
             Err(e) => {
+                tracing::warn!(
+                    provider_id = %entry.provider.metadata().id,
+                    model = %entry.provider.metadata().model,
+                    profile_id = %entry.profile_id,
+                    phase = "request",
+                    attempt_count = attempt + 1,
+                    retry_reason = ?error_classifier::classify_provider_error(&e),
+                    partial_output = false,
+                    error = %e,
+                    "provider attempt failed"
+                );
                 entry.metrics.record_error();
                 self.report_error(&entry.provider.metadata().id, &e);
                 Err(e)
@@ -564,25 +696,66 @@ impl ProviderPool for ProviderPoolImpl {
         // because the stream has not started consuming yet.
 
         let meta = entry.provider.metadata();
+        tracing::info!(
+            provider_id = %meta.id,
+            model = %meta.model,
+            profile_id = %entry.profile_id,
+            phase = "stream_start",
+            partial_output = false,
+            "provider attempt selected"
+        );
 
         // Retry transient (5xx / network) establishment errors against the same
         // provider before freeze/failover. Only the initial request/handshake
         // is retried here; once a stream is returned, mid-stream errors surface
         // to the consumer and are not retried (partial content already emitted).
         let mut attempt: u32 = 0;
+        let retry_started = std::time::Instant::now();
         let stream_result = loop {
-            match entry
-                .provider
-                .chat_completion_stream(&effective_request)
-                .await
-            {
+            let call = entry.provider.chat_completion_stream(&effective_request);
+            let remaining_budget = Duration::from_millis(self.retry.total_retry_timeout_ms)
+                .saturating_sub(retry_started.elapsed());
+            if remaining_budget.is_zero() {
+                break Err(ProviderError::NetworkError {
+                    status: None,
+                    message: format!(
+                        "total retry timeout after {} ms",
+                        self.retry.total_retry_timeout_ms
+                    ),
+                });
+            }
+            let attempt_result = tokio::time::timeout(
+                Duration::from_millis(self.retry.stream_start_timeout_ms).min(remaining_budget),
+                call,
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(ProviderError::NetworkError {
+                    status: None,
+                    message: format!(
+                        "stream start timeout after {} ms",
+                        self.retry.stream_start_timeout_ms
+                    ),
+                })
+            });
+            match attempt_result {
                 Ok(stream_response) => break Ok(stream_response),
                 Err(e) if attempt < self.retry.max_retries && self.should_retry(&e) => {
                     attempt += 1;
                     let delay = self.retry.delay_for(attempt);
+                    if retry_started.elapsed().saturating_add(delay)
+                        >= Duration::from_millis(self.retry.total_retry_timeout_ms)
+                    {
+                        break Err(e);
+                    }
                     tracing::warn!(
                         provider_id = %meta.id,
+                        model = %meta.model,
+                        profile_id = %entry.profile_id,
+                        phase = "stream_start",
                         error = %e,
+                        retry_reason = ?error_classifier::classify_provider_error(&e),
+                        partial_output = false,
                         attempt,
                         max_retries = self.retry.max_retries,
                         delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
@@ -601,19 +774,177 @@ impl ProviderPool for ProviderPoolImpl {
                 stream_response.context_window = meta.context_window;
 
                 // Wrap the inner stream so `guard` is held until the stream
-                // is fully consumed or dropped.
+                // is fully consumed or dropped. First-event and idle timeouts
+                // surface as typed network errors and count against provider
+                // health without replaying partial output.
                 let inner = stream_response.stream;
+                let first_event_timeout =
+                    Duration::from_millis(self.retry.stream_first_event_timeout_ms);
+                let idle_timeout = Duration::from_millis(self.retry.stream_idle_timeout_ms);
+                let metrics = Arc::clone(&entry.metrics);
+                let provider_id = meta.id.clone();
+                let model = meta.model.clone();
+                let profile_id = entry.profile_id.clone();
+                let stream_started = retry_started;
+                let freeze_manager = Arc::clone(&entry.freeze_manager);
                 stream_response.stream = Box::pin(futures::stream::unfold(
-                    (inner, Some(guard)),
-                    |(mut s, g)| async move {
+                    (
+                        inner,
+                        Some(guard),
+                        true,
+                        false,
+                        metrics,
+                        provider_id,
+                        model,
+                        profile_id,
+                        stream_started,
+                        freeze_manager,
+                    ),
+                    move |(
+                        mut stream,
+                        guard,
+                        first,
+                        terminated,
+                        metrics,
+                        provider_id,
+                        model,
+                        profile_id,
+                        stream_started,
+                        freeze,
+                    )| async move {
                         use futures::StreamExt;
-                        s.next().await.map(|item| (item, (s, g)))
+                        if terminated {
+                            return None;
+                        }
+                        let deadline = if first {
+                            first_event_timeout
+                        } else {
+                            idle_timeout
+                        };
+                        match tokio::time::timeout(deadline, stream.next()).await {
+                            Ok(Some(item)) => {
+                                if first {
+                                    tracing::info!(
+                                        provider_id = %provider_id,
+                                        model = %model,
+                                        profile_id = %profile_id,
+                                        phase = "first_event",
+                                        time_to_first_event_ms = u64::try_from(
+                                            stream_started.elapsed().as_millis()
+                                        )
+                                        .unwrap_or(u64::MAX),
+                                        partial_output = false,
+                                        "provider stream produced first event"
+                                    );
+                                }
+                                if let Err(error) = &item {
+                                    tracing::warn!(
+                                        provider_id = %provider_id,
+                                        model = %model,
+                                        profile_id = %profile_id,
+                                        phase = if first { "first_event" } else { "stream" },
+                                        retry_reason = ?error_classifier::classify_provider_error(error),
+                                        partial_output = !first,
+                                        error = %error,
+                                        "provider stream failed"
+                                    );
+                                    metrics.record_error();
+                                    report_freeze(&provider_id, &freeze, error);
+                                }
+                                Some((
+                                    item,
+                                    (
+                                        stream,
+                                        guard,
+                                        false,
+                                        false,
+                                        metrics,
+                                        provider_id,
+                                        model,
+                                        profile_id,
+                                        stream_started,
+                                        freeze,
+                                    ),
+                                ))
+                            }
+                            Ok(None) if first => {
+                                let error = ProviderError::Other {
+                                    message: "provider returned an empty stream".into(),
+                                };
+                                metrics.record_error();
+                                report_freeze(&provider_id, &freeze, &error);
+                                Some((
+                                    Err(error),
+                                    (
+                                        stream,
+                                        guard,
+                                        false,
+                                        true,
+                                        metrics,
+                                        provider_id,
+                                        model,
+                                        profile_id,
+                                        stream_started,
+                                        freeze,
+                                    ),
+                                ))
+                            }
+                            Ok(None) => None,
+                            Err(_) => {
+                                let phase = if first { "first event" } else { "idle stream" };
+                                let error = ProviderError::NetworkError {
+                                    status: None,
+                                    message: format!(
+                                        "{phase} timeout after {} ms",
+                                        u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX)
+                                    ),
+                                };
+                                tracing::warn!(
+                                    provider_id = %provider_id,
+                                    model = %model,
+                                    profile_id = %profile_id,
+                                    phase,
+                                    retry_reason = ?error_classifier::classify_provider_error(&error),
+                                    partial_output = !first,
+                                    error = %error,
+                                    "provider stream timed out"
+                                );
+                                metrics.record_error();
+                                report_freeze(&provider_id, &freeze, &error);
+                                Some((
+                                    Err(error),
+                                    (
+                                        stream,
+                                        guard,
+                                        false,
+                                        true,
+                                        metrics,
+                                        provider_id,
+                                        model,
+                                        profile_id,
+                                        stream_started,
+                                        freeze,
+                                    ),
+                                ))
+                            }
+                        }
                     },
                 ));
 
                 Ok(stream_response)
             }
             Err(e) => {
+                tracing::warn!(
+                    provider_id = %meta.id,
+                    model = %meta.model,
+                    profile_id = %entry.profile_id,
+                    phase = "stream_start",
+                    attempt_count = attempt + 1,
+                    retry_reason = ?error_classifier::classify_provider_error(&e),
+                    partial_output = false,
+                    error = %e,
+                    "provider stream attempt failed"
+                );
                 entry.metrics.record_error();
                 self.report_error(&meta.id, &e);
                 // guard drops here, decrementing active_requests
@@ -624,48 +955,7 @@ impl ProviderPool for ProviderPoolImpl {
 
     fn report_error(&self, provider_id: &ProviderId, error: &ProviderError) {
         if let Some(entry) = self.find_entry(provider_id) {
-            // Use the error classifier (P1-5) for freeze decisions.
-            let std_error = error_classifier::classify_provider_error(error);
-
-            if !std_error.should_freeze() {
-                tracing::debug!(
-                    provider_id = %provider_id,
-                    error = %error,
-                    classification = ?std_error,
-                    "error does not warrant provider freeze"
-                );
-                return;
-            }
-
-            if std_error.is_permanent() {
-                entry.freeze_manager.freeze_permanent(format!("{error}"));
-                tracing::warn!(
-                    provider_id = %provider_id,
-                    error = %error,
-                    classification = ?std_error,
-                    "provider permanently frozen"
-                );
-            } else if let Some(duration) = std_error.freeze_duration() {
-                entry
-                    .freeze_manager
-                    .freeze(format!("{error}"), Some(duration));
-                tracing::info!(
-                    provider_id = %provider_id,
-                    error = %error,
-                    classification = ?std_error,
-                    freeze_secs = duration.as_secs(),
-                    "provider frozen with error-type-specific duration"
-                );
-            } else {
-                // Fallback: adaptive freeze.
-                entry.freeze_manager.freeze(format!("{error}"), None);
-                tracing::info!(
-                    provider_id = %provider_id,
-                    error = %error,
-                    classification = ?std_error,
-                    "provider frozen (adaptive duration)"
-                );
-            }
+            report_freeze(provider_id, &entry.freeze_manager, error);
         }
     }
 
@@ -679,6 +969,8 @@ impl ProviderPool for ProviderPoolImpl {
 
                 ProviderStatus {
                     id: meta.id.clone(),
+                    model: meta.model.clone(),
+                    profile_id: entry.profile_id.clone(),
                     is_frozen: freeze_status.is_frozen,
                     frozen_since: freeze_status.frozen_since.map(|inst| {
                         chrono::Utc::now()
@@ -831,6 +1123,108 @@ mod tests {
         }
     }
 
+    struct SlowProvider {
+        meta: ProviderMetadata,
+    }
+
+    struct EmptyStreamProvider {
+        meta: ProviderMetadata,
+    }
+
+    #[async_trait]
+    impl LlmProvider for EmptyStreamProvider {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            unreachable!("empty provider is streaming-only")
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            Ok(ChatStreamResponse {
+                stream: Box::pin(futures::stream::empty()),
+                raw_request: None,
+                provider_id: None,
+                model: self.meta.model.clone(),
+                context_window: self.meta.context_window,
+            })
+        }
+
+        fn metadata(&self) -> &ProviderMetadata {
+            &self.meta
+        }
+    }
+
+    impl SlowProvider {
+        fn new() -> Arc<dyn LlmProvider> {
+            Arc::new(Self {
+                meta: ProviderMetadata {
+                    id: ProviderId::from_string("slow"),
+                    provider_type: ProviderType::OpenAi,
+                    model: "slow-model".into(),
+                    tags: vec!["gen".into()],
+                    capabilities: vec![ProviderCapability::Text],
+                    max_concurrency: 1,
+                    context_window: 8_000,
+                    cost_per_1k_input: 0.0,
+                    cost_per_1k_output: 0.0,
+                    tool_calling_mode: ToolCallingMode::Native,
+                    tool_dialect: ToolDialect::default(),
+                },
+            })
+        }
+    }
+
+    #[async_trait]
+    impl LlmProvider for SlowProvider {
+        async fn chat_completion(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            Ok(ChatResponse {
+                id: "late".into(),
+                model: self.meta.model.clone(),
+                content: Some("late".into()),
+                reasoning_content: None,
+                tool_calls: Vec::new(),
+                usage: TokenUsage::default(),
+                finish_reason: FinishReason::Stop,
+                raw_request: None,
+                raw_response: None,
+                provider_id: None,
+                generated_images: Vec::new(),
+            })
+        }
+
+        async fn chat_completion_stream(
+            &self,
+            _request: &ChatRequest,
+        ) -> Result<ChatStreamResponse, ProviderError> {
+            let stream = futures::stream::once(async {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                Ok(ChatStreamChunk {
+                    delta_content: Some("late".into()),
+                    ..ChatStreamChunk::default()
+                })
+            });
+            Ok(ChatStreamResponse {
+                stream: Box::pin(stream),
+                raw_request: None,
+                provider_id: None,
+                model: self.meta.model.clone(),
+                context_window: self.meta.context_window,
+            })
+        }
+
+        fn metadata(&self) -> &ProviderMetadata {
+            &self.meta
+        }
+    }
+
     /// Provider that fails its first `fail_times` calls then succeeds, counting
     /// total invocations. `transient` selects whether the failures are
     /// retryable (`ServerError`, like an HTTP 504) or not (`AuthenticationFailed`).
@@ -962,6 +1356,8 @@ mod tests {
                 initial_delay_ms: 1,
                 max_delay_ms: 2,
                 backoff: crate::config::BackoffStrategy::Fixed,
+                jitter_percent: 0,
+                ..Default::default()
             },
             ..test_config()
         }
@@ -1052,6 +1448,71 @@ mod tests {
             response_format: None,
             image_generation_options: None,
         }
+    }
+
+    #[tokio::test]
+    async fn test_non_streaming_request_timeout_is_classified_as_network_error() {
+        let mut config = test_config();
+        config.retry.request_timeout_ms = 5;
+        let pool = ProviderPoolImpl::from_providers(vec![SlowProvider::new()], &config);
+
+        let error = pool
+            .chat_completion(&test_request(), &gen_route())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, ProviderError::NetworkError { .. }));
+        assert!(error.to_string().contains("request timeout"));
+    }
+
+    #[tokio::test]
+    async fn test_stream_first_event_timeout_surfaces_in_stream() {
+        use futures::StreamExt as _;
+
+        let mut config = test_config();
+        config.retry.stream_first_event_timeout_ms = 5;
+        let pool = ProviderPoolImpl::from_providers(vec![SlowProvider::new()], &config);
+        let mut response = pool
+            .chat_completion_stream(&test_request(), &gen_route())
+            .await
+            .unwrap();
+
+        let error = response.stream.next().await.unwrap().unwrap_err();
+
+        assert!(matches!(error, ProviderError::NetworkError { .. }));
+        assert!(error.to_string().contains("first event timeout"));
+    }
+
+    #[tokio::test]
+    async fn test_empty_successful_stream_is_health_failure() {
+        use futures::StreamExt as _;
+
+        let provider: Arc<dyn LlmProvider> = Arc::new(EmptyStreamProvider {
+            meta: ProviderMetadata {
+                id: ProviderId::from_string("empty"),
+                provider_type: ProviderType::OpenAi,
+                model: "empty-model".into(),
+                tags: vec!["gen".into()],
+                capabilities: vec![ProviderCapability::Text],
+                max_concurrency: 1,
+                context_window: 8_000,
+                cost_per_1k_input: 0.0,
+                cost_per_1k_output: 0.0,
+                tool_calling_mode: ToolCallingMode::Native,
+                tool_dialect: ToolDialect::OpenAi,
+            },
+        });
+        let pool = ProviderPoolImpl::from_providers(vec![provider], &test_config());
+        let mut response = pool
+            .chat_completion_stream(&test_request(), &gen_route())
+            .await
+            .unwrap();
+
+        let error = response.stream.next().await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("empty stream"));
+        let statuses = pool.provider_statuses().await;
+        assert_eq!(statuses[0].total_errors, 1);
+        assert!(statuses[0].is_frozen);
     }
 
     #[tokio::test]

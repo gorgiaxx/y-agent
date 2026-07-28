@@ -275,8 +275,7 @@ impl AzureOpenAiProvider {
                         if !mime.starts_with("image/") {
                             return None;
                         }
-                        let b64 = att.get("base64_data")?.as_str()?;
-                        Some(format!("data:{mime};base64,{b64}"))
+                        crate::attachment::data_url(att)
                     })
                 })
         })
@@ -460,16 +459,59 @@ impl AzureOpenAiProvider {
         request
             .messages
             .iter()
-            .map(|m| AzureMessage {
-                role: match m.role {
+            .map(|m| {
+                let role = match m.role {
                     y_core::types::Role::User => "user".to_string(),
                     y_core::types::Role::Assistant => "assistant".to_string(),
                     y_core::types::Role::System => "system".to_string(),
                     y_core::types::Role::Tool => "tool".to_string(),
-                },
-                content: Some(m.content.clone()),
-                tool_call_id: m.tool_call_id.clone(),
-                tool_calls: None,
+                };
+                let content = if m.role == y_core::types::Role::User {
+                    m.metadata
+                        .get("attachments")
+                        .and_then(serde_json::Value::as_array)
+                        .filter(|attachments| !attachments.is_empty())
+                        .map(|attachments| {
+                            let mut parts = Vec::new();
+                            for attachment in attachments {
+                                if let Some((mime, data)) =
+                                    crate::attachment::encoded_data(attachment)
+                                {
+                                    if mime.starts_with("image/") {
+                                        parts.push(serde_json::json!({
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": format!("data:{mime};base64,{data}")
+                                            }
+                                        }));
+                                    } else if let Some(text) =
+                                        crate::attachment::text_content(attachment)
+                                    {
+                                        parts.push(serde_json::json!({
+                                            "type": "text",
+                                            "text": text
+                                        }));
+                                    }
+                                }
+                            }
+                            if !m.content.is_empty() {
+                                parts.push(serde_json::json!({
+                                    "type": "text",
+                                    "text": m.content
+                                }));
+                            }
+                            serde_json::Value::Array(parts)
+                        })
+                        .or_else(|| Some(serde_json::Value::String(m.content.clone())))
+                } else {
+                    Some(serde_json::Value::String(m.content.clone()))
+                };
+                AzureMessage {
+                    role,
+                    content,
+                    tool_call_id: m.tool_call_id.clone(),
+                    tool_calls: None,
+                }
             })
             .collect()
     }
@@ -606,7 +648,21 @@ impl LlmProvider for AzureOpenAiProvider {
                     message: "no choices in response".into(),
                 })?;
 
-        let content = choice.message.content;
+        let content = choice.message.content.and_then(|content| match content {
+            serde_json::Value::String(text) => Some(text),
+            serde_json::Value::Array(parts) => {
+                let text = parts
+                    .into_iter()
+                    .filter_map(|part| {
+                        part.get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .collect::<String>();
+                (!text.is_empty()).then_some(text)
+            }
+            _ => None,
+        });
         let tool_calls = choice
             .message
             .tool_calls
@@ -930,7 +986,7 @@ struct StreamOptions {
 struct AzureMessage {
     role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

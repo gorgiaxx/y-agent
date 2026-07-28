@@ -17,7 +17,10 @@
 //! - [`metrics_export`] — Prometheus-compatible metrics rendering
 
 pub mod agent_runner;
+mod attachment;
 pub mod config;
+#[cfg(test)]
+mod conformance;
 pub mod embedding;
 pub mod error;
 pub mod error_classifier;
@@ -32,6 +35,7 @@ pub mod metrics;
 pub mod metrics_export;
 pub mod net_error;
 pub mod pool;
+pub mod profiles;
 pub mod providers;
 pub mod router;
 pub mod scheduler;
@@ -54,6 +58,7 @@ pub use lease::{LeaseGuard, LeaseId, LeaseManager};
 pub use metrics::{MetricsEvent, MetricsSnapshot, ProviderMetrics};
 pub use metrics_export::render_prometheus;
 pub use pool::{build_providers, ProviderPoolImpl};
+pub use profiles::{ResolvedProviderProfile, PROFILE_CATALOG_VERSION};
 pub use providers::anthropic::AnthropicProvider;
 pub use providers::azure::AzureOpenAiProvider;
 pub use providers::gemini::GeminiProvider;

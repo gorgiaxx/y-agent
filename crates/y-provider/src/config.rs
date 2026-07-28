@@ -58,6 +58,25 @@ pub struct RetryConfig {
 
     /// How the delay grows across successive retries.
     pub backoff: BackoffStrategy,
+
+    /// Randomize this percentage of each backoff window. `100` is full
+    /// jitter in `[0, base_delay]`; `0` is deterministic.
+    pub jitter_percent: u8,
+
+    /// Deadline for a non-streaming provider request.
+    pub request_timeout_ms: u64,
+
+    /// Deadline for establishing a streaming response.
+    pub stream_start_timeout_ms: u64,
+
+    /// Deadline for the first event after stream establishment.
+    pub stream_first_event_timeout_ms: u64,
+
+    /// Maximum silence between subsequent stream events.
+    pub stream_idle_timeout_ms: u64,
+
+    /// Total wall-clock budget for same-provider attempts and backoff.
+    pub total_retry_timeout_ms: u64,
 }
 
 impl Default for RetryConfig {
@@ -68,6 +87,12 @@ impl Default for RetryConfig {
             initial_delay_ms: 1000,
             max_delay_ms: 30_000,
             backoff: BackoffStrategy::Exponential,
+            jitter_percent: 100,
+            request_timeout_ms: 120_000,
+            stream_start_timeout_ms: 30_000,
+            stream_first_event_timeout_ms: 30_000,
+            stream_idle_timeout_ms: 60_000,
+            total_retry_timeout_ms: 240_000,
         }
     }
 }
@@ -77,6 +102,17 @@ impl RetryConfig {
     /// = 1` is the delay before the first retry). Saturating and capped at
     /// `max_delay_ms` so large retry counts cannot overflow.
     pub fn delay_for(&self, attempt: u32) -> std::time::Duration {
+        let sample = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| {
+                u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+            })
+            ^ u64::from(attempt);
+        self.delay_for_sample(attempt, sample)
+    }
+
+    /// Deterministic jitter calculation used by tests and retry scheduling.
+    pub fn delay_for_sample(&self, attempt: u32, sample: u64) -> std::time::Duration {
         let millis = match self.backoff {
             BackoffStrategy::Fixed => self.initial_delay_ms,
             BackoffStrategy::Exponential => {
@@ -85,7 +121,19 @@ impl RetryConfig {
                     .saturating_mul(1u64.checked_shl(shift).unwrap_or(u64::MAX))
             }
         };
-        std::time::Duration::from_millis(millis.min(self.max_delay_ms))
+        let base = millis.min(self.max_delay_ms);
+        let jitter = u64::from(self.jitter_percent.min(100));
+        let lower = base.saturating_mul(100 - jitter) / 100;
+        let span = base.saturating_sub(lower);
+        let sampled = if sample == u64::MAX {
+            span
+        } else {
+            u64::try_from(
+                u128::from(sample).saturating_mul(u128::from(span)) / u128::from(u64::MAX),
+            )
+            .unwrap_or(span)
+        };
+        std::time::Duration::from_millis(lower.saturating_add(sampled))
     }
 }
 
@@ -698,11 +746,7 @@ impl ProviderConfig {
         if let Some(mode) = self.tool_calling_mode {
             return mode;
         }
-        match self.provider_type.as_str() {
-            "openai" | "anthropic" | "azure" | "gemini" | "deepseek" => ToolCallingMode::Native,
-            // openai-compat, custom, ollama, and any unknown type.
-            _ => ToolCallingMode::PromptBased,
-        }
+        crate::profiles::resolve(self).tool_calling_mode
     }
 
     /// Resolve the effective tool-call dialect for this provider.
@@ -723,13 +767,6 @@ impl ProviderConfig {
             return dialect;
         }
 
-        // Auto-detect from provider_type for Native mode.
-        match self.provider_type.as_str() {
-            "anthropic" => return ToolDialect::Anthropic,
-            "gemini" => return ToolDialect::Gemini,
-            _ => {}
-        }
-
         // Auto-detect from model name for PromptBased mode.
         let model_lower = self.model.to_ascii_lowercase();
         if model_lower.contains("deepseek") {
@@ -745,11 +782,7 @@ impl ProviderConfig {
             return ToolDialect::DeepSeekDsml;
         }
 
-        // Default: OpenAi for Native, YAgentXml for PromptBased.
-        match self.resolve_tool_calling_mode() {
-            y_core::provider::ToolCallingMode::Native => ToolDialect::OpenAi,
-            y_core::provider::ToolCallingMode::PromptBased => ToolDialect::YAgentXml,
-        }
+        crate::profiles::resolve(self).tool_dialect
     }
 
     /// Resolve the effective provider capabilities.
@@ -779,10 +812,28 @@ impl ProviderConfig {
             capabilities.push(ProviderCapability::Vision);
         }
         if capabilities.is_empty() {
-            capabilities.push(ProviderCapability::Text);
+            capabilities = crate::profiles::resolve(self).capabilities;
         }
 
         capabilities
+    }
+
+    pub fn resolved_context_window(&self) -> usize {
+        if self.context_window == default_context_window() {
+            crate::profiles::resolve(self).context_window
+        } else {
+            self.context_window
+        }
+    }
+
+    pub fn resolved_include_usage(&self) -> bool {
+        self.include_usage
+            .unwrap_or_else(|| crate::profiles::resolve(self).include_usage)
+    }
+
+    pub fn resolved_use_max_completion_tokens(&self) -> bool {
+        self.use_max_completion_tokens
+            .unwrap_or_else(|| crate::profiles::resolve(self).use_max_completion_tokens)
     }
 }
 
@@ -1711,6 +1762,8 @@ mod tests {
             initial_delay_ms: 1000,
             max_delay_ms: 30_000,
             backoff: BackoffStrategy::Exponential,
+            jitter_percent: 0,
+            ..RetryConfig::default()
         };
         assert_eq!(cfg.delay_for(1).as_millis(), 1000); // 1000 * 2^0
         assert_eq!(cfg.delay_for(2).as_millis(), 2000); // 1000 * 2^1
@@ -1728,8 +1781,33 @@ mod tests {
             initial_delay_ms: 2000,
             max_delay_ms: 60_000,
             backoff: BackoffStrategy::Fixed,
+            jitter_percent: 0,
+            ..RetryConfig::default()
         };
         assert_eq!(cfg.delay_for(1).as_millis(), 2000);
         assert_eq!(cfg.delay_for(4).as_millis(), 2000);
+    }
+
+    #[test]
+    fn test_retry_full_jitter_stays_between_zero_and_base_delay() {
+        let cfg = RetryConfig {
+            initial_delay_ms: 1000,
+            max_delay_ms: 30_000,
+            jitter_percent: 100,
+            ..RetryConfig::default()
+        };
+
+        assert_eq!(cfg.delay_for_sample(1, 0).as_millis(), 0);
+        assert_eq!(cfg.delay_for_sample(1, u64::MAX).as_millis(), 1000);
+    }
+
+    #[test]
+    fn test_resilience_timeouts_have_nonzero_defaults() {
+        let cfg = RetryConfig::default();
+
+        assert!(cfg.request_timeout_ms > 0);
+        assert!(cfg.stream_start_timeout_ms > 0);
+        assert!(cfg.stream_first_event_timeout_ms > 0);
+        assert!(cfg.stream_idle_timeout_ms > 0);
     }
 }

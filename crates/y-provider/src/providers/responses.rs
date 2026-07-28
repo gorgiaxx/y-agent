@@ -213,33 +213,33 @@ pub(crate) fn build_responses_input(messages: &[Message]) -> Vec<Value> {
                 }));
             }
             Role::User => {
-                let content =
-                    if let Some(arr) = msg.metadata.get("attachments").and_then(|v| v.as_array()) {
-                        if arr.is_empty() {
-                            vec![json!({ "type": "input_text", "text": msg.content })]
-                        } else {
-                            let mut parts: Vec<Value> = Vec::new();
-                            for att in arr {
-                                if let (Some(mime), Some(data)) = (
-                                    att.get("mime_type").and_then(|v| v.as_str()),
-                                    att.get("base64_data").and_then(|v| v.as_str()),
-                                ) {
-                                    if mime.starts_with("image/") {
-                                        parts.push(json!({
-                                            "type": "input_image",
-                                            "image_url": format!("data:{mime};base64,{data}"),
-                                        }));
-                                    }
+                let content = if let Some(arr) =
+                    msg.metadata.get("attachments").and_then(|v| v.as_array())
+                {
+                    if arr.is_empty() {
+                        vec![json!({ "type": "input_text", "text": msg.content })]
+                    } else {
+                        let mut parts: Vec<Value> = Vec::new();
+                        for att in arr {
+                            if let Some((mime, data)) = crate::attachment::encoded_data(att) {
+                                if mime.starts_with("image/") {
+                                    parts.push(json!({
+                                        "type": "input_image",
+                                        "image_url": format!("data:{mime};base64,{data}"),
+                                    }));
+                                } else if let Some(text) = crate::attachment::text_content(att) {
+                                    parts.push(json!({ "type": "input_text", "text": text }));
                                 }
                             }
-                            if !msg.content.is_empty() {
-                                parts.push(json!({ "type": "input_text", "text": msg.content }));
-                            }
-                            parts
                         }
-                    } else {
-                        vec![json!({ "type": "input_text", "text": msg.content })]
-                    };
+                        if !msg.content.is_empty() {
+                            parts.push(json!({ "type": "input_text", "text": msg.content }));
+                        }
+                        parts
+                    }
+                } else {
+                    vec![json!({ "type": "input_text", "text": msg.content })]
+                };
                 input.push(json!({ "role": "user", "content": content }));
             }
             Role::Assistant => {

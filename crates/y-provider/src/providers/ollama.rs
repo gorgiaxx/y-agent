@@ -215,6 +215,41 @@ impl OllamaProvider {
             options: Some(options),
         }
     }
+
+    async fn response_error(&self, response: reqwest::Response) -> ProviderError {
+        let status = response.status();
+        let retry_after_secs = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(60);
+        let message = response.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            ProviderError::RateLimited {
+                provider: self.metadata.id.to_string(),
+                retry_after_secs,
+            }
+        } else if matches!(
+            status,
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            ProviderError::AuthenticationFailed {
+                provider: self.metadata.id.to_string(),
+                message,
+            }
+        } else if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+            ProviderError::QuotaExhausted {
+                provider: self.metadata.id.to_string(),
+                message,
+            }
+        } else {
+            ProviderError::ServerError {
+                provider: self.metadata.id.to_string(),
+                message: format!("HTTP {status}: {message}"),
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -249,11 +284,7 @@ impl LlmProvider for OllamaProvider {
         let status = response.status();
 
         if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_default();
-            return Err(ProviderError::ServerError {
-                provider: self.metadata.id.to_string(),
-                message: format!("HTTP {status}: {error_body}"),
-            });
+            return Err(self.response_error(response).await);
         }
 
         let response_text = response.text().await.map_err(|e| ProviderError::Other {
@@ -357,11 +388,7 @@ impl LlmProvider for OllamaProvider {
 
         let status = response.status();
         if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_default();
-            return Err(ProviderError::ServerError {
-                provider: self.metadata.id.to_string(),
-                message: format!("HTTP {status}: {error_body}"),
-            });
+            return Err(self.response_error(response).await);
         }
 
         let byte_stream = response.bytes_stream();

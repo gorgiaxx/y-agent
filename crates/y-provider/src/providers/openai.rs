@@ -226,8 +226,7 @@ impl OpenAiProvider {
                         if !mime.starts_with("image/") {
                             return None;
                         }
-                        let b64 = att.get("base64_data")?.as_str()?;
-                        Some(format!("data:{mime};base64,{b64}"))
+                        crate::attachment::data_url(att)
                     })
                 })
         })
@@ -635,66 +634,69 @@ impl OpenAiProvider {
 
                 // For assistant messages with tool calls, set content to None
                 // and populate the tool_calls array (OpenAI API contract).
-                let (content, tool_calls) =
-                    if m.role == y_core::types::Role::Assistant && !m.tool_calls.is_empty() {
-                        let tcs: Vec<OpenAiToolCall> = m
-                            .tool_calls
-                            .iter()
-                            .map(|tc| OpenAiToolCall {
-                                id: tc.id.clone(),
-                                r#type: "function".to_string(),
-                                function: OpenAiToolCallFunction {
-                                    name: tc.name.clone(),
-                                    arguments: match &tc.arguments {
-                                        serde_json::Value::String(s) => s.clone(),
-                                        other => serde_json::to_string(other)
-                                            .unwrap_or_else(|_| "{}".to_string()),
-                                    },
+                let (content, tool_calls) = if m.role == y_core::types::Role::Assistant
+                    && !m.tool_calls.is_empty()
+                {
+                    let tcs: Vec<OpenAiToolCall> = m
+                        .tool_calls
+                        .iter()
+                        .map(|tc| OpenAiToolCall {
+                            id: tc.id.clone(),
+                            r#type: "function".to_string(),
+                            function: OpenAiToolCallFunction {
+                                name: tc.name.clone(),
+                                arguments: match &tc.arguments {
+                                    serde_json::Value::String(s) => s.clone(),
+                                    other => serde_json::to_string(other)
+                                        .unwrap_or_else(|_| "{}".to_string()),
                                 },
-                            })
-                            .collect();
-                        // Content may be empty or present alongside tool calls.
-                        let content = if m.content.is_empty() {
-                            None
-                        } else {
+                            },
+                        })
+                        .collect();
+                    // Content may be empty or present alongside tool calls.
+                    let content = if m.content.is_empty() {
+                        None
+                    } else {
+                        Some(OpenAiContent::Text(m.content.clone()))
+                    };
+                    (content, Some(tcs))
+                } else if m.role == y_core::types::Role::User {
+                    // Check for image attachments in metadata (multimodal).
+                    let content = if let Some(arr) =
+                        m.metadata.get("attachments").and_then(|v| v.as_array())
+                    {
+                        if arr.is_empty() {
                             Some(OpenAiContent::Text(m.content.clone()))
-                        };
-                        (content, Some(tcs))
-                    } else if m.role == y_core::types::Role::User {
-                        // Check for image attachments in metadata (multimodal).
-                        let content = if let Some(arr) =
-                            m.metadata.get("attachments").and_then(|v| v.as_array())
-                        {
-                            if arr.is_empty() {
-                                Some(OpenAiContent::Text(m.content.clone()))
-                            } else {
-                                let mut parts: Vec<OpenAiContentPart> = Vec::new();
-                                for att in arr {
-                                    if let (Some(mime), Some(data)) = (
-                                        att.get("mime_type").and_then(|v| v.as_str()),
-                                        att.get("base64_data").and_then(|v| v.as_str()),
-                                    ) {
+                        } else {
+                            let mut parts: Vec<OpenAiContentPart> = Vec::new();
+                            for att in arr {
+                                if let Some((mime, data)) = crate::attachment::encoded_data(att) {
+                                    if mime.starts_with("image/") {
                                         parts.push(OpenAiContentPart::ImageUrl {
                                             image_url: OpenAiImageUrl {
                                                 url: format!("data:{mime};base64,{data}"),
                                             },
                                         });
+                                    } else if let Some(text) = crate::attachment::text_content(att)
+                                    {
+                                        parts.push(OpenAiContentPart::Text { text });
                                     }
                                 }
-                                if !m.content.is_empty() {
-                                    parts.push(OpenAiContentPart::Text {
-                                        text: m.content.clone(),
-                                    });
-                                }
-                                Some(OpenAiContent::Parts(parts))
                             }
-                        } else {
-                            Some(OpenAiContent::Text(m.content.clone()))
-                        };
-                        (content, None)
+                            if !m.content.is_empty() {
+                                parts.push(OpenAiContentPart::Text {
+                                    text: m.content.clone(),
+                                });
+                            }
+                            Some(OpenAiContent::Parts(parts))
+                        }
                     } else {
-                        (Some(OpenAiContent::Text(m.content.clone())), None)
+                        Some(OpenAiContent::Text(m.content.clone()))
                     };
+                    (content, None)
+                } else {
+                    (Some(OpenAiContent::Text(m.content.clone())), None)
+                };
 
                 OpenAiMessage {
                     role,

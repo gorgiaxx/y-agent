@@ -88,10 +88,7 @@ impl StandardError {
     /// Some errors (context window, content filter) are request-specific
     /// and don't indicate a provider problem.
     pub fn should_freeze(&self) -> bool {
-        !matches!(
-            self,
-            Self::ContextWindowExceeded | Self::ContentFiltered | Self::NetworkError
-        )
+        !matches!(self, Self::ContextWindowExceeded | Self::ContentFiltered)
     }
 
     /// Whether this error should be automatically retried against the *same*
@@ -391,6 +388,7 @@ mod tests {
         assert!(!StandardError::ContextWindowExceeded.should_freeze());
         assert!(!StandardError::ContentFiltered.should_freeze());
         assert!(StandardError::RateLimited { retry_after: None }.should_freeze());
+        assert!(StandardError::NetworkError.should_freeze());
         assert!(StandardError::KeyInvalid.should_freeze());
     }
 

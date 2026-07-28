@@ -79,6 +79,7 @@ impl HookLlmRunner for ProviderPoolHookLlmRunner {
 
         let route = RouteRequest {
             required_tags: vec![],
+            required_capabilities: vec![],
             preferred_model: model.map(std::string::ToString::to_string),
             preferred_provider_id: None,
             priority: RoutePriority::Normal,

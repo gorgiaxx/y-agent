@@ -198,17 +198,21 @@ impl AnthropicProvider {
                             if !arr.is_empty() {
                                 let mut blocks: Vec<AnthropicContentBlock> = Vec::new();
                                 for att in arr {
-                                    if let (Some(mime), Some(data)) = (
-                                        att.get("mime_type").and_then(|v| v.as_str()),
-                                        att.get("base64_data").and_then(|v| v.as_str()),
-                                    ) {
-                                        blocks.push(AnthropicContentBlock::Image {
-                                            source: AnthropicImageSource {
-                                                r#type: "base64".to_string(),
-                                                media_type: mime.to_string(),
-                                                data: data.to_string(),
-                                            },
-                                        });
+                                    if let Some((mime, data)) = crate::attachment::encoded_data(att)
+                                    {
+                                        if mime.starts_with("image/") {
+                                            blocks.push(AnthropicContentBlock::Image {
+                                                source: AnthropicImageSource {
+                                                    r#type: "base64".to_string(),
+                                                    media_type: mime,
+                                                    data,
+                                                },
+                                            });
+                                        } else if let Some(text) =
+                                            crate::attachment::text_content(att)
+                                        {
+                                            blocks.push(AnthropicContentBlock::Text { text });
+                                        }
                                     }
                                 }
                                 if !m.content.is_empty() {
