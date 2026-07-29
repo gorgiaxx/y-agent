@@ -660,12 +660,20 @@ Persistent prompt history and unfinished drafts are bounded, atomically written,
 and stored outside transcripts. Composer fragments and attachment chips remain
 presentation state until the exact turn is submitted to `y-service`.
 
+Streaming progress events are an optimistic live projection, not the completion
+source of truth. Before applying the terminal response, the TUI reconciles its
+tool cards against the completed `TurnResult.tool_calls_executed` snapshot so a
+dropped or delayed progress event cannot remove an executed tool from the live
+transcript. Persisted display transcripts remain the source of truth on resume.
+
 Session rename, archive, deletion, branching, pinning, and quick-slot ownership
 belong to `y-service`. The TUI may render a searchable workspace-scoped hub and
 collect confirmations, but it must not mutate session storage or hub preferences
-directly. Direct `!command` composer input also enters through a service-owned
-`ShellExec` permission preflight and runtime path; a presentation confirmation
-may satisfy `Ask`, but can never override `Deny`.
+directly. Direct `!command` composer input and the persistent shell mode entered
+by pressing `!` on an empty composer both use a service-owned `ShellExec`
+permission preflight and runtime path. Shell mode accepts raw commands until
+the operator exits with Escape; a presentation confirmation may satisfy `Ask`,
+but can never override `Deny`.
 
 ## Provider Attempt Contract
 
