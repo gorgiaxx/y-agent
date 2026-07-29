@@ -135,6 +135,17 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             state.user_message_count = 0;
             state.prompt_template_status = crate::tui::state::PromptTemplateStatus::Default;
             state.follow_up_queue.clear();
+            // Clear status-bar counters and model/cost/context derived from the
+            // previous session so a brand-new session does not inherit stale
+            // token usage, cost, or the prior provider's model name.
+            state.status_model.clear();
+            state.status_tokens.clear();
+            state.cumulative_input_tokens = 0;
+            state.cumulative_output_tokens = 0;
+            state.last_input_tokens = 0;
+            state.last_cost = None;
+            // `context_window` is provider metadata, not per-session: leave it
+            // so the usage bar still renders against the active provider limit.
             CommandResult::NewSession
         }
 

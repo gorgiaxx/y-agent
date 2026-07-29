@@ -826,14 +826,30 @@ fn default_bindings() -> Vec<KeyBinding> {
             KeyChord::new(KeyCode::Enter, KeyModifiers::SHIFT),
             A::InputPassthrough,
         ),
+        // Alt+Enter inserts a newline on every ANSI terminal (ESC + CR) so the
+        // composer can go multi-line even where Shift+Enter is indistinguishable
+        // from Enter (the common case without the Kitty keyboard protocol).
+        binding(
+            C::NormalInputEmpty,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
+            A::InputPassthrough,
+        ),
+        binding(
+            C::NormalInputDraft,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
+            A::InputPassthrough,
+        ),
         binding(C::NormalInputEmpty, plain(KeyCode::Up), A::HistoryPrev),
         binding(C::NormalInputDraft, plain(KeyCode::Up), A::HistoryPrev),
         binding(C::NormalInputEmpty, plain(KeyCode::Down), A::HistoryNext),
         binding(C::NormalInputDraft, plain(KeyCode::Down), A::HistoryNext),
         binding(C::NormalInputEmpty, plain(KeyCode::Tab), A::CycleFocus),
         binding(C::NormalInputDraft, plain(KeyCode::Tab), A::CycleFocus),
-        binding(C::NormalInputEmpty, ctrl('g'), A::ScrollToBottom),
-        binding(C::NormalInputDraft, ctrl('g'), A::ScrollToBottom),
+        // Ctrl+G opens the draft in $VISUAL/$EDITOR (e.g. vim) so long-form
+        // input can use the host editor. Mirrors other agent CLIs and keeps
+        // Ctrl+E as an alias for the same action.
+        binding(C::NormalInputEmpty, ctrl('g'), A::OpenExternalEditor),
+        binding(C::NormalInputDraft, ctrl('g'), A::OpenExternalEditor),
         binding(C::NormalInputEmpty, character(':'), A::EnterCommandMode),
         binding(C::NormalInputDraft, character(':'), A::EnterCommandMode),
         binding(C::NormalInputEmpty, character('!'), A::EnterShellMode),
@@ -920,6 +936,11 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(
             C::Shell,
             KeyChord::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            A::InputPassthrough,
+        ),
+        binding(
+            C::Shell,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
             A::InputPassthrough,
         ),
         binding(C::Shell, plain(KeyCode::Up), A::HistoryPrev),

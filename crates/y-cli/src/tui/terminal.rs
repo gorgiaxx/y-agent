@@ -21,6 +21,11 @@ impl TerminalCapabilities {
     const NATIVE_IMAGE_CLIPBOARD: u8 = 1 << 1;
     const OSC52_COPY: u8 = 1 << 2;
     const FUNCTION_KEY_FALLBACKS: u8 = 1 << 3;
+    /// Kitty keyboard-protocol enhancement so modifier-aware keys (Shift+Enter,
+    /// Alt+arrows, ...) carry their modifiers instead of collapsing to the
+    /// base key. Only requested for baseline hosts; nested terminals (tmux,
+    /// ssh) do not reliably forward the CSI > 1 u handshake.
+    const KEYBOARD_ENHANCEMENT: u8 = 1 << 4;
 
     pub fn detect() -> Self {
         Self::from_environment(
@@ -55,7 +60,9 @@ impl TerminalCapabilities {
                 Self::BRACKETED_PASTE | Self::OSC52_COPY | Self::FUNCTION_KEY_FALLBACKS
             }
             TerminalHost::Baseline | TerminalHost::Wsl => {
-                Self::BRACKETED_PASTE | Self::NATIVE_IMAGE_CLIPBOARD
+                Self::BRACKETED_PASTE
+                    | Self::NATIVE_IMAGE_CLIPBOARD
+                    | Self::KEYBOARD_ENHANCEMENT
             }
         };
         Self { host, features }
@@ -76,6 +83,13 @@ impl TerminalCapabilities {
     pub fn needs_function_key_fallbacks(self) -> bool {
         self.features & Self::FUNCTION_KEY_FALLBACKS != 0
     }
+
+    /// Whether the terminal should be asked for the Kitty keyboard-protocol
+    /// enhancement. When enabled, keys like Shift+Enter and Alt+arrows arrive
+    /// with their real modifiers instead of an unmodified Enter/arrow.
+    pub fn supports_keyboard_enhancement(self) -> bool {
+        self.features & Self::KEYBOARD_ENHANCEMENT != 0
+    }
 }
 
 #[cfg(test)]
@@ -94,10 +108,13 @@ mod tests {
 
         assert_eq!(baseline.host, TerminalHost::Baseline);
         assert!(baseline.supports_native_image_clipboard());
+        assert!(baseline.supports_keyboard_enhancement());
         assert_eq!(tmux.host, TerminalHost::Tmux);
         assert!(tmux.supports_osc52_copy());
+        assert!(!tmux.supports_keyboard_enhancement(), "tmux must not enable kitty kb");
         assert_eq!(ssh.host, TerminalHost::Ssh);
         assert!(ssh.needs_function_key_fallbacks());
+        assert!(!ssh.supports_keyboard_enhancement(), "ssh must not enable kitty kb");
         assert_eq!(nested.host, TerminalHost::TmuxOverSsh);
     }
 
@@ -107,6 +124,7 @@ mod tests {
         assert_eq!(caps.host, TerminalHost::Dumb);
         assert!(!caps.supports_bracketed_paste());
         assert!(!caps.supports_osc52_copy());
+        assert!(!caps.supports_keyboard_enhancement());
         assert!(caps.needs_function_key_fallbacks());
     }
 }

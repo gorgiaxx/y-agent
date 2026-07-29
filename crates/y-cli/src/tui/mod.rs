@@ -34,6 +34,7 @@ use anyhow::Result;
 use base64::Engine as _;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -201,6 +202,9 @@ pub struct TuiApp {
     pending_shell_confirmation: Option<(String, Instant)>,
     /// One-shot flag for commands such as `/attach` that replace the composer.
     preserve_composer_after_command: Toggle,
+    /// Whether the Kitty keyboard-protocol enhancement was pushed onto the
+    /// terminal, so `restore_terminal` pops it only when it actually pushed.
+    keyboard_enhanced: bool,
 }
 
 impl TuiApp {
@@ -225,6 +229,28 @@ impl TuiApp {
         } else {
             execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         }
+
+        // Request the Kitty keyboard-protocol enhancement on capable hosts so
+        // modifier-bearing keys (Shift+Enter, Alt+arrows, ...) arrive with
+        // their real modifiers instead of collapsing to a plain Enter/arrow.
+        // `crossterm` probes the terminal's Primary Device Attributes and
+        // silently no-ops when the terminal does not advertise the flags, so
+        // this is safe to attempt on any xterm-style baseline host.
+        let keyboard_enhanced = if terminal_capabilities.supports_keyboard_enhancement() {
+            execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+                )
+            )
+            .is_ok()
+        } else {
+            false
+        };
+        // Persist whether the push succeeded so restore pops it only when it did.
+        let keyboard_enhanced = keyboard_enhanced;
 
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
@@ -306,6 +332,7 @@ impl TuiApp {
             needs_redraw: Toggle::On,
             keymap,
             terminal_capabilities,
+            keyboard_enhanced,
             quit_confirmation_deadline: None,
             help_scroll: 0,
             prompt_history_store,
@@ -1619,8 +1646,40 @@ impl TuiApp {
         {
             self.state.set_mode(InteractionMode::Command);
             self.palette = CommandPaletteState::new();
+        } else if self.handle_word_motion(key) {
+            // Consumed as a cursor move.
         } else {
             self.textarea.input(key);
+        }
+    }
+
+    /// Map macOS Option+arrow (Alt+Left/Alt+Right) to word-boundary cursor
+    /// moves in the composer.
+    ///
+    /// `tui-textarea`'s default keymap binds word motion to `Alt+b`/`Alt+f`
+    /// (or `Ctrl+Left`/`Ctrl+Right`), so terminals that report Option+arrow as
+    /// a real arrow with the Alt modifier (CSI-u style, decoded by crossterm)
+    /// get ignored. Catch them here and drive `CursorMove::WordBack`/
+    /// `WordForward` directly so Option+arrow jumps a word on every terminal
+    /// regardless of how it encodes the modifier.
+    fn handle_word_motion(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let ctrl_or_alt = alt || ctrl;
+        if !ctrl_or_alt {
+            return false;
+        }
+        match key.code {
+            KeyCode::Left => {
+                self.textarea.move_cursor(CursorMove::WordBack);
+                true
+            }
+            KeyCode::Right => {
+                self.textarea.move_cursor(CursorMove::WordForward);
+                true
+            }
+            _ => false,
         }
     }
 
@@ -2345,6 +2404,7 @@ impl TuiApp {
                 // State has been reset by the handler (messages cleared,
                 // current_session_id set to None, user_message_count reset).
                 // Actual session creation is deferred to first message.
+                self.refresh_default_status_model().await;
                 self.state
                     .push_toast("New session started.".into(), ToastLevel::Info);
             }
@@ -3653,6 +3713,19 @@ impl TuiApp {
         }
     }
 
+    /// Repopulate the status bar's model name and context window from the
+    /// provider pool's default (first registered) provider.
+    ///
+    /// Used after clearing per-session status (e.g. `/new`, or switching into a
+    /// branch that has no assistant metadata yet) so the bar does not collapse
+    /// to an em dash when a sensible default exists.
+    async fn refresh_default_status_model(&mut self) {
+        if let Some(meta) = self.services.provider_pool().await.list_metadata().first() {
+            self.state.context_window = meta.context_window;
+            self.state.status_model.clone_from(&meta.model);
+        }
+    }
+
     /// `/model [provider-id]` -- list models or switch active provider.
     async fn cmd_model(&mut self, provider_id: Option<String>) {
         let pool = self.services.provider_pool().await;
@@ -3818,6 +3891,12 @@ impl TuiApp {
 
     /// Restore the terminal to its original state.
     fn restore_terminal(&mut self) -> Result<()> {
+        if self.keyboard_enhanced {
+            // Best-effort pop: some terminals ignore the sequence when not in
+            // alternate screen, but leaving it pushed can desync the host's
+            // keyboard state, so emit it before leaving the alternate screen.
+            let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
+        }
         disable_raw_mode()?;
         execute!(
             self.terminal.backend_mut(),
@@ -3837,6 +3916,19 @@ impl TuiApp {
             EnableMouseCapture,
             EnableBracketedPaste
         )?;
+        // Re-push the Kitty keyboard enhancement after the alternate screen
+        // was left/restored (e.g. on return from the external editor), so
+        // modifier-aware keys keep working for the rest of the session.
+        if self.keyboard_enhanced {
+            let _ = execute!(
+                self.terminal.backend_mut(),
+                PushKeyboardEnhancementFlags(
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+                )
+            );
+        }
         self.terminal.clear()?;
         self.needs_redraw = Toggle::On;
         Ok(())
@@ -4006,6 +4098,12 @@ impl TuiApp {
         )
         .unwrap_or(0);
         self.load_session_prompt_status(session_id).await;
+        // A brand-new branch (or a session with no assistant turns yet) carries
+        // no model metadata, so restore_status_from_metadata left status_model
+        // empty. Fall back to the provider pool default instead of an em dash.
+        if self.state.status_model.is_empty() {
+            self.refresh_default_status_model().await;
+        }
         Ok(())
     }
 
