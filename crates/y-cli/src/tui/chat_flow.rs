@@ -73,6 +73,11 @@ pub enum ChatEvent {
     /// A queued steer was injected into the active service run at an
     /// LLM-call boundary.
     SteerInjected { steer_id: String, text: String },
+    /// A tool call is waiting for structured user input.
+    AskUserRequested {
+        interaction_id: String,
+        questions: serde_json::Value,
+    },
     /// The active service run acknowledged cancellation.
     Cancelled,
 }
@@ -544,6 +549,18 @@ fn submit_message_with_mode_and_attachments(
                             .send(ChatEvent::SteerInjected { steer_id, text })
                             .await;
                     }
+                    y_service::TurnEvent::UserInteractionRequest {
+                        interaction_id,
+                        questions,
+                        ..
+                    } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::AskUserRequested {
+                                interaction_id,
+                                questions,
+                            })
+                            .await;
+                    }
                     _ => {}
                 }
             }
@@ -869,6 +886,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 crate::tui::state::ToastLevel::Info,
             );
         }
+        ChatEvent::AskUserRequested { .. } => {}
         ChatEvent::Cancelled => {
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {

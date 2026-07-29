@@ -53,6 +53,8 @@ pub enum InteractionMode {
     Queue,
     /// Full-screen background task and subagent viewer (`/tasks` overlay).
     Tasks,
+    /// Modal response UI for a pending `AskUser` tool call.
+    AskUser,
 }
 
 /// Service-owned orchestration mode selected by the TUI operator.
@@ -651,6 +653,7 @@ impl AppState {
                     | InteractionMode::Prompt
                     | InteractionMode::Queue
                     | InteractionMode::Tasks
+                    | InteractionMode::AskUser
                     | InteractionMode::Normal
             ) | (
                 InteractionMode::Command
@@ -663,7 +666,8 @@ impl AppState {
                     | InteractionMode::Resume
                     | InteractionMode::Prompt
                     | InteractionMode::Queue
-                    | InteractionMode::Tasks,
+                    | InteractionMode::Tasks
+                    | InteractionMode::AskUser,
                 InteractionMode::Normal
             ) | (
                 InteractionMode::Command,

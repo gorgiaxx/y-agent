@@ -2,6 +2,7 @@
 //!
 //! Overlays are floating panels rendered on top of the main layout.
 
+pub mod ask_user;
 pub mod backtrack_picker;
 pub mod command_palette;
 pub mod copy_picker;

@@ -57,6 +57,7 @@ use events::{AppEvent, EventLoop};
 use history::PromptHistoryStore;
 use keys::{KeyAction, Keymap};
 use layout::LayoutChunks;
+use overlays::ask_user::{AskUserState, AskUserSubmit};
 use overlays::command_palette::CommandPaletteState;
 use overlays::copy_picker::CopyPickerState;
 use overlays::history_search::HistorySearchState;
@@ -122,6 +123,8 @@ pub struct TuiApp {
     queue_picker: QueuePickerState,
     /// `/tasks` overlay state (subagents + background tasks).
     tasks_picker: TasksPickerState,
+    /// Pending structured question emitted by an `AskUser` tool call.
+    ask_user: AskUserState,
     /// Latest background-task list poll, driving the `bg: N` status-bar badge
     /// and the `/tasks` overlay rows.
     bg_tasks_cache: Vec<y_service::BackgroundTaskInfo>,
@@ -268,6 +271,7 @@ impl TuiApp {
         let prompt_picker = PromptPickerState::default();
         let queue_picker = QueuePickerState::default();
         let tasks_picker = TasksPickerState::default();
+        let ask_user = AskUserState::default();
         let (bg_poll_tx, bg_poll_rx) = tokio::sync::mpsc::unbounded_channel();
         let (clipboard_image_tx, clipboard_image_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -284,6 +288,7 @@ impl TuiApp {
             prompt_picker,
             queue_picker,
             tasks_picker,
+            ask_user,
             bg_tasks_cache: Vec::new(),
             bg_poll_tx,
             bg_poll_rx,
@@ -475,6 +480,7 @@ impl TuiApp {
         let mut created_session = None;
         let mut submission_failed = false;
         let mut submission_finished = false;
+        let mut ask_user_requests = Vec::new();
         loop {
             match active_chat.events.try_recv() {
                 Ok(event) => {
@@ -486,7 +492,13 @@ impl TuiApp {
                         &event,
                         chat_flow::ChatEvent::Response { .. } | chat_flow::ChatEvent::Cancelled
                     );
-                    chat_flow::apply_chat_event(event, &mut self.state);
+                    match event {
+                        chat_flow::ChatEvent::AskUserRequested {
+                            interaction_id,
+                            questions,
+                        } => ask_user_requests.push((interaction_id, questions)),
+                        event => chat_flow::apply_chat_event(event, &mut self.state),
+                    }
                     applied = true;
                 }
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
@@ -497,6 +509,13 @@ impl TuiApp {
                     break;
                 }
             }
+        }
+        for (interaction_id, questions) in ask_user_requests {
+            self.open_ask_user(interaction_id, questions);
+        }
+        if (submission_failed || submission_finished) && self.state.mode == InteractionMode::AskUser
+        {
+            self.close_ask_user();
         }
         if submission_failed {
             self.restore_failed_submission();
@@ -527,6 +546,59 @@ impl TuiApp {
             applied = true;
         }
         applied
+    }
+
+    fn open_ask_user(&mut self, interaction_id: String, questions: serde_json::Value) {
+        match AskUserState::new(interaction_id.clone(), questions) {
+            Ok(ask_user) => {
+                if self.state.mode != InteractionMode::Normal {
+                    self.state.set_mode(InteractionMode::Normal);
+                }
+                self.ask_user = ask_user;
+                self.state.set_mode(InteractionMode::AskUser);
+            }
+            Err(error) => {
+                self.state.push_toast(error, ToastLevel::Error);
+                let pending = Arc::clone(&self.services.session_state.pending_interactions);
+                tokio::spawn(async move {
+                    y_service::user_interaction_orchestrator::UserInteractionOrchestrator::deliver_answer(
+                        &interaction_id,
+                        serde_json::json!({ "answers": {} }),
+                        &pending,
+                    )
+                    .await;
+                });
+            }
+        }
+    }
+
+    async fn deliver_ask_user_answer(&mut self, answer: serde_json::Value) {
+        let Some(interaction_id) = self.ask_user.interaction_id().map(str::to_owned) else {
+            self.close_ask_user();
+            return;
+        };
+        let delivered =
+            y_service::user_interaction_orchestrator::UserInteractionOrchestrator::deliver_answer(
+                &interaction_id,
+                answer,
+                &self.services.session_state.pending_interactions,
+            )
+            .await;
+        if !delivered {
+            self.state.push_toast(
+                "AskUser response expired before it could be delivered.".into(),
+                ToastLevel::Warning,
+            );
+        }
+        self.close_ask_user();
+    }
+
+    fn close_ask_user(&mut self) {
+        self.ask_user = AskUserState::default();
+        if self.state.mode == InteractionMode::AskUser {
+            self.state.set_mode(InteractionMode::Normal);
+            self.state.set_focus(PanelFocus::Input);
+        }
     }
 
     /// Process a key event. Returns `true` when the app should quit.
@@ -586,7 +658,9 @@ impl TuiApp {
                 self.state.cycle_focus_forward();
             }
             KeyAction::ScrollUp => {
-                if self.state.mode == InteractionMode::Help {
+                if self.state.mode == InteractionMode::AskUser {
+                    self.ask_user.select_prev();
+                } else if self.state.mode == InteractionMode::Help {
                     self.help_scroll = self.help_scroll.saturating_sub(1);
                 } else if self.state.mode == InteractionMode::Resume {
                     self.session_picker.select_prev();
@@ -609,7 +683,9 @@ impl TuiApp {
                 }
             }
             KeyAction::ScrollDown => {
-                if self.state.mode == InteractionMode::Help {
+                if self.state.mode == InteractionMode::AskUser {
+                    self.ask_user.select_next();
+                } else if self.state.mode == InteractionMode::Help {
                     self.help_scroll = self.help_scroll.saturating_add(1);
                 } else if self.state.mode == InteractionMode::Resume {
                     self.session_picker.select_next();
@@ -834,6 +910,17 @@ impl TuiApp {
             KeyAction::TasksRefresh => {
                 self.tasks_refresh().await;
             }
+            KeyAction::AskUserToggle => {
+                if self.ask_user.is_editing_other() {
+                    self.ask_user.push_other_char(' ');
+                } else {
+                    self.ask_user.toggle_focused();
+                }
+            }
+            KeyAction::AskUserDismiss => {
+                self.deliver_ask_user_answer(serde_json::json!({ "answers": {} }))
+                    .await;
+            }
             action @ (KeyAction::SessionPin
             | KeyAction::SessionArchive
             | KeyAction::SessionDelete
@@ -855,7 +942,11 @@ impl TuiApp {
     /// slash command, or queued follow-up). Returns `true` when the executed
     /// command requested quitting the app.
     async fn handle_submit(&mut self) -> bool {
-        if self.state.mode == InteractionMode::Resume {
+        if self.state.mode == InteractionMode::AskUser {
+            if let AskUserSubmit::Complete(answer) = self.ask_user.submit() {
+                self.deliver_ask_user_answer(answer).await;
+            }
+        } else if self.state.mode == InteractionMode::Resume {
             let Some(session_id) = self
                 .session_picker
                 .selected_session()
@@ -1476,7 +1567,13 @@ impl TuiApp {
     }
 
     fn handle_input_passthrough(&mut self, key: crossterm::event::KeyEvent) {
-        if self.state.mode == InteractionMode::Resume {
+        if self.state.mode == InteractionMode::AskUser {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.ask_user.push_other_char(character);
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                self.ask_user.pop_other_char();
+            }
+        } else if self.state.mode == InteractionMode::Resume {
             if let crossterm::event::KeyCode::Char(character) = key.code {
                 self.session_picker.push_char(character);
             } else if key.code == crossterm::event::KeyCode::Backspace {
@@ -1562,6 +1659,11 @@ impl TuiApp {
             InteractionMode::Command => {
                 for character in single_line_paste_text(text).chars() {
                     self.palette.push_char(character);
+                }
+            }
+            InteractionMode::AskUser => {
+                for character in single_line_paste_text(text).chars() {
+                    self.ask_user.push_other_char(character);
                 }
             }
             // Normal-ish modes insert into the composer. Unlike typed input,
@@ -1706,6 +1808,7 @@ impl TuiApp {
                 | InteractionMode::Prompt
                 | InteractionMode::Queue
                 | InteractionMode::Tasks
+                | InteractionMode::AskUser
         ) {
             return;
         }
@@ -2101,6 +2204,10 @@ impl TuiApp {
 
             if state.mode == InteractionMode::Tasks {
                 overlays::tasks_picker::render(frame, area, &self.tasks_picker, &state.theme);
+            }
+
+            if state.mode == InteractionMode::AskUser {
+                overlays::ask_user::render(frame, area, &self.ask_user, &state.theme);
             }
 
             // Render help overlay if in Help mode.

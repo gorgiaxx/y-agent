@@ -115,6 +115,10 @@ pub enum KeyAction {
     TasksKill,
     /// Refresh the `/tasks` overlay contents.
     TasksRefresh,
+    /// Toggle the focused option in an `AskUser` question.
+    AskUserToggle,
+    /// Dismiss a pending `AskUser` question without an answer.
+    AskUserDismiss,
     /// Toggle pin on the selected session.
     SessionPin,
     /// Archive the selected session.
@@ -182,6 +186,8 @@ impl KeyAction {
             Self::QueueRecall => "queue_recall",
             Self::TasksKill => "tasks_kill",
             Self::TasksRefresh => "tasks_refresh",
+            Self::AskUserToggle => "ask_user_toggle",
+            Self::AskUserDismiss => "ask_user_dismiss",
             Self::SessionPin => "session_pin",
             Self::SessionArchive => "session_archive",
             Self::SessionDelete => "session_delete",
@@ -247,6 +253,8 @@ impl KeyAction {
             Self::QueueRecall => "Recall queued follow-up for editing",
             Self::TasksKill => "Kill selected background task",
             Self::TasksRefresh => "Refresh tasks",
+            Self::AskUserToggle => "Toggle the focused answer",
+            Self::AskUserDismiss => "Dismiss the question",
             Self::SessionPin => "Pin or unpin selected session",
             Self::SessionArchive => "Archive selected session",
             Self::SessionDelete => "Delete selected session with confirmation",
@@ -306,6 +314,8 @@ const ALL_ACTIONS: &[KeyAction] = &[
     KeyAction::QueueRecall,
     KeyAction::TasksKill,
     KeyAction::TasksRefresh,
+    KeyAction::AskUserToggle,
+    KeyAction::AskUserDismiss,
     KeyAction::SessionPin,
     KeyAction::SessionArchive,
     KeyAction::SessionDelete,
@@ -335,6 +345,7 @@ pub enum KeyContext {
     CopyPicker,
     Queue,
     Tasks,
+    AskUser,
 }
 
 impl KeyContext {
@@ -355,6 +366,7 @@ impl KeyContext {
             Self::CopyPicker => "copy picker",
             Self::Queue => "follow-up queue",
             Self::Tasks => "tasks",
+            Self::AskUser => "AskUser prompt",
         }
     }
 }
@@ -1014,6 +1026,12 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::Tasks, character('j'), A::ScrollDown),
         binding(C::Tasks, character('d'), A::TasksKill),
         binding(C::Tasks, character('r'), A::TasksRefresh),
+        binding(C::AskUser, plain(KeyCode::Esc), A::AskUserDismiss),
+        binding(C::AskUser, ctrl('c'), A::AskUserDismiss),
+        binding(C::AskUser, plain(KeyCode::Enter), A::Submit),
+        binding(C::AskUser, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::AskUser, plain(KeyCode::Down), A::ScrollDown),
+        binding(C::AskUser, plain(KeyCode::Char(' ')), A::AskUserToggle),
     ]
 }
 
@@ -1021,7 +1039,7 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
     let mut contexts = vec![KeyContext::Global];
     if state.is_cancelling {
         contexts.insert(0, KeyContext::Cancelling);
-    } else if state.is_streaming {
+    } else if state.is_streaming && state.mode != InteractionMode::AskUser {
         contexts.insert(0, KeyContext::Streaming);
     }
     let mode = match state.mode {
@@ -1036,6 +1054,7 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
         InteractionMode::Help => KeyContext::Help,
         InteractionMode::Queue => KeyContext::Queue,
         InteractionMode::Tasks => KeyContext::Tasks,
+        InteractionMode::AskUser => KeyContext::AskUser,
         InteractionMode::Resume => KeyContext::SessionHub,
         InteractionMode::Copy => KeyContext::CopyPicker,
         InteractionMode::HistorySearch
@@ -1055,7 +1074,8 @@ fn fallback_action(state: &AppState) -> KeyAction {
         | InteractionMode::HistorySearch
         | InteractionMode::TranscriptSearch
         | InteractionMode::Resume
-        | InteractionMode::Prompt => KeyAction::InputPassthrough,
+        | InteractionMode::Prompt
+        | InteractionMode::AskUser => KeyAction::InputPassthrough,
         InteractionMode::Help | InteractionMode::Queue | InteractionMode::Tasks => {
             KeyAction::Consumed
         }
@@ -1665,6 +1685,29 @@ mod tests {
                 true,
             ),
             KeyAction::PasteImage
+        );
+    }
+
+    #[test]
+    fn test_ask_user_bindings_override_stream_cancellation() {
+        let keymap = Keymap::default();
+        let mut state = AppState::new();
+        state.mode = InteractionMode::AskUser;
+        state.is_streaming = true;
+
+        assert_eq!(
+            keymap.dispatch_with_composer(key(KeyCode::Esc), &state, true),
+            KeyAction::AskUserDismiss
+        );
+        assert_eq!(dispatch(key(KeyCode::Enter), &state), KeyAction::Submit);
+        assert_eq!(
+            dispatch(key(KeyCode::Char(' ')), &state),
+            KeyAction::AskUserToggle
+        );
+        assert_eq!(dispatch(key(KeyCode::Up), &state), KeyAction::ScrollUp);
+        assert_eq!(
+            dispatch(key(KeyCode::Char('x')), &state),
+            KeyAction::InputPassthrough
         );
     }
 }
