@@ -791,23 +791,8 @@ fn render_message(
         }
     }
 
-    // Live working indicator pinned to the tail of the in-flight message:
-    // the animated spinner marks the run as still active (not finished) and
-    // re-renders every tick through the streaming cache invalidation.
-    if msg.is_streaming {
-        let spinner = SPINNER_FRAMES[(tick as usize) % SPINNER_FRAMES.len()];
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{spinner} "),
-                Style::default()
-                    .fg(t.streaming_dot())
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("working...".to_string(), Style::default().fg(t.muted())),
-        ]));
-        plain_lines.push(format!("{spinner} working..."));
-    }
-
+    // The global "agent is running" signal lives in the status bar (spinner
+    // + elapsed); the chat panel carries no working indicator of its own.
     if msg.is_cancelled {
         lines.push(Line::from(Span::styled(
             "(cancelled)".to_string(),
@@ -2229,10 +2214,12 @@ mod tests {
     }
 
     #[test]
-    fn test_streaming_placeholder_for_empty_message() {
+    fn test_streaming_message_has_no_working_indicator() {
+        // The running animation lives in the status bar only; the chat panel
+        // must not duplicate it as a trailing "working..." line.
         let msg = ChatMessage {
             role: MessageRole::Assistant,
-            content: String::new(),
+            content: "partial answer".to_string(),
             timestamp: Utc::now(),
             is_streaming: true,
             is_cancelled: false,
@@ -2241,36 +2228,27 @@ mod tests {
             tool_calls: Vec::new(),
             segments: Vec::new(),
         };
-        let placeholder_at = |tick: u64| {
-            let mut lines = Vec::new();
-            let mut plain = Vec::new();
-            let mut tool_ranges = Vec::new();
-            render_message(
-                &mut lines,
-                &mut plain,
-                &mut tool_ranges,
-                &msg,
-                0,
-                None,
-                false,
-                tick,
-                80,
-                &Theme::default(),
-            );
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+        let mut tool_ranges = Vec::new();
+        render_message(
+            &mut lines,
+            &mut plain,
+            &mut tool_ranges,
+            &msg,
+            0,
+            None,
+            false,
+            0,
+            80,
+            &Theme::default(),
+        );
 
-            assert_eq!(lines.len(), 1, "placeholder must be a single line");
-            assert!(plain[0].contains(SPINNER_FRAMES[(tick as usize) % SPINNER_FRAMES.len()]));
-            lines[0]
-                .spans
-                .iter()
-                .map(|s| s.content.to_string())
-                .collect::<String>()
-        };
-
-        // The streaming placeholder is the animated braille spinner.
-        assert!(placeholder_at(0).contains(SPINNER_FRAMES[0]));
-        assert!(placeholder_at(1).contains(SPINNER_FRAMES[1]));
-        assert!(!placeholder_at(0).contains(SPINNER_FRAMES[1]));
+        assert_eq!(plain, vec!["partial answer".to_string()]);
+        assert!(
+            plain.iter().all(|line| !line.contains("working")),
+            "chat must not carry a working indicator: {plain:?}"
+        );
     }
 
     #[test]
@@ -3311,17 +3289,14 @@ mod tests {
     fn test_cached_message_render_streaming_message_revalidates_per_tick() {
         let theme = Theme::default();
         let mut cache = ChatRenderCache::default();
-        let mut msg = user_message(String::new());
+        let mut msg = user_message("hi".to_string());
         msg.is_streaming = true;
 
         let g1 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
         let g2 = cached_message_render(&mut cache, 0, &msg, None, true, 1, 80, &theme).generation;
-        assert_ne!(g1, g2, "streaming placeholder must re-render each tick");
-
-        let placeholder = &cache.get(0).unwrap().plain[0];
-        assert!(
-            placeholder.contains(SPINNER_FRAMES[1]),
-            "placeholder must show the tick-1 spinner frame: {placeholder}"
+        assert_ne!(
+            g1, g2,
+            "streaming messages must re-render each tick so fresh content lands immediately"
         );
     }
 }
