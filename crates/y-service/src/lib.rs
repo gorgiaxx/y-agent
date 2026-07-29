@@ -54,6 +54,7 @@ pub mod observability;
 pub mod operator_shell;
 pub mod orchestrator_dispatcher;
 pub mod plan_orchestrator;
+mod prepared_turn_context;
 pub mod prompt_templates;
 pub mod rewind;
 pub mod scheduler_service;
