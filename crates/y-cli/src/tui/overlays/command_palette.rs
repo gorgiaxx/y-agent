@@ -14,6 +14,19 @@ use crate::tui::theme::Theme;
 
 use super::picker::visible_range;
 
+/// Outcome of a Backspace press inside the palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteBackspace {
+    /// Removed the last character of the filter input.
+    Popped,
+    /// Filter input was already empty in argument mode: argument
+    /// completion closed, returning to the command list.
+    ExitArgMode,
+    /// Filter input was already empty at the command list: the `/` that
+    /// opened the palette is deleted, so the palette itself should close.
+    Close,
+}
+
 /// State for the command palette overlay.
 #[derive(Debug, Clone)]
 pub struct CommandPaletteState {
@@ -159,6 +172,20 @@ impl CommandPaletteState {
         self.input.pop();
         self.selected = 0;
         self.update_filter();
+    }
+
+    /// Handle a Backspace press, including the empty-input edges: leaving
+    /// argument mode, or signalling that the palette itself should close.
+    pub fn backspace(&mut self) -> PaletteBackspace {
+        if !self.input.is_empty() {
+            self.pop_char();
+            return PaletteBackspace::Popped;
+        }
+        if self.in_arg_mode() {
+            *self = Self::new();
+            return PaletteBackspace::ExitArgMode;
+        }
+        PaletteBackspace::Close
     }
 }
 
@@ -393,6 +420,39 @@ mod tests {
 
         palette.pop_char();
         assert!(palette.filtered_names.len() > narrow_count);
+    }
+
+    // T-PALETTE-BACKSPACE-01: Backspace on an empty command filter signals
+    // that the palette should close (the `/` that opened it is deleted).
+    #[test]
+    fn test_backspace_on_empty_command_input_closes_palette() {
+        let mut palette = CommandPaletteState::new();
+        assert_eq!(palette.backspace(), PaletteBackspace::Close);
+    }
+
+    // T-PALETTE-BACKSPACE-02: Backspace on an empty argument filter leaves
+    // argument mode and returns to the command list instead of closing.
+    #[test]
+    fn test_backspace_on_empty_arg_input_exits_arg_mode() {
+        let mut palette = CommandPaletteState::new();
+        palette.enter_arg_mode(
+            "model".to_string(),
+            vec![("gpt-5".to_string(), String::new())],
+        );
+        assert_eq!(palette.backspace(), PaletteBackspace::ExitArgMode);
+        assert!(!palette.in_arg_mode());
+        assert!(palette.input.is_empty());
+    }
+
+    // T-PALETTE-BACKSPACE-03: Backspace pops typed characters first; only an
+    // already-empty filter closes the palette.
+    #[test]
+    fn test_backspace_pops_typed_characters_before_closing() {
+        let mut palette = CommandPaletteState::new();
+        palette.push_char('n');
+        assert_eq!(palette.backspace(), PaletteBackspace::Popped);
+        assert!(palette.input.is_empty());
+        assert_eq!(palette.backspace(), PaletteBackspace::Close);
     }
 
     #[test]

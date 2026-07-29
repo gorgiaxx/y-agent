@@ -61,7 +61,7 @@ use history::PromptHistoryStore;
 use keys::{KeyAction, Keymap};
 use layout::LayoutChunks;
 use overlays::ask_user::{AskUserState, AskUserSubmit};
-use overlays::command_palette::CommandPaletteState;
+use overlays::command_palette::{CommandPaletteState, PaletteBackspace};
 use overlays::copy_picker::CopyPickerState;
 use overlays::history_search::HistorySearchState;
 use overlays::permission::{PermissionPromptState, PlanReviewPromptState};
@@ -1869,10 +1869,13 @@ impl TuiApp {
             if let crossterm::event::KeyCode::Char(character) = key.code {
                 self.palette.push_char(character);
             } else if key.code == crossterm::event::KeyCode::Backspace {
-                if self.palette.in_arg_mode() && self.palette.input.is_empty() {
-                    self.palette = CommandPaletteState::new();
-                } else {
-                    self.palette.pop_char();
+                // Deleting past the `/` that opened the palette closes it:
+                // the slash is gone, so Command mode ends and the composer
+                // returns to Normal. This path also runs while streaming,
+                // where Esc is reserved for cancelling the response.
+                if self.palette.backspace() == PaletteBackspace::Close {
+                    self.state.set_mode(InteractionMode::Normal);
+                    self.state.set_focus(PanelFocus::Input);
                 }
             }
         } else if self.handle_fragment_edit_key(key) {
