@@ -16,11 +16,10 @@ use y_service::chat_types::PlanReviewDecision;
 use y_service::chat_types::{
     ChatCheckpointInfo, CompactResult, MessageWithStatus, RestoreResult, TurnMeta, UndoResult,
 };
-use y_service::decode_session_prompt_config;
 use y_service::event_sink::EventSink;
 use y_service::{
-    ChatService, FollowUpMessage, PermissionPromptResponse, PrepareTurnRequest, PreparedTurn,
-    ResendTurnRequest, SteerMessage, TurnEvent,
+    ChatService, FollowUpMessage, PermissionPromptResponse, PrepareTurnRequest, ResendTurnRequest,
+    SteerMessage, TurnEvent,
 };
 
 use crate::state::AppState;
@@ -243,7 +242,14 @@ pub async fn chat_send(
     let result_sid = sid.0.clone();
     let result_run_id = run_id.clone();
 
-    apply_prepared_prompt_context(&state, &sid, &mut prepared).await;
+    let fallback_working_directory = state.state_dir.join("tmp");
+    ChatService::apply_prepared_turn_context(
+        &state.container,
+        &state.config_dir,
+        Some(&fallback_working_directory),
+        &mut prepared,
+    )
+    .await;
 
     // Create a cancellation token for this run and register it so chat_cancel
     // can trigger it for immediate mid-LLM-call termination.
@@ -399,93 +405,6 @@ impl EventSink for TauriEventSink {
                 title: title.to_owned(),
             },
         );
-    }
-}
-
-async fn apply_prepared_prompt_context(
-    state: &AppState,
-    session_id: &SessionId,
-    prepared: &mut PreparedTurn,
-) {
-    let workspace_path = super::workspace::resolve_workspace_path(&state.config_dir, &session_id.0);
-    let session_prompt_config = decode_session_prompt_config(
-        state
-            .container
-            .session_manager
-            .get_custom_system_prompt(session_id)
-            .await
-            .unwrap_or(None),
-    );
-
-    let (agent_mode, working_directory, available_tools, agent_prompt, prompt_sections, permission) =
-        prepared.agent_config.as_ref().map_or_else(
-            || {
-                (
-                    String::new(),
-                    resolve_turn_working_directory(None, workspace_path.clone(), &state.state_dir),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                )
-            },
-            |config| {
-                (
-                    config.agent_mode.clone(),
-                    resolve_turn_working_directory(
-                        config.working_directory.clone(),
-                        workspace_path.clone(),
-                        &state.state_dir,
-                    ),
-                    if !config.features.toolcall || config.allowed_tools.is_empty() {
-                        Vec::new()
-                    } else {
-                        config.allowed_tools.clone()
-                    },
-                    config.system_prompt.clone(),
-                    (!config.prompt_section_ids.is_empty())
-                        .then(|| config.prompt_section_ids.clone()),
-                    config.permission_mode,
-                )
-            },
-        );
-
-    tracing::info!(
-        session_id = %session_id.0,
-        working_directory = ?working_directory,
-        skills = ?prepared.skills,
-        knowledge_collections = ?prepared.knowledge_collections,
-        has_custom_prompt = session_prompt_config.system_prompt.is_some()
-            || !session_prompt_config.prompt_section_ids.is_empty()
-            || agent_prompt.is_some(),
-        agent_mode = %agent_mode,
-        "applied prompt context for prepared turn"
-    );
-
-    prepared.working_directory.clone_from(&working_directory);
-
-    {
-        let mut ctx = state.container.prompt_context.write().await;
-        ctx.agent_mode = agent_mode;
-        ctx.working_directory = working_directory;
-        ctx.custom_system_prompt = session_prompt_config.system_prompt.or(agent_prompt);
-        ctx.active_skills.clone_from(&prepared.skills);
-        ctx.available_tools = available_tools;
-        ctx.selected_prompt_sections = (!session_prompt_config.prompt_section_ids.is_empty())
-            .then_some(session_prompt_config.prompt_section_ids)
-            .or(prompt_sections);
-    }
-
-    if let Some(default_permission) = permission {
-        let mut modes = state
-            .container
-            .session_state
-            .session_permission_modes
-            .write()
-            .await;
-        modes
-            .entry(session_id.clone())
-            .or_insert(default_permission);
     }
 }
 
@@ -796,8 +715,14 @@ pub async fn chat_resend(
     let result_sid = session_id.clone();
     let result_run_id = run_id.clone();
 
-    let prepared_session_id = prepared.session_id.clone();
-    apply_prepared_prompt_context(&state, &prepared_session_id, &mut prepared).await;
+    let fallback_working_directory = state.state_dir.join("tmp");
+    ChatService::apply_prepared_turn_context(
+        &state.container,
+        &state.config_dir,
+        Some(&fallback_working_directory),
+        &mut prepared,
+    )
+    .await;
 
     // Register cancellation token.
     let cancel_token = CancellationToken::new();
