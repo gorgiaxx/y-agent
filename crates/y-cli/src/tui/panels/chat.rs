@@ -623,7 +623,6 @@ fn render_message(
     // message and force every other line one indent level deeper. Instead
     // the user's own text is highlighted (see render_content_lines) and
     // tool/thought cards act as the visual separators between turns.
-    let content_start = lines.len();
 
     // Historical messages may only have the legacy aggregate reasoning field.
     // Streaming messages render reasoning from event-ordered segments below.
@@ -792,16 +791,21 @@ fn render_message(
         }
     }
 
-    // A streaming message that has not produced any renderable content yet
-    // still needs a visible placeholder (the status bar carries the global
-    // running indicator).
-    if msg.is_streaming && lines.len() == content_start {
+    // Live working indicator pinned to the tail of the in-flight message:
+    // the animated spinner marks the run as still active (not finished) and
+    // re-renders every tick through the streaming cache invalidation.
+    if msg.is_streaming {
         let spinner = SPINNER_FRAMES[(tick as usize) % SPINNER_FRAMES.len()];
-        lines.push(Line::from(Span::styled(
-            spinner.to_string(),
-            Style::default().fg(t.streaming_dot()),
-        )));
-        plain_lines.push(spinner.to_string());
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{spinner} "),
+                Style::default()
+                    .fg(t.streaming_dot())
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("working...".to_string(), Style::default().fg(t.muted())),
+        ]));
+        plain_lines.push(format!("{spinner} working..."));
     }
 
     if msg.is_cancelled {

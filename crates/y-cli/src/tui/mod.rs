@@ -11,6 +11,7 @@ pub mod composer;
 pub mod drafts;
 pub mod editor;
 pub mod events;
+pub mod git_status;
 pub mod history;
 pub mod keys;
 pub mod layout;
