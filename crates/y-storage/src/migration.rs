@@ -18,7 +18,7 @@ use crate::error::StorageError;
 /// Full DDL for a fresh database, embedded at compile time.
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 /// Monotonic storage schema version mirrored in `PRAGMA user_version`.
-pub const CURRENT_SCHEMA_VERSION: i64 = 3;
+pub const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 const REQUIRED_TABLES_V1: &[&str] = &[
     "session_metadata",
@@ -35,6 +35,22 @@ const REQUIRED_TABLES_V1: &[&str] = &[
     "plan_runs",
     "plan_step_results",
 ];
+const REQUIRED_TABLES_V3: &[&str] = &[
+    "session_metadata",
+    "orchestrator_workflows",
+    "orchestrator_checkpoints",
+    "schedule_definitions",
+    "schedule_executions",
+    "chat_checkpoints",
+    "chat_messages",
+    "diag_traces",
+    "diag_observations",
+    "diag_scores",
+    "provider_metrics_log",
+    "plan_runs",
+    "plan_step_results",
+    "session_events",
+];
 const REQUIRED_TABLES: &[&str] = &[
     "session_metadata",
     "orchestrator_workflows",
@@ -50,6 +66,8 @@ const REQUIRED_TABLES: &[&str] = &[
     "plan_runs",
     "plan_step_results",
     "session_events",
+    "runtime_instances",
+    "runtime_leases",
 ];
 
 const REQUIRED_SESSION_COLUMNS_V2: &[&str] = &[
@@ -74,6 +92,23 @@ const REQUIRED_SCHEDULE_COLUMNS: &[&str] = &[
 const REQUIRED_CHAT_MESSAGE_COLUMNS: &[&str] =
     &["parent_message_id", "pruning_group_id", "has_tool_calls"];
 const REQUIRED_TRACE_COLUMNS: &[&str] = &["tags", "replay_context"];
+const REQUIRED_RUNTIME_INSTANCE_COLUMNS: &[&str] = &[
+    "instance_id",
+    "process_id",
+    "runtime_kind",
+    "metadata",
+    "started_at",
+    "heartbeat_at",
+];
+const REQUIRED_RUNTIME_LEASE_COLUMNS: &[&str] = &[
+    "resource_kind",
+    "resource_id",
+    "owner_instance_id",
+    "fencing_token",
+    "expires_at",
+    "created_at",
+    "updated_at",
+];
 
 /// Prepare an on-disk database before normal pool creation.
 ///
@@ -94,14 +129,37 @@ pub async fn prepare_database(config: &StorageConfig) -> Result<(), StorageError
         &SqliteConnectOptions::new()
             .filename(&config.db_path)
             .create_if_missing(false)
-            .foreign_keys(true),
+            .foreign_keys(true)
+            .busy_timeout(std::time::Duration::from_millis(u64::from(
+                config.busy_timeout_ms,
+            ))),
     )
     .await
     .map_err(|e| StorageError::Connection {
         message: format!("failed to open SQLite database for compatibility check: {e}"),
     })?;
 
-    let incompatibility = incompatibility_reason(&mut connection).await?;
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut connection)
+        .await
+        .map_err(|error| StorageError::Migration {
+            message: format!("failed to acquire SQLite schema preparation lock: {error}"),
+        })?;
+    let incompatibility = match incompatibility_reason(&mut connection).await {
+        Ok(incompatibility) => {
+            sqlx::query("COMMIT")
+                .execute(&mut connection)
+                .await
+                .map_err(|error| StorageError::Migration {
+                    message: format!("failed to commit SQLite schema preparation: {error}"),
+                })?;
+            incompatibility
+        }
+        Err(error) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut connection).await;
+            return Err(error);
+        }
+    };
     connection
         .close()
         .await
@@ -122,22 +180,34 @@ pub async fn prepare_database(config: &StorageConfig) -> Result<(), StorageError
 /// the binary so no external migration directory is needed at runtime. Every
 /// statement uses `IF NOT EXISTS`, making the call safe to repeat.
 pub async fn run_embedded_migrations(pool: &SqlitePool) -> Result<(), StorageError> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|error| StorageError::Migration {
+            message: format!("failed to begin schema initialization: {error}"),
+        })?;
     sqlx::raw_sql(SCHEMA_SQL)
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| StorageError::Migration {
             message: format!("schema initialization failed: {e}"),
         })?;
 
     sqlx::query(&format!("PRAGMA user_version = {CURRENT_SCHEMA_VERSION}"))
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .map_err(|e| StorageError::Migration {
             message: format!("failed to persist schema version: {e}"),
         })?;
 
-    info!("SQLite schema initialized");
+    transaction
+        .commit()
+        .await
+        .map_err(|error| StorageError::Migration {
+            message: format!("failed to commit schema initialization: {error}"),
+        })?;
 
+    info!("SQLite schema initialized");
     Ok(())
 }
 
@@ -159,10 +229,16 @@ async fn incompatibility_reason(
     if user_version == 1 && schema_shape_matches_v1(connection, &table_names).await? {
         upgrade_v1_to_v2(connection).await?;
         upgrade_v2_to_v3(connection).await?;
+        upgrade_v3_to_v4(connection).await?;
         return Ok(None);
     }
     if user_version == 2 && schema_shape_matches_v2(connection, &table_names).await? {
         upgrade_v2_to_v3(connection).await?;
+        upgrade_v3_to_v4(connection).await?;
+        return Ok(None);
+    }
+    if user_version == 3 && schema_shape_matches_v3(connection, &table_names).await? {
+        upgrade_v3_to_v4(connection).await?;
         return Ok(None);
     }
     let schema_matches = schema_shape_matches(connection, &table_names).await?;
@@ -206,14 +282,26 @@ async fn schema_shape_matches(
         return Ok(false);
     }
 
-    schema_shape_matches_common(connection, REQUIRED_SESSION_COLUMNS).await
+    if !schema_shape_matches_common(connection, REQUIRED_SESSION_COLUMNS).await? {
+        return Ok(false);
+    }
+    if !table_has_columns(
+        connection,
+        "runtime_instances",
+        REQUIRED_RUNTIME_INSTANCE_COLUMNS,
+    )
+    .await?
+    {
+        return Ok(false);
+    }
+    table_has_columns(connection, "runtime_leases", REQUIRED_RUNTIME_LEASE_COLUMNS).await
 }
 
 async fn schema_shape_matches_v2(
     connection: &mut SqliteConnection,
     table_names: &BTreeSet<String>,
 ) -> Result<bool, StorageError> {
-    if REQUIRED_TABLES
+    if REQUIRED_TABLES_V3
         .iter()
         .any(|table| !table_names.contains(*table))
     {
@@ -221,6 +309,20 @@ async fn schema_shape_matches_v2(
     }
 
     schema_shape_matches_common(connection, REQUIRED_SESSION_COLUMNS_V2).await
+}
+
+async fn schema_shape_matches_v3(
+    connection: &mut SqliteConnection,
+    table_names: &BTreeSet<String>,
+) -> Result<bool, StorageError> {
+    if REQUIRED_TABLES_V3
+        .iter()
+        .any(|table| !table_names.contains(*table))
+    {
+        return Ok(false);
+    }
+
+    schema_shape_matches_common(connection, REQUIRED_SESSION_COLUMNS).await
 }
 
 async fn schema_shape_matches_v1(
@@ -307,8 +409,45 @@ async fn upgrade_v2_to_v3(connection: &mut SqliteConnection) -> Result<(), Stora
     .map_err(|error| StorageError::Migration {
         message: format!("failed to upgrade schema v2 to v3: {error}"),
     })?;
-    set_user_version(connection, CURRENT_SCHEMA_VERSION).await?;
+    set_user_version(connection, 3).await?;
     info!("upgraded SQLite schema from v2 to v3");
+    Ok(())
+}
+
+async fn upgrade_v3_to_v4(connection: &mut SqliteConnection) -> Result<(), StorageError> {
+    sqlx::raw_sql(
+        r"CREATE TABLE IF NOT EXISTS runtime_instances (
+            instance_id TEXT PRIMARY KEY,
+            process_id INTEGER NOT NULL,
+            runtime_kind TEXT NOT NULL,
+            metadata TEXT NOT NULL DEFAULT '{}',
+            started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            heartbeat_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_instances_heartbeat
+            ON runtime_instances(heartbeat_at);
+        CREATE TABLE IF NOT EXISTS runtime_leases (
+            resource_kind TEXT NOT NULL,
+            resource_id TEXT NOT NULL,
+            owner_instance_id TEXT NOT NULL,
+            fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            PRIMARY KEY (resource_kind, resource_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_runtime_leases_owner
+            ON runtime_leases(owner_instance_id);
+        CREATE INDEX IF NOT EXISTS idx_runtime_leases_expiry
+            ON runtime_leases(expires_at);",
+    )
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| StorageError::Migration {
+        message: format!("failed to upgrade schema v3 to v4: {error}"),
+    })?;
+    set_user_version(connection, CURRENT_SCHEMA_VERSION).await?;
+    info!("upgraded SQLite schema from v3 to v4");
     Ok(())
 }
 
@@ -440,6 +579,8 @@ mod tests {
         "diag_scores",
         "provider_metrics_log",
         "session_events",
+        "runtime_instances",
+        "runtime_leases",
     ];
 
     async fn setup_pool_with_migrations() -> SqlitePool {

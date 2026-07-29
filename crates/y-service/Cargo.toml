@@ -57,7 +57,13 @@ hex = { workspace = true, optional = true }
 semver = { version = "1", optional = true }
 
 [features]
-default = ["agent_swarm", "compaction_prefire", "hook_handlers", "worktree_isolation"]
+default = [
+    "agent_swarm",
+    "compaction_prefire",
+    "hook_handlers",
+    "instance_coordination",
+    "worktree_isolation",
+]
 agent_swarm = ["y-tools/agent_swarm"]
 background_auto_wake = []
 compaction_prefire = []
@@ -65,6 +71,7 @@ capability_packs = ["dep:hex", "dep:semver"]
 lsp = ["y-tools/lsp"]
 worktree_isolation = ["y-runtime/worktree_isolation"]
 hook_handlers = ["y-hooks/hook_handlers"]
+instance_coordination = ["y-storage/instance_coordination"]
 llm_hooks = ["y-hooks/llm_hooks"]
 langfuse = ["y-diagnostics/langfuse"]
 

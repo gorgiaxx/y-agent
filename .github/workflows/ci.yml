@@ -63,6 +63,16 @@ jobs:
           cache: npm
           cache-dependency-path: crates/y-gui/package-lock.json
 
+      - name: Check lock file in sync
+        working-directory: crates/y-gui
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          if ! git diff --quiet package-lock.json; then
+            echo "::error::package-lock.json is out of sync with package.json. Run 'npm install' locally and commit the updated lock file."
+            git --no-pager diff --stat package-lock.json
+            exit 1
+          fi
+
       - name: Install GUI dependencies
         working-directory: crates/y-gui
         run: npm ci

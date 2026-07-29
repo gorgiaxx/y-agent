@@ -32,7 +32,7 @@ pub async fn run(
     resume_session: Option<String>,
 ) -> Result<ExitInfo> {
     let services = Arc::new(services);
-    services.start_background_services().await;
+    services.start_background_services().await?;
     let mut app = TuiApp::new(services, toast_rx)?;
 
     // If a session was specified, switch to it before entering the main loop.

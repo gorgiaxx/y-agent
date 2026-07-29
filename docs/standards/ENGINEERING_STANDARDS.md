@@ -509,6 +509,16 @@ pub trait RuntimeAdapter: Send + Sync {
 - All timestamps stored as ISO 8601 TEXT (SQLite has no native datetime)
 - Foreign keys enforced (`PRAGMA foreign_keys = ON`)
 - Indexes on all columns used in WHERE clauses
+- Concurrent first-open setup must retry SQLite busy/locked results within the
+  configured busy timeout; WAL setup cannot assume one starting process
+- Cross-process ownership uses atomic lease statements in `y-storage`; never
+  emulate ownership with a process-local mutex or a read-then-write sequence
+- Lease expiry uses the SQLite clock, and renewal/release must match both owner
+  instance ID and fencing token
+- Runtime registrations are diagnostic records and require bounded stale-row
+  pruning; lease rows retain the fencing history independently
+- Singleton background services start and stop through `y-service` lease
+  supervision; presentation crates must not perform leader election
 
 ### 10.2 SQLite Diagnostics
 

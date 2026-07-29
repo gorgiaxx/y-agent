@@ -7,6 +7,7 @@ description = "Persistence layer: SQLite backends, JSONL writers"
 
 [features]
 default = []
+instance_coordination = []
 
 [dependencies]
 y-core = { workspace = true }

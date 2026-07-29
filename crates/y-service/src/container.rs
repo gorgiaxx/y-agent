@@ -50,6 +50,11 @@ use crate::skill_ingestion::{import_skill_from_path, SkillImportOutcome, SkillIn
 
 use y_mcp::McpConnectionManager;
 
+#[cfg(feature = "instance_coordination")]
+use crate::instance_coordination::{
+    InstanceCoordinator, LeaseManagedService, SingletonLeaseHandle,
+};
+
 /// Embedded default taxonomy TOML (compiled into binary).
 const DEFAULT_TAXONOMY_TOML: &str = include_str!("../../../config/tool_taxonomy.toml");
 
@@ -283,7 +288,15 @@ pub struct ServiceContainer {
     pub plan_run_store: SqlitePlanRunStore,
 
     /// Scheduler manager for scheduled task management.
-    pub scheduler_manager: y_scheduler::SchedulerManager,
+    pub scheduler_manager: Arc<y_scheduler::SchedulerManager>,
+
+    /// Process identity and database-backed runtime lease coordinator.
+    #[cfg(feature = "instance_coordination")]
+    pub instance_coordinator: InstanceCoordinator,
+
+    /// Active supervisor for the singleton background scheduler role.
+    #[cfg(feature = "instance_coordination")]
+    scheduler_leadership: Mutex<Option<SingletonLeaseHandle>>,
 
     // -- Knowledge ---------------------------------------------------------
     /// Knowledge base service (ingestion, retrieval, embedding).
@@ -397,7 +410,24 @@ struct SchedulerInit {
     workflow_store: SqliteWorkflowStore,
     schedule_store: SqliteScheduleStore,
     plan_run_store: SqlitePlanRunStore,
-    scheduler_manager: y_scheduler::SchedulerManager,
+    scheduler_manager: Arc<y_scheduler::SchedulerManager>,
+}
+
+#[cfg(feature = "instance_coordination")]
+struct SchedulerLeaseService {
+    manager: Arc<y_scheduler::SchedulerManager>,
+}
+
+#[cfg(feature = "instance_coordination")]
+#[async_trait::async_trait]
+impl LeaseManagedService for SchedulerLeaseService {
+    async fn start(&self) {
+        self.manager.start(BACKGROUND_SCHEDULER_TICK_INTERVAL).await;
+    }
+
+    async fn stop(&self) {
+        self.manager.stop().await;
+    }
 }
 
 /// Diagnostics infrastructure initialised by [`ServiceContainer::init_diagnostics`].
@@ -420,6 +450,13 @@ impl ServiceContainer {
     pub async fn from_config(config: &ServiceConfig) -> Result<Self> {
         // 1. Storage -- SQLite pool + schema compatibility handling.
         let pool = Self::init_storage(config).await?;
+        #[cfg(feature = "instance_coordination")]
+        let instance_coordinator = InstanceCoordinator::register(
+            y_storage::SqliteCoordinationStore::new(pool.clone()),
+            "embedded",
+        )
+        .await
+        .context("failed to register runtime instance")?;
         let data_dir = Self::resolve_data_dir(config);
         let session_event_service = crate::session_events::SessionEventService::new(
             y_storage::SqliteSessionEventStore::new(pool.clone()),
@@ -570,6 +607,10 @@ impl ServiceContainer {
             schedule_store: sched.schedule_store,
             plan_run_store: sched.plan_run_store,
             scheduler_manager: sched.scheduler_manager,
+            #[cfg(feature = "instance_coordination")]
+            instance_coordinator,
+            #[cfg(feature = "instance_coordination")]
+            scheduler_leadership: Mutex::new(None),
             prompt_context: ctx.prompt_context,
             diagnostics: diag.diagnostics,
             diagnostics_broadcast: diag.broadcast_tx,
@@ -916,7 +957,8 @@ tools = ["ToolSearch"]
         let workflow_store = SqliteWorkflowStore::new(pool.clone());
         let schedule_store = SqliteScheduleStore::new(pool.clone());
         let plan_run_store = SqlitePlanRunStore::new(pool.clone());
-        let scheduler_manager = crate::scheduler_service::SchedulerService::create_manager();
+        let scheduler_manager =
+            Arc::new(crate::scheduler_service::SchedulerService::create_manager());
         crate::scheduler_service::SchedulerService::attach_persistence(
             &scheduler_manager,
             schedule_store.clone(),
@@ -1661,14 +1703,57 @@ impl ServiceContainer {
     ///
     /// This is intentionally separate from [`from_config`](Self::from_config)
     /// because short-lived commands should not keep background tasks alive.
-    pub async fn init_scheduler(self: &Arc<Self>) {
+    pub async fn init_scheduler(self: &Arc<Self>) -> Result<()> {
+        #[cfg(feature = "instance_coordination")]
+        {
+            let mut leadership = self.scheduler_leadership.lock().await;
+            if leadership.is_some() {
+                return Ok(());
+            }
+            let service = Arc::new(SchedulerLeaseService {
+                manager: Arc::clone(&self.scheduler_manager),
+            });
+            let handle = self
+                .instance_coordinator
+                .supervise_singleton("scheduler", service)
+                .await
+                .context("failed to start scheduler lease supervisor")?;
+            *leadership = Some(handle);
+        }
+        #[cfg(not(feature = "instance_coordination"))]
         self.scheduler_manager
             .start(BACKGROUND_SCHEDULER_TICK_INTERVAL)
             .await;
         tracing::info!(
             tick_interval_ms = BACKGROUND_SCHEDULER_TICK_INTERVAL.as_millis(),
-            "SchedulerManager started for background automation"
+            instance_id = self.instance_id(),
+            "scheduler background role initialized"
         );
+        Ok(())
+    }
+
+    /// Stop the scheduler role and release its singleton lease when owned.
+    pub async fn stop_scheduler(&self) {
+        #[cfg(feature = "instance_coordination")]
+        let handle = self.scheduler_leadership.lock().await.take();
+        #[cfg(feature = "instance_coordination")]
+        if let Some(handle) = handle {
+            handle.shutdown().await;
+        }
+        #[cfg(not(feature = "instance_coordination"))]
+        self.scheduler_manager.stop().await;
+    }
+
+    /// Return this process instance identifier when coordination is enabled.
+    pub fn instance_id(&self) -> &str {
+        #[cfg(feature = "instance_coordination")]
+        {
+            self.instance_coordinator.instance_id()
+        }
+        #[cfg(not(feature = "instance_coordination"))]
+        {
+            "coordination-disabled"
+        }
     }
 
     /// Start all background services required by long-lived frontends.
@@ -1676,7 +1761,7 @@ impl ServiceContainer {
     /// GUI, TUI, and the embedded HTTP server share the same lifecycle:
     /// upgrade the agent runner, inject the workflow dispatcher, start the
     /// scheduler loop, then refresh callable-agent prompt text.
-    pub async fn start_background_services(self: &Arc<Self>) {
+    pub async fn start_background_services(self: &Arc<Self>) -> Result<()> {
         self.init_agent_runner().await;
         self.init_workflow_dispatcher().await;
         #[cfg(feature = "background_auto_wake")]
@@ -1685,7 +1770,7 @@ impl ServiceContainer {
         if self.background_wake_service.is_enabled() {
             warn!("background_auto_wake is enabled in configuration but absent from this build");
         }
-        self.init_scheduler().await;
+        self.init_scheduler().await?;
         self.init_callable_agents_text().await;
         self.init_knowledge_llm_services().await;
         crate::mcp_service::McpService::init_mcp_connections(self).await;
@@ -1705,6 +1790,7 @@ impl ServiceContainer {
         }
         #[cfg(feature = "langfuse")]
         self.init_langfuse_bridge().await;
+        Ok(())
     }
 
     #[cfg(feature = "langfuse")]
@@ -2413,11 +2499,48 @@ mod tests {
         let sc = Arc::new(ServiceContainer::from_config(&config).await.unwrap());
         assert!(!sc.scheduler_manager.is_running());
 
-        sc.start_background_services().await;
+        sc.start_background_services().await.unwrap();
         assert!(sc.scheduler_manager.is_running());
 
-        sc.scheduler_manager.stop().await;
+        sc.stop_scheduler().await;
         assert!(!sc.scheduler_manager.is_running());
+    }
+
+    #[cfg(feature = "instance_coordination")]
+    #[tokio::test]
+    async fn shared_database_starts_only_one_scheduler_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: directory
+                    .path()
+                    .join("shared.db")
+                    .to_string_lossy()
+                    .into_owned(),
+                pool_size: 2,
+                wal_enabled: true,
+                busy_timeout_ms: 5_000,
+                transcript_dir: directory.path().join("transcripts"),
+            },
+            skills_dir: Some(directory.path().join("skills")),
+            persona_dir: Some(directory.path().join("persona")),
+            prompts_dir: Some(directory.path().join("prompts")),
+            ..Default::default()
+        };
+        let first = Arc::new(ServiceContainer::from_config(&config).await.unwrap());
+        let second = Arc::new(ServiceContainer::from_config(&config).await.unwrap());
+
+        first.start_background_services().await.unwrap();
+        second.start_background_services().await.unwrap();
+
+        assert_ne!(
+            first.scheduler_manager.is_running(),
+            second.scheduler_manager.is_running(),
+            "a shared database must elect exactly one scheduler owner"
+        );
+
+        first.stop_scheduler().await;
+        second.stop_scheduler().await;
     }
 
     #[tokio::test]

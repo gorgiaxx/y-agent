@@ -46,6 +46,8 @@ pub mod evolution_feedback;
 #[cfg(all(feature = "hook_handlers", feature = "llm_hooks"))]
 mod hook_agent_runner;
 pub mod init;
+#[cfg(feature = "instance_coordination")]
+pub mod instance_coordination;
 pub mod knowledge_context_retrieval;
 pub mod knowledge_service;
 pub mod loop_orchestrator;
@@ -117,6 +119,11 @@ pub use diagnostics::{
     DynamicAgentVersionMetrics, HistoricalEntry, OrchestrationModeMetrics,
 };
 pub use event_sink::EventSink;
+#[cfg(feature = "instance_coordination")]
+pub use instance_coordination::{
+    CoordinationPolicy, InstanceCoordinationError, InstanceCoordinator, LeaseManagedService,
+    SingletonLeaseHandle,
+};
 pub use mcp_service::McpService;
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,

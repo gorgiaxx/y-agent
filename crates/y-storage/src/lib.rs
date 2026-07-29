@@ -15,6 +15,8 @@ pub mod chat_message;
 pub mod checkpoint;
 pub mod checkpoint_chat;
 pub mod config;
+#[cfg(feature = "instance_coordination")]
+pub mod coordination;
 pub mod error;
 pub mod migration;
 pub mod plan_run_store;
@@ -33,6 +35,8 @@ pub use chat_message::SqliteChatMessageStore;
 pub use checkpoint::SqliteCheckpointStorage;
 pub use checkpoint_chat::SqliteChatCheckpointStore;
 pub use config::StorageConfig;
+#[cfg(feature = "instance_coordination")]
+pub use coordination::{RuntimeInstanceRegistration, RuntimeLease, SqliteCoordinationStore};
 pub use error::StorageError;
 pub use plan_run_store::{PlanRunRow, PlanStepResultRow, SqlitePlanRunStore};
 pub use pool::create_pool;

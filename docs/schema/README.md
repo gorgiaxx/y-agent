@@ -12,7 +12,9 @@ loads. A separate hand-maintained SQL design document is intentionally not kept.
 - `y-storage` tests define expected migration and persistence behavior.
 
 SQLite uses WAL mode and stores local operational state such as sessions,
-workflows, schedules, chat checkpoints, diagnostics, and provider metrics.
+workflows, schedules, chat checkpoints, diagnostics, provider metrics, runtime
+instance registrations, and fenced leases. Schema version 4 introduces
+`runtime_instances` and `runtime_leases` for cross-process coordination.
 
 ## Knowledge Vectors
 

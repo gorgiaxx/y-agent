@@ -204,7 +204,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Upgrade sub-agent runner from SingleTurnRunner to
     // ServiceAgentRunner so delegated agents (skill-ingestion, etc.)
     // get the full execution loop with multi-turn tool calling.
-    rt.block_on(container.start_background_services());
+    rt.block_on(container.start_background_services())?;
 
     // Spawn a background task that bridges the diagnostics broadcast
     // channel to Tauri events. This enables real-time diagnostics

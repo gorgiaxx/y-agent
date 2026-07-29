@@ -33,6 +33,7 @@ The harness owns:
 | Skill evolution | `y-skills` durable experience/proposal journals, extraction, validation, content-addressed versions, regression, and rollback plus `y-service` turn capture and governed promotion orchestration | Validated promotion, automatic metric-triggered rollback, bounded Auto-mode skill reuse, and idempotent trace-linked user feedback are wired |
 | Knowledge | `y-knowledge` ingestion, canonical filtered retrieval requests, collection isolation, weighted RRF retrieval, provenance, and deterministic IR evaluation with `y-service` wiring | Qdrant is optional; local retrieval remains available, while richer candidate-loss and citation observability remain incomplete |
 | Observability | `y-diagnostics` local trace model, SQLite store, cost/replay, and optional Langfuse native ingestion | A generic OpenTelemetry SDK/exporter is not currently wired |
+| Multi-instance runtime coordination | `y-storage` provides atomic fenced SQLite leases and concurrent-startup handling; `y-service` registers each process and supervises one scheduler owner | Shared-session and file-backed dynamic-resource mutation plus cross-instance HITL/cancellation routing remain unavailable until ownership and control state are fully durable |
 
 ## Layering
 
@@ -517,6 +518,37 @@ clients on revocation. Staging alone never mutates any live configuration.
 
 SQLite runs in WAL mode for local operational durability. Optional external
 systems must fail independently and must not block the agent execution path.
+
+## Multi-Instance Runtime Coordination
+
+Every `ServiceContainer` registers an instance ID in SQLite; long-lived
+containers renew their heartbeat while supervising a role. Stale diagnostic
+registrations are pruned after a bounded retention period, while lease rows are
+retained so fencing tokens remain monotonic. `y-storage` owns atomic lease
+acquisition, renewal, expiry, release, and fencing; `y-service` owns which roles
+require a lease and the lifecycle of the process-local capability behind that
+lease. Presentation layers never elect owners themselves.
+
+Singleton background roles use the `singleton` lease namespace. The scheduler
+starts only after its supervisor acquires `singleton/scheduler`, renews while it
+is running, stops immediately when renewal fails or ownership is lost, and
+releases the lease only with the matching owner and fencing token. A later owner
+receives a larger token, so a stale process cannot renew or release the new
+lease. Coordination failures fail closed instead of starting duplicate work.
+
+This contract currently protects singleton background execution, not every
+side effect produced by a paused former scheduler owner. Schedule execution
+must ultimately validate ownership at its persistence boundary using the
+fencing token.
+
+It also does not protect mutation of one session or shared file-backed dynamic
+resource journals from multiple processes. Session transcripts still use JSONL
+locks that are process-local, while HITL, steering, cancellation, and active
+orchestration state remain in memory. Concurrent instances may perform ordinary
+independent session work, but must not execute or rewind the same session or
+concurrently mutate dynamic agents, tools, skills, or capability packs. The
+next steps are resource-specific fenced leases, a complete SQLite transcript
+source of truth, and owner-aware local IPC routing.
 
 ## Evolution Loop
 

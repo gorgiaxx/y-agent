@@ -1,5 +1,7 @@
 //! `SQLite` connection pool factory with WAL mode configuration.
 
+use std::time::{Duration, Instant};
+
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
 use tracing::info;
@@ -43,10 +45,7 @@ pub async fn create_pool(config: &StorageConfig) -> Result<SqlitePool, StorageEr
             config.busy_timeout_ms,
         )));
 
-    let pool = SqlitePoolOptions::new()
-        .max_connections(config.pool_size)
-        .connect_with(options)
-        .await?;
+    let pool = connect_with_busy_retry(options, config.pool_size, config.busy_timeout_ms).await?;
 
     info!(
         db_path = %config.db_path,
@@ -56,6 +55,41 @@ pub async fn create_pool(config: &StorageConfig) -> Result<SqlitePool, StorageEr
     );
 
     Ok(pool)
+}
+
+async fn connect_with_busy_retry(
+    options: SqliteConnectOptions,
+    pool_size: u32,
+    busy_timeout_ms: u32,
+) -> Result<SqlitePool, sqlx::Error> {
+    let deadline = Instant::now() + Duration::from_millis(u64::from(busy_timeout_ms));
+    let mut backoff = Duration::from_millis(10);
+
+    loop {
+        match SqlitePoolOptions::new()
+            .max_connections(pool_size)
+            .connect_with(options.clone())
+            .await
+        {
+            Ok(pool) => return Ok(pool),
+            Err(error) if is_sqlite_busy(&error) && Instant::now() < deadline => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                tokio::time::sleep(backoff.min(remaining)).await;
+                backoff = (backoff * 2).min(Duration::from_millis(100));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_sqlite_busy(error: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(database_error) = error else {
+        return false;
+    };
+    database_error
+        .code()
+        .and_then(|code| code.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code & 0xff, 5 | 6))
 }
 
 #[cfg(test)]

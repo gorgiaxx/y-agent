@@ -293,7 +293,7 @@ async fn main() -> Result<()> {
             commands::mcp::McpAction::Status => {
                 let services = wire::wire(&config).await?;
                 let services = std::sync::Arc::new(services);
-                services.start_background_services().await;
+                services.start_background_services().await?;
                 commands::mcp::run_status(&services, mode).await?;
             }
             other => {
@@ -349,7 +349,7 @@ async fn main() -> Result<()> {
         Some(Commands::Serve(args)) => {
             let services = wire::wire(&config).await?;
             let services = std::sync::Arc::new(services);
-            services.start_background_services().await;
+            services.start_background_services().await?;
             commands::serve::run(
                 services,
                 args,

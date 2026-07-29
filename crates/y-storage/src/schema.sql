@@ -319,3 +319,36 @@ CREATE INDEX IF NOT EXISTS idx_session_events_session_seq
     ON session_events(session_id, seq ASC);
 CREATE INDEX IF NOT EXISTS idx_session_events_correlation
     ON session_events(session_id, correlation_id, event_id DESC);
+
+------------------------------------------------------------------------
+-- 10. Runtime instance coordination
+------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS runtime_instances (
+    instance_id     TEXT PRIMARY KEY,
+    process_id      INTEGER NOT NULL,
+    runtime_kind    TEXT NOT NULL,
+    metadata        TEXT NOT NULL DEFAULT '{}',
+    started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    heartbeat_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_instances_heartbeat
+    ON runtime_instances(heartbeat_at);
+
+-- Deliberately no owner foreign key: leases retain fencing history after stale
+-- diagnostic instance rows are pruned.
+CREATE TABLE IF NOT EXISTS runtime_leases (
+    resource_kind      TEXT NOT NULL,
+    resource_id        TEXT NOT NULL,
+    owner_instance_id  TEXT NOT NULL,
+    fencing_token      INTEGER NOT NULL CHECK (fencing_token > 0),
+    expires_at         TEXT NOT NULL,
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (resource_kind, resource_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_leases_owner
+    ON runtime_leases(owner_instance_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_leases_expiry
+    ON runtime_leases(expires_at);

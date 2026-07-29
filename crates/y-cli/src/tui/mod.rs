@@ -54,7 +54,7 @@ use tui_textarea::{CursorMove, TextArea};
 use crate::wire::AppServices;
 use chat_flow::{ActiveChat, InputIntent};
 use commands::handlers::{self, AsyncCommand, CommandResult};
-use composer::{ComposerDraft, PasteDisposition};
+use composer::ComposerDraft;
 use drafts::{DraftSnapshot, DraftStore};
 use events::{AppEvent, EventLoop};
 use history::PromptHistoryStore;
@@ -1806,10 +1806,8 @@ impl TuiApp {
         self.textarea = TextArea::default();
         self.composer_draft.clear();
         if !snapshot.text.is_empty() {
-            match self.composer_draft.ingest_paste(&snapshot.text) {
-                PasteDisposition::Inline(text) => self.textarea.insert_str(text),
-                PasteDisposition::Collapsed { token } => self.textarea.insert_str(token),
-            };
+            self.textarea
+                .insert_str(ComposerDraft::ingest_paste(&snapshot.text));
         }
         for attachment in snapshot.attachments {
             let dimensions = attachment
@@ -1966,29 +1964,18 @@ impl TuiApp {
             // a paste never triggers mode switches: a leading '/' on an
             // empty draft stays literal text.
             _ => {
-                let disposition = if self.raw_paste_armed.is_on() {
+                let pasted_text = if self.raw_paste_armed.is_on() {
                     self.raw_paste_armed = Toggle::Off;
                     ComposerDraft::ingest_raw_paste(text)
                 } else {
-                    self.composer_draft.ingest_paste(text)
+                    ComposerDraft::ingest_paste(text)
                 };
-                match disposition {
-                    PasteDisposition::Inline(text) => {
-                        self.textarea.insert_str(text);
-                    }
-                    PasteDisposition::Collapsed { token } => {
-                        self.textarea.insert_str(&token);
-                        self.state.push_toast(
-                            "Large paste collapsed. Alt+V arms one raw paste.".into(),
-                            ToastLevel::Info,
-                        );
-                    }
-                }
+                self.textarea.insert_str(pasted_text);
             }
         }
     }
 
-    /// Keep registered paste tokens atomic when navigating or deleting.
+    /// Keep registered attachment tokens atomic when navigating or deleting.
     fn handle_fragment_edit_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::KeyCode;
 

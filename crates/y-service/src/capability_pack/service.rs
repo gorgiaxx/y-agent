@@ -1733,7 +1733,7 @@ while IFS= read -r _; do :; done
                 .await
                 .expect("reopen service container"),
         );
-        reopened.start_background_services().await;
+        reopened.start_background_services().await.unwrap();
 
         assert_eq!(reopened.mcp_manager.connected_count().await, 1);
         assert!(reopened
@@ -1890,7 +1890,7 @@ while IFS= read -r _; do :; done
                 .await
                 .expect("reopen service container"),
         );
-        reopened.start_background_services().await;
+        reopened.start_background_services().await.unwrap();
 
         assert!(activation_store(&reopened)
             .grants()
