@@ -722,6 +722,14 @@ impl TuiApp {
                     self.handle_input_passthrough(key);
                 }
             }
+            KeyAction::EnterShellMode => {
+                if textarea_is_empty(&self.textarea) {
+                    self.state.set_mode(InteractionMode::Shell);
+                    self.state.set_focus(PanelFocus::Input);
+                } else {
+                    self.handle_input_passthrough(key);
+                }
+            }
             KeyAction::EnterBacktrack => {
                 self.open_backtrack_picker();
             }
@@ -758,7 +766,12 @@ impl TuiApp {
                         let current = self.textarea.lines().join("\n");
                         self.state.input_draft = Some(current);
                     }
-                    if let Some(entry) = self.state.history_prev() {
+                    let entry = if self.state.mode == InteractionMode::Shell {
+                        self.state.shell_history_prev()
+                    } else {
+                        self.state.history_prev()
+                    };
+                    if let Some(entry) = entry {
                         self.textarea = TextArea::new(vec![entry.to_string()]);
                         self.composer_draft.clear();
                     }
@@ -772,7 +785,12 @@ impl TuiApp {
                     // Multi-line with cursor not at last line: move within text.
                     self.textarea.input(key);
                 } else {
-                    match self.state.history_next() {
+                    let entry = if self.state.mode == InteractionMode::Shell {
+                        self.state.shell_history_next()
+                    } else {
+                        self.state.history_next()
+                    };
+                    match entry {
                         Some(entry) => {
                             self.textarea = TextArea::new(vec![entry.to_string()]);
                             self.composer_draft.clear();
@@ -930,11 +948,16 @@ impl TuiApp {
             let visible_input: String = self.textarea.lines().join("\n");
             let input = self.composer_draft.expand(&visible_input);
             let attachments = self.composer_draft.attachments();
-            let clear_input = match chat_flow::classify_input_with_attachments(
-                &input,
-                self.state.is_streaming,
-                !attachments.is_empty(),
-            ) {
+            let intent = if self.state.mode == InteractionMode::Shell {
+                chat_flow::classify_shell_input(&input)
+            } else {
+                chat_flow::classify_input_with_attachments(
+                    &input,
+                    self.state.is_streaming,
+                    !attachments.is_empty(),
+                )
+            };
+            let clear_input = match intent {
                 InputIntent::Ignore => false,
                 InputIntent::Command(command) => {
                     self.record_prompt_history(input.trim());
@@ -997,7 +1020,8 @@ impl TuiApp {
                         | y_service::OperatorShellDecision::Confirm { .. } => {}
                     }
                     self.pending_shell_confirmation = None;
-                    self.record_prompt_history(input.trim());
+                    let history_entry = format!("!{command}");
+                    self.record_prompt_history(&history_entry);
                     let draft_key = self.current_draft_key();
                     if let Err(error) = self.draft_store.put(
                         draft_key.clone(),
@@ -3644,6 +3668,7 @@ impl TuiApp {
             frame,
             chunks.input,
             state.focus,
+            state.mode,
             state.is_streaming,
             state.is_cancelling,
             state.follow_up_queue.len(),

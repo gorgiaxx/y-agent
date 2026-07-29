@@ -65,6 +65,8 @@ pub enum KeyAction {
     ShowRawScrollback,
     /// Enter command mode.
     EnterCommandMode,
+    /// Enter persistent shell mode.
+    EnterShellMode,
     /// Return to normal mode.
     ReturnToNormal,
     /// Enter prompt backtrack selection from the current session.
@@ -155,6 +157,7 @@ impl KeyAction {
             Self::ShowHelp => "show_help",
             Self::ShowRawScrollback => "show_raw_scrollback",
             Self::EnterCommandMode => "enter_command_mode",
+            Self::EnterShellMode => "enter_shell_mode",
             Self::ReturnToNormal => "return_to_normal",
             Self::EnterBacktrack => "enter_backtrack",
             Self::BacktrackPrevious => "backtrack_previous",
@@ -219,6 +222,7 @@ impl KeyAction {
             Self::ShowHelp => "Show keyboard help",
             Self::ShowRawScrollback => "Show transcript in terminal scrollback",
             Self::EnterCommandMode => "Open command palette",
+            Self::EnterShellMode => "Enter shell mode",
             Self::ReturnToNormal => "Close the current overlay",
             Self::EnterBacktrack => "Select an earlier prompt",
             Self::BacktrackPrevious => "Select the previous prompt",
@@ -277,6 +281,7 @@ const ALL_ACTIONS: &[KeyAction] = &[
     KeyAction::ShowHelp,
     KeyAction::ShowRawScrollback,
     KeyAction::EnterCommandMode,
+    KeyAction::EnterShellMode,
     KeyAction::ReturnToNormal,
     KeyAction::EnterBacktrack,
     KeyAction::BacktrackPrevious,
@@ -321,6 +326,7 @@ pub enum KeyContext {
     NormalInputEmpty,
     NormalInputDraft,
     NormalChat,
+    Shell,
     Command,
     Select,
     Help,
@@ -340,6 +346,7 @@ impl KeyContext {
             Self::NormalInputEmpty => "input (empty)",
             Self::NormalInputDraft => "input (draft)",
             Self::NormalChat => "conversation",
+            Self::Shell => "shell",
             Self::Command => "command palette",
             Self::Select => "prompt backtrack",
             Self::Help => "help",
@@ -589,7 +596,11 @@ impl Keymap {
             return;
         }
         let fallback = KeyChord::new(KeyCode::F(8), KeyModifiers::NONE);
-        for context in [KeyContext::NormalInputEmpty, KeyContext::NormalInputDraft] {
+        for context in [
+            KeyContext::NormalInputEmpty,
+            KeyContext::NormalInputDraft,
+            KeyContext::Shell,
+        ] {
             let occupied = self
                 .bindings
                 .iter()
@@ -813,6 +824,7 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::NormalInputDraft, ctrl('g'), A::ScrollToBottom),
         binding(C::NormalInputEmpty, character(':'), A::EnterCommandMode),
         binding(C::NormalInputDraft, character(':'), A::EnterCommandMode),
+        binding(C::NormalInputEmpty, character('!'), A::EnterShellMode),
         binding(
             C::NormalInputEmpty,
             KeyChord::new(KeyCode::Char('1'), KeyModifiers::ALT),
@@ -884,6 +896,23 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::NormalChat, ctrl('f'), A::OpenTranscriptSearch),
         binding(C::NormalChat, plain(KeyCode::Esc), A::EnterBacktrack),
         binding(C::NormalChat, character('i'), A::ReturnToNormal),
+        binding(C::Shell, plain(KeyCode::Esc), A::ReturnToNormal),
+        binding(C::Shell, ctrl('d'), A::ReturnToNormal),
+        binding(C::Shell, ctrl('c'), A::ClearInput),
+        binding(
+            C::Shell,
+            KeyChord::new(KeyCode::Char('v'), KeyModifiers::ALT),
+            A::PasteRaw,
+        ),
+        binding(C::Shell, plain(KeyCode::Enter), A::Submit),
+        binding(
+            C::Shell,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            A::InputPassthrough,
+        ),
+        binding(C::Shell, plain(KeyCode::Up), A::HistoryPrev),
+        binding(C::Shell, plain(KeyCode::Down), A::HistoryNext),
+        binding(C::Shell, ctrl('e'), A::OpenExternalEditor),
         binding(C::Command, plain(KeyCode::Esc), A::ReturnToNormal),
         binding(C::Command, plain(KeyCode::Enter), A::Submit),
         binding(C::Command, plain(KeyCode::Up), A::ScrollUp),
@@ -1001,6 +1030,7 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
         }
         InteractionMode::Normal if state.focus == PanelFocus::Input => KeyContext::NormalInputDraft,
         InteractionMode::Normal => KeyContext::NormalChat,
+        InteractionMode::Shell => KeyContext::Shell,
         InteractionMode::Command => KeyContext::Command,
         InteractionMode::Select => KeyContext::Select,
         InteractionMode::Help => KeyContext::Help,
@@ -1019,7 +1049,8 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
 fn fallback_action(state: &AppState) -> KeyAction {
     match state.mode {
         InteractionMode::Normal if state.focus == PanelFocus::Input => KeyAction::InputPassthrough,
-        InteractionMode::Command
+        InteractionMode::Shell
+        | InteractionMode::Command
         | InteractionMode::Copy
         | InteractionMode::HistorySearch
         | InteractionMode::TranscriptSearch
@@ -1300,6 +1331,43 @@ mod tests {
         let state = AppState::new(); // Input focus, Normal mode
         let action = dispatch(key(KeyCode::Char(':')), &state);
         assert_eq!(action, KeyAction::EnterCommandMode);
+    }
+
+    #[test]
+    fn test_bang_enters_shell_mode_only_from_empty_composer() {
+        let state = AppState::new();
+
+        assert_eq!(
+            DEFAULT_KEYMAP.dispatch_with_composer(key(KeyCode::Char('!')), &state, true),
+            KeyAction::EnterShellMode
+        );
+        assert_eq!(
+            DEFAULT_KEYMAP.dispatch_with_composer(key(KeyCode::Char('!')), &state, false),
+            KeyAction::InputPassthrough
+        );
+    }
+
+    #[test]
+    fn test_shell_mode_submits_and_escape_exits() {
+        let mut state = AppState::new();
+        state.mode = InteractionMode::Shell;
+
+        assert_eq!(dispatch(key(KeyCode::Enter), &state), KeyAction::Submit);
+        assert_eq!(
+            dispatch(
+                key_with_mod(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                &state
+            ),
+            KeyAction::ClearInput
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Esc), &state),
+            KeyAction::ReturnToNormal
+        );
+        assert_eq!(
+            dispatch(key(KeyCode::Char('a')), &state),
+            KeyAction::InputPassthrough
+        );
     }
 
     // T-TUI-03-09: Regular chars pass through to textarea in input.

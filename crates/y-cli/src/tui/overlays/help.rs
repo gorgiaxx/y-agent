@@ -54,6 +54,7 @@ fn help_lines(keymap: &Keymap) -> Vec<Line<'static>> {
         ("Input: empty", KeyContext::NormalInputEmpty),
         ("Input: draft", KeyContext::NormalInputDraft),
         ("Conversation", KeyContext::NormalChat),
+        ("Shell", KeyContext::Shell),
         ("Command palette", KeyContext::Command),
         ("Prompt backtrack", KeyContext::Select),
         ("Pickers", KeyContext::Picker),

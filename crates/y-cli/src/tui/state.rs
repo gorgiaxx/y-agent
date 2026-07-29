@@ -31,6 +31,8 @@ pub enum PanelFocus {
 pub enum InteractionMode {
     /// Default mode: typing goes to input area.
     Normal,
+    /// Persistent operator shell mode entered from an empty composer with `!`.
+    Shell,
     /// Slash-command mode: `/` was typed, command palette visible.
     Command,
     /// Select mode: choosing an earlier user prompt for a non-destructive branch.
@@ -639,6 +641,7 @@ impl AppState {
             (
                 InteractionMode::Normal,
                 InteractionMode::Command
+                    | InteractionMode::Shell
                     | InteractionMode::Select
                     | InteractionMode::Help
                     | InteractionMode::Copy
@@ -651,6 +654,7 @@ impl AppState {
                     | InteractionMode::Normal
             ) | (
                 InteractionMode::Command
+                    | InteractionMode::Shell
                     | InteractionMode::Select
                     | InteractionMode::Help
                     | InteractionMode::Copy
@@ -911,6 +915,18 @@ impl AppState {
         self.input_history.get(idx).map(std::string::String::as_str)
     }
 
+    /// Navigate backward through shell-only history and omit the stored `!` prefix.
+    pub fn shell_history_prev(&mut self) -> Option<&str> {
+        let end = self.history_index.unwrap_or(self.input_history.len());
+        let index = (0..end).rev().find(|index| {
+            self.input_history[*index]
+                .strip_prefix('!')
+                .is_some_and(|command| !command.trim().is_empty())
+        })?;
+        self.history_index = Some(index);
+        self.input_history[index].strip_prefix('!').map(str::trim)
+    }
+
     /// Increment the animation tick counter. Called once per event-loop tick.
     pub fn tick_animation(&mut self) {
         self.tick_counter = self.tick_counter.wrapping_add(1);
@@ -934,6 +950,21 @@ impl AppState {
             }
             None => None,
         }
+    }
+
+    /// Navigate forward through shell-only history and omit the stored `!` prefix.
+    pub fn shell_history_next(&mut self) -> Option<&str> {
+        let start = self.history_index.map_or(0, |index| index + 1);
+        let Some(index) = (start..self.input_history.len()).find(|index| {
+            self.input_history[*index]
+                .strip_prefix('!')
+                .is_some_and(|command| !command.trim().is_empty())
+        }) else {
+            self.history_index = None;
+            return None;
+        };
+        self.history_index = Some(index);
+        self.input_history[index].strip_prefix('!').map(str::trim)
     }
 }
 
@@ -1001,6 +1032,12 @@ mod tests {
         assert_eq!(state.mode, InteractionMode::Command);
 
         // Command → Normal
+        assert!(state.set_mode(InteractionMode::Normal));
+        assert_eq!(state.mode, InteractionMode::Normal);
+
+        // Normal -> Shell -> Normal
+        assert!(state.set_mode(InteractionMode::Shell));
+        assert_eq!(state.mode, InteractionMode::Shell);
         assert!(state.set_mode(InteractionMode::Normal));
         assert_eq!(state.mode, InteractionMode::Normal);
 
@@ -1188,6 +1225,20 @@ mod tests {
         assert_eq!(state.history_next(), Some("third"));
         // Past end returns None (clear input).
         assert_eq!(state.history_next(), None);
+    }
+
+    #[test]
+    fn test_shell_history_skips_prompts_and_hides_bang_prefix() {
+        let mut state = AppState::new();
+        state.push_history("explain this");
+        state.push_history("!cargo check");
+        state.push_history("continue");
+        state.push_history("!git status");
+
+        assert_eq!(state.shell_history_prev(), Some("git status"));
+        assert_eq!(state.shell_history_prev(), Some("cargo check"));
+        assert_eq!(state.shell_history_next(), Some("git status"));
+        assert_eq!(state.shell_history_next(), None);
     }
 
     // --- Toast tests ---

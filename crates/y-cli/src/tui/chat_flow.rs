@@ -50,6 +50,10 @@ pub enum ChatEvent {
         url_meta: Option<String>,
         metadata: Option<serde_json::Value>,
     },
+    /// Authoritative completed-turn tool list used to repair dropped progress events.
+    ToolCallsSnapshot {
+        calls: Vec<y_service::ToolCallRecord>,
+    },
     /// Incremental text delta from the LLM stream.
     StreamDelta { content: String },
     /// Incremental reasoning/thinking delta from a thinking-mode LLM.
@@ -113,6 +117,16 @@ pub fn classify_input_with_attachments(
         InputIntent::FollowUp(trimmed.to_string())
     } else {
         InputIntent::NewTurn(trimmed.to_string())
+    }
+}
+
+/// Classify raw composer text while persistent shell mode is active.
+pub fn classify_shell_input(input: &str) -> InputIntent {
+    let command = input.trim();
+    if command.is_empty() {
+        InputIntent::Ignore
+    } else {
+        InputIntent::ShellCommand(command.to_string())
     }
 }
 
@@ -549,6 +563,11 @@ fn submit_message_with_mode_and_attachments(
         match result {
             Ok(result) => {
                 let _ = tx
+                    .send(ChatEvent::ToolCallsSnapshot {
+                        calls: result.tool_calls_executed.clone(),
+                    })
+                    .await;
+                let _ = tx
                     .send(ChatEvent::Response {
                         content: result.content,
                         model: result.model,
@@ -608,7 +627,7 @@ async fn prepare_tui_turn(
         let session = create_workspace_session(services).await?;
         (session.id.clone(), Some(session))
     };
-    let prepared = ChatService::prepare_turn(
+    let mut prepared = ChatService::prepare_turn(
         services,
         PrepareTurnRequest {
             session_id: Some(session_id),
@@ -623,6 +642,16 @@ async fn prepare_tui_turn(
     )
     .await
     .map_err(|error| error.to_string())?;
+    let config_dir = crate::config::dirs_user_config()
+        .ok_or_else(|| "Failed to resolve the y-agent configuration directory".to_string())?;
+    let fallback_working_directory = std::env::current_dir().ok();
+    ChatService::apply_prepared_turn_context(
+        services,
+        &config_dir,
+        fallback_working_directory.as_deref(),
+        &mut prepared,
+    )
+    .await;
     Ok((prepared, created_session))
 }
 
@@ -731,6 +760,13 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                         display_mode: ToolCallDisplayMode::Preview,
                     };
                     complete_or_append_tool_call(last, completed);
+                }
+            }
+        }
+        ChatEvent::ToolCallsSnapshot { calls } => {
+            if let Some(last) = state.messages.last_mut() {
+                if last.role == MessageRole::Assistant && last.is_streaming {
+                    reconcile_tool_calls(last, calls);
                 }
             }
         }
@@ -906,6 +942,46 @@ fn complete_or_append_tool_call(message: &mut ChatMessage, completed: ToolCallIn
         let tool_index = message.tool_calls.len();
         message.tool_calls.push(completed);
         message.segments.push(StreamSegment::ToolCall(tool_index));
+    }
+}
+
+fn reconcile_tool_calls(message: &mut ChatMessage, calls: Vec<y_service::ToolCallRecord>) {
+    for call in calls {
+        let status = if call.success {
+            ToolCallStatus::Succeeded
+        } else {
+            ToolCallStatus::Failed
+        };
+        if let Some(existing) = message
+            .tool_calls
+            .iter_mut()
+            .find(|tool| tool.tool_call_id == call.tool_call_id)
+        {
+            existing.status = status;
+            existing.duration_ms = Some(call.duration_ms);
+            if existing.input_preview.is_empty() {
+                existing.input_preview.clone_from(&call.arguments);
+            }
+            existing.result_preview = call.result_content;
+            existing.url_meta = call.url_meta;
+            existing.metadata = call.metadata;
+            continue;
+        }
+        complete_or_append_tool_call(
+            message,
+            ToolCallInfo {
+                tool_call_id: call.tool_call_id,
+                name: call.name,
+                status,
+                duration_ms: Some(call.duration_ms),
+                input_preview: call.arguments,
+                result_preview: call.result_content,
+                agent_name: "chat-turn".into(),
+                url_meta: call.url_meta,
+                metadata: call.metadata,
+                display_mode: ToolCallDisplayMode::Preview,
+            },
+        );
     }
 }
 
@@ -1372,6 +1448,15 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_shell_mode_treats_raw_text_as_a_command() {
+        assert_eq!(
+            classify_shell_input(" cargo test "),
+            InputIntent::ShellCommand("cargo test".into())
+        );
+        assert_eq!(classify_shell_input("  "), InputIntent::Ignore);
+    }
+
+    #[test]
     fn test_active_chat_cancel_signals_service_token() {
         let cancellation = TurnCancellationToken::new();
         let (_, events) = mpsc::channel(1);
@@ -1548,6 +1633,72 @@ mod tests {
         assert_eq!(last.tool_calls[0].name, "WebSearch");
         assert_eq!(last.tool_calls[1].name, "ShellExec");
         assert_eq!(last.tool_calls[1].status, ToolCallStatus::Failed);
+    }
+
+    #[test]
+    fn test_final_tool_snapshot_recovers_event_missing_from_stream() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        state.messages.push(ChatMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now(),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+        });
+        apply_chat_event(
+            ChatEvent::ToolCallCompleted {
+                tool_call_id: "call-1".into(),
+                name: "ShellExec".into(),
+                success: true,
+                duration_ms: 10,
+                input_preview: "git init".into(),
+                result_preview: "initialized".into(),
+                agent_name: "chat-turn".into(),
+                url_meta: None,
+                metadata: None,
+            },
+            &mut state,
+        );
+
+        apply_chat_event(
+            ChatEvent::ToolCallsSnapshot {
+                calls: vec![
+                    y_service::ToolCallRecord {
+                        tool_call_id: "call-1".into(),
+                        name: "ShellExec".into(),
+                        arguments: r#"{"command":"git init"}"#.into(),
+                        success: true,
+                        duration_ms: 10,
+                        result_content: "initialized".into(),
+                        url_meta: None,
+                        metadata: None,
+                    },
+                    y_service::ToolCallRecord {
+                        tool_call_id: "call-2".into(),
+                        name: "FileWrite".into(),
+                        arguments: r#"{"path":".gitignore"}"#.into(),
+                        success: true,
+                        duration_ms: 4,
+                        result_content: "written".into(),
+                        url_meta: None,
+                        metadata: None,
+                    },
+                ],
+            },
+            &mut state,
+        );
+
+        let tools = &state.messages.last().unwrap().tool_calls;
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].tool_call_id, "call-1");
+        assert_eq!(tools[1].tool_call_id, "call-2");
+        assert_eq!(tools[1].name, "FileWrite");
+        assert_eq!(state.messages.last().unwrap().segments.len(), 2);
     }
 
     #[test]

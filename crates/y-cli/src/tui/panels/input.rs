@@ -11,7 +11,7 @@ use ratatui::widgets::{Block, Borders};
 use ratatui::Frame;
 use tui_textarea::TextArea;
 
-use crate::tui::state::PanelFocus;
+use crate::tui::state::{InteractionMode, PanelFocus};
 use crate::tui::theme::Theme;
 
 /// Style-relevant render state. Styles are only re-applied to the textarea
@@ -20,6 +20,7 @@ use crate::tui::theme::Theme;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct StyleState {
     focused: bool,
+    mode: InteractionMode,
     streaming: bool,
     cancelling: bool,
     /// Follow-up queue depth, shown in the streaming title.
@@ -43,6 +44,7 @@ pub fn render(
     frame: &mut Frame,
     area: Rect,
     focus: PanelFocus,
+    mode: InteractionMode,
     is_streaming: bool,
     is_cancelling: bool,
     follow_up_count: usize,
@@ -52,6 +54,7 @@ pub fn render(
     let is_focused = focus == PanelFocus::Input;
     let style_state = StyleState {
         focused: is_focused,
+        mode,
         streaming: is_streaming,
         cancelling: is_cancelling,
         follow_up_count,
@@ -75,6 +78,7 @@ pub fn render(
             .border_style(border_style)
             .title(input_title(
                 focus,
+                mode,
                 is_streaming,
                 is_cancelling,
                 follow_up_count,
@@ -104,12 +108,22 @@ pub fn render(
 
 fn input_title(
     focus: PanelFocus,
+    mode: InteractionMode,
     is_streaming: bool,
     is_cancelling: bool,
     follow_up_count: usize,
 ) -> String {
     if focus != PanelFocus::Input {
         return " Message ".to_string();
+    }
+    if mode == InteractionMode::Shell {
+        if is_cancelling {
+            return " Shell  Cancelling... ".to_string();
+        }
+        if is_streaming {
+            return " Shell  Running...  Esc cancel ".to_string();
+        }
+        return " Shell  Enter run  Esc exit ".to_string();
     }
     if is_cancelling {
         return " Follow-up  Cancelling... ".to_string();
@@ -161,7 +175,7 @@ mod tests {
     #[test]
     fn test_input_title_explains_follow_up_and_cancel_during_streaming() {
         assert_eq!(
-            input_title(PanelFocus::Input, true, false, 0),
+            input_title(PanelFocus::Input, InteractionMode::Normal, true, false, 0),
             " Follow-up (0)  Enter queue  Esc cancel "
         );
     }
@@ -169,7 +183,7 @@ mod tests {
     #[test]
     fn test_input_title_shows_follow_up_queue_depth_during_streaming() {
         assert_eq!(
-            input_title(PanelFocus::Input, true, false, 3),
+            input_title(PanelFocus::Input, InteractionMode::Normal, true, false, 3),
             " Follow-up (3)  Enter queue  Esc cancel "
         );
     }
@@ -177,17 +191,32 @@ mod tests {
     #[test]
     fn test_input_title_reports_pending_cancellation() {
         assert_eq!(
-            input_title(PanelFocus::Input, true, true, 2),
+            input_title(PanelFocus::Input, InteractionMode::Normal, true, true, 2),
             " Follow-up  Cancelling... "
         );
     }
 
     #[test]
     fn test_input_title_unfocused_and_idle() {
-        assert_eq!(input_title(PanelFocus::Chat, true, false, 5), " Message ");
         assert_eq!(
-            input_title(PanelFocus::Input, false, false, 0),
+            input_title(PanelFocus::Chat, InteractionMode::Normal, true, false, 5),
+            " Message "
+        );
+        assert_eq!(
+            input_title(PanelFocus::Input, InteractionMode::Normal, false, false, 0),
             " Message  / commands  Enter send "
+        );
+    }
+
+    #[test]
+    fn test_input_title_identifies_shell_mode() {
+        assert_eq!(
+            input_title(PanelFocus::Input, InteractionMode::Shell, false, false, 0),
+            " Shell  Enter run  Esc exit "
+        );
+        assert_eq!(
+            input_title(PanelFocus::Input, InteractionMode::Shell, true, false, 0),
+            " Shell  Running...  Esc cancel "
         );
     }
 }
