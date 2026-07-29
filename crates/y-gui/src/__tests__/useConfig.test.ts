@@ -26,4 +26,12 @@ describe('normalizeGuiConfig', () => {
       default_file_ide: 'cursor',
     }).default_file_ide).toBe('cursor');
   });
+
+  it('defaults GUI shortcut overrides to the built-in keymap', () => {
+    expect(defaultGuiConfig.keyboard_shortcuts).toEqual({});
+    expect(normalizeGuiConfig({
+      ...defaultGuiConfig,
+      keyboard_shortcuts: { new_chat: ['Mod+Shift+N'] },
+    }).keyboard_shortcuts).toEqual({ new_chat: ['Mod+Shift+N'] });
+  });
 });

@@ -51,6 +51,7 @@ import {
 } from './settingsTypes';
 
 import { GeneralTab } from './GeneralTab';
+import { KeyboardShortcutsTab } from './KeyboardShortcutsTab';
 import { ProvidersTab } from './ProvidersTab';
 import { SessionTab } from './SessionTab';
 import { BackgroundWakeTab } from './BackgroundWakeTab';
@@ -87,7 +88,7 @@ interface SettingsPanelProps {
   onRunWizard?: () => void;
 }
 
-export type SettingsTab = 'general' | 'providers' | 'session' | 'backgroundWake' | 'runtime' | 'lsp' | 'capabilityPacks' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'langfuse' | 'promptTemplates' | 'prompts' | 'about';
+export type SettingsTab = 'general' | 'keyboardShortcuts' | 'providers' | 'session' | 'backgroundWake' | 'runtime' | 'lsp' | 'capabilityPacks' | 'browser' | 'mcp' | 'storage' | 'hooks' | 'tools' | 'guardrails' | 'knowledge' | 'langfuse' | 'promptTemplates' | 'prompts' | 'about';
 
 export function SettingsPanel({
   config,
@@ -339,6 +340,16 @@ export function SettingsPanel({
             setLocalConfig={setLocalConfig}
             setToast={setToast}
             onRunWizard={onRunWizard}
+          />
+        </TabsContent>
+
+        <TabsContent value="keyboardShortcuts" className="settings-section">
+          <KeyboardShortcutsTab
+            config={localConfig}
+            onChange={(keyboardShortcuts) => setLocalConfig((current) => ({
+              ...current,
+              keyboard_shortcuts: keyboardShortcuts,
+            }))}
           />
         </TabsContent>
 

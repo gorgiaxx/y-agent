@@ -17,12 +17,25 @@ import { AutomationView } from '../views/AutomationView';
 import { BackgroundTasksView } from '../views/BackgroundTasksView';
 import { SettingsView } from '../views/SettingsView';
 import type { SettingsTab } from '../components/settings/SettingsPanel';
+import type { ViewType } from '../types';
 
-import { useViewRouting, usePanelContext, useAgentEditorContext, useSessionsContext, useSkillsContext, useAgentsContext, useWorkspacesContext, useChatContext, useAgentSessionsContext } from '../providers/AppContexts';
+import {
+  useViewRouting,
+  usePanelContext,
+  useAgentEditorContext,
+  useSessionsContext,
+  useSkillsContext,
+  useAgentsContext,
+  useWorkspacesContext,
+  useChatContext,
+  useAgentSessionsContext,
+  useConfigContext,
+} from '../providers/AppContexts';
 import { useDiagnostics } from '../hooks/useDiagnostics';
 import { useObservability, type TimeRange } from '../hooks/useObservability';
 import { useInfoPanel } from '../hooks/useInfoPanel';
 import { resolveDiagnosticsScope } from '../utils/diagnosticsScope';
+import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts';
 
 export function MainLayout() {
   const viewRouting = useViewRouting();
@@ -34,6 +47,7 @@ export function MainLayout() {
   const agentSessionHooks = useAgentSessionsContext();
   const workspaceHooks = useWorkspacesContext();
   const chatHooks = useChatContext();
+  const configHooks = useConfigContext();
 
   const diagnosticsScope = resolveDiagnosticsScope(viewRouting.activeView, sessionHooks.activeSessionId);
   const {
@@ -103,6 +117,59 @@ export function MainLayout() {
     ? drillStack[drillStack.length - 1]
     : null;
 
+  const selectView = (view: ViewType) => {
+    viewRouting.setActiveView(view);
+    viewRouting.setBackgroundTasksSidebarOpen(false);
+    viewRouting.setSessionPromptEditing(false);
+    viewRouting.setSessionPromptSessionId(null);
+    if (view !== 'chat') viewRouting.setInputExpanded(false);
+  };
+
+  const handleNewChat = async () => {
+    const activeWorkspacePath = sessionHooks.sessions.find(
+      (session) => session.id === sessionHooks.activeSessionId,
+    )?.workspace_path;
+    const welcomeWorkspacePath = workspaceHooks.workspaces.find(
+      (workspace) => workspace.id === viewRouting.welcomeWorkspaceId,
+    )?.path;
+    const newSession = await sessionHooks.createSession(undefined, {
+      workspacePath: activeWorkspacePath ?? welcomeWorkspacePath ?? null,
+    });
+    if (!newSession) return;
+
+    const workspaceId = sessionHooks.activeSessionId
+      ? workspaceHooks.sessionWorkspaceMap[sessionHooks.activeSessionId]
+      : viewRouting.welcomeWorkspaceId;
+    if (workspaceId) await workspaceHooks.assignSession(workspaceId, newSession.id);
+    sessionHooks.selectSession(newSession.id);
+  };
+
+  useKeyboardShortcuts(configHooks.config.keyboard_shortcuts, {
+    new_chat: async () => {
+      selectView('chat');
+      await handleNewChat();
+    },
+    focus_composer: () => {
+      selectView('chat');
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('[data-shortcut-target="composer"]')?.focus();
+      });
+    },
+    open_settings: () => selectView('settings'),
+    keyboard_shortcuts: () => {
+      viewRouting.setActiveSettingsTab('keyboardShortcuts');
+      selectView('settings');
+    },
+    show_chat: () => selectView('chat'),
+    show_automation: () => selectView('automation'),
+    show_skills: () => selectView('skills'),
+    show_knowledge: () => selectView('knowledge'),
+    show_agents: () => selectView('agents'),
+    toggle_diagnostics: () => panelCtx.setDiagOpen(!panelCtx.diagOpen),
+    toggle_observability: () => panelCtx.setObsOpen(!panelCtx.obsOpen),
+    toggle_info: () => panelCtx.setInfoOpen(!panelCtx.infoOpen),
+  });
+
   const headerTitle = viewRouting.backgroundTasksSidebarOpen
     ? 'Tasks'
     : viewRouting.activeView === 'skills'
@@ -124,15 +191,7 @@ export function MainLayout() {
       <Sidebar
         nav={{
           activeView: viewRouting.activeView,
-          onSelectView: (v) => {
-            viewRouting.setActiveView(v);
-            viewRouting.setBackgroundTasksSidebarOpen(false);
-            viewRouting.setSessionPromptEditing(false);
-            viewRouting.setSessionPromptSessionId(null);
-            if (v !== 'chat') {
-              viewRouting.setInputExpanded(false);
-            }
-          },
+          onSelectView: selectView,
           activeSettingsTab: viewRouting.activeSettingsTab,
           onSelectSettingsTab: (t: string) => viewRouting.setActiveSettingsTab(t as SettingsTab),
           agentEditing: agentEditor.agentEditing,
@@ -157,26 +216,7 @@ export function MainLayout() {
           onAssignSession: workspaceHooks.assignSession,
           streamingSessionIds: chatHooks.streamingSessionIds,
           sessionWorkspaceMap: workspaceHooks.sessionWorkspaceMap,
-          onNewChat: async () => {
-             const activeWorkspacePath = sessionHooks.sessions.find(
-               (session) => session.id === sessionHooks.activeSessionId,
-             )?.workspace_path;
-             const welcomeWorkspacePath = workspaceHooks.workspaces.find(
-               (workspace) => workspace.id === viewRouting.welcomeWorkspaceId,
-             )?.path;
-             const newSession = await sessionHooks.createSession(undefined, {
-               workspacePath: activeWorkspacePath ?? welcomeWorkspacePath ?? null,
-             });
-             if (newSession) {
-               const workspaceId = sessionHooks.activeSessionId
-                 ? workspaceHooks.sessionWorkspaceMap[sessionHooks.activeSessionId]
-                 : viewRouting.welcomeWorkspaceId;
-               if (workspaceId) {
-                 await workspaceHooks.assignSession(workspaceId, newSession.id);
-               }
-               sessionHooks.selectSession(newSession.id);
-             }
-          },
+          onNewChat: handleNewChat,
           onNewChatInWorkspace: async (workspaceId: string) => {
              const workspacePath = workspaceHooks.workspaces.find(
                (workspace) => workspace.id === workspaceId,

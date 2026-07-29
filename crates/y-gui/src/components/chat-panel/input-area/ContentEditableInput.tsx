@@ -248,6 +248,7 @@ export const ContentEditableInput = forwardRef<ContentEditableInputHandle, Conte
           onKeyDown={onKeyDown}
           onCompositionEnd={onCompositionEnd}
           data-placeholder={isCompacting ? 'Compacting context, please wait...' : runActive ? 'Add a TODO... (Enter to queue)' : disabled ? 'Waiting for response...' : 'Type a message... (/ for commands), Enter to send, Shift+Enter for newline)'}
+          data-shortcut-target="composer"
           role="textbox"
           aria-multiline="true"
           suppressContentEditableWarning

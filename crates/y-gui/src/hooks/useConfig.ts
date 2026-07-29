@@ -14,6 +14,7 @@ export const defaultGuiConfig: GuiConfig = {
   translate_target_language: '',
   use_custom_decorations: false,
   default_file_ide: 'auto',
+  keyboard_shortcuts: {},
 };
 
 export function normalizeGuiConfig(config: GuiConfig | null | undefined): GuiConfig {

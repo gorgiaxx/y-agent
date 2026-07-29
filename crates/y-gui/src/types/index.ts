@@ -646,6 +646,7 @@ export interface GuiConfig {
   translate_target_language: string;
   use_custom_decorations: boolean;
   default_file_ide: string;
+  keyboard_shortcuts: Record<string, string[]>;
 }
 
 // ---------------------------------------------------------------------------

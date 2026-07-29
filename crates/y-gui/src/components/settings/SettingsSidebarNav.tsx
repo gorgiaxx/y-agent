@@ -19,6 +19,7 @@ import {
   BellRing,
   Code2,
   PackageOpen,
+  Keyboard,
 } from 'lucide-react';
 import { NavSidebar, NavItem, NavDivider } from '../common/NavSidebar';
 
@@ -32,6 +33,7 @@ interface SettingsSidebarNavProps {
 
 const SETTINGS_ICON_MAP: Record<string, (props: { size: number }) => ReactElement> = {
   general:    (p) => <Settings {...p} />,
+  keyboardShortcuts: (p) => <Keyboard {...p} />,
   providers:  (p) => <Server {...p} />,
   session:    (p) => <MessageSquare {...p} />,
   backgroundWake: (p) => <BellRing {...p} />,
@@ -53,6 +55,7 @@ const SETTINGS_ICON_MAP: Record<string, (props: { size: number }) => ReactElemen
 
 const SETTINGS_CATEGORIES: { key: string; label: string }[] = [
   { key: 'general', label: 'General' },
+  { key: 'keyboardShortcuts', label: 'Keyboard Shortcuts' },
   { key: 'providers', label: 'Providers' },
   { key: 'session', label: 'Session' },
   { key: 'backgroundWake', label: 'Background Wake' },

@@ -13,6 +13,13 @@
 #   2. crates/y-gui/package.json
 #   3. crates/y-gui/src-tauri/tauri.conf.json
 #   4. package.nix
+#   5. crates/y-gui/package-lock.json  (top-level and root package version only)
+#   6. Cargo.lock                 (workspace crate versions, via cargo metadata)
+#
+# Note: the lock file is edited in place instead of running
+# `npm install --package-lock-only`, because locally installed npm versions
+# newer than the CI toolchain (Node 22 / npm 10) rewrite unrelated lock
+# metadata (e.g. `peer` flags), which then fails the CI lock-sync check.
 
 set -euo pipefail
 
@@ -23,6 +30,7 @@ CARGO_TOML="$REPO_ROOT/Cargo.toml"
 PACKAGE_JSON="$REPO_ROOT/crates/y-gui/package.json"
 TAURI_CONF="$REPO_ROOT/crates/y-gui/src-tauri/tauri.conf.json"
 PACKAGE_NIX="$REPO_ROOT/package.nix"
+PACKAGE_LOCK="$REPO_ROOT/crates/y-gui/package-lock.json"
 
 # -- Helpers ---------------------------------------------------------------- #
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -97,6 +105,19 @@ echo "  [OK] crates/y-gui/src-tauri/tauri.conf.json"
 sed -i '' "s/version = \"$CURRENT_VERSION\";/version = \"$NEW_VERSION\";/" "$PACKAGE_NIX"
 echo "  [OK] package.nix"
 
+# 5. package-lock.json -- "version": "x.y.z"
+#    Only the top-level "version" and the root packages[""]."version" entries
+#    (both within the first lines) belong to this project; dependency entries
+#    further down must not be touched.
+sed -i '' "1,20s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" "$PACKAGE_LOCK"
+echo "  [OK] crates/y-gui/package-lock.json"
+
+# 6. Cargo.lock -- workspace crate versions
+#    `cargo metadata` re-resolves and rewrites the lock file to match the
+#    manifests while keeping existing dependency pins (unlike `cargo update`).
+( cd "$REPO_ROOT" && cargo metadata --format-version 1 > /dev/null )
+echo "  [OK] Cargo.lock"
+
 echo ""
 
 # -- Verification ----------------------------------------------------------- #
@@ -116,13 +137,25 @@ verify "$CARGO_TOML"    "version = \"$NEW_VERSION\""     "Cargo.toml"
 verify "$PACKAGE_JSON"  "\"version\": \"$NEW_VERSION\""  "package.json"
 verify "$TAURI_CONF"    "\"version\": \"$NEW_VERSION\""  "tauri.conf.json"
 verify "$PACKAGE_NIX"   "version = \"$NEW_VERSION\";"    "package.nix"
+if head -20 "$PACKAGE_LOCK" | grep -q "\"version\": \"$CURRENT_VERSION\""; then
+  echo "  [FAIL] package-lock.json -- old version still present in header"
+  ERRORS=$((ERRORS + 1))
+else
+  echo "  [PASS] package-lock.json"
+fi
+if grep -A1 '^name = "y-agent"$' "$REPO_ROOT/Cargo.lock" | grep -q "version = \"$NEW_VERSION\""; then
+  echo "  [PASS] Cargo.lock"
+else
+  echo "  [FAIL] Cargo.lock -- y-agent version is not $NEW_VERSION"
+  ERRORS=$((ERRORS + 1))
+fi
 
 echo ""
 if [ "$ERRORS" -gt 0 ]; then
   die "Verification failed with $ERRORS error(s). Please check the files manually."
 fi
 
-echo "Done! Version bumped to $NEW_VERSION across all 4 files."
+echo "Done! Version bumped to $NEW_VERSION across all 6 files."
 echo ""
 echo "Next steps:"
 echo "  git add -u"

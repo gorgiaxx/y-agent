@@ -816,6 +816,7 @@ export function jsonToLangfuse(json: unknown): LangfuseFormData {
 
 export const TAB_LABELS: Record<SettingsTab, string> = {
   general: 'General',
+  keyboardShortcuts: 'Keyboard Shortcuts',
   providers: 'Providers',
   session: 'Session',
   backgroundWake: 'Background Wake',

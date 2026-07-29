@@ -41,6 +41,8 @@ pub struct GuiConfig {
     pub use_custom_decorations: bool,
     /// Default IDE used when opening file tool-call outputs from the GUI.
     pub default_file_ide: String,
+    /// User overrides for the GUI semantic shortcut registry.
+    pub keyboard_shortcuts: HashMap<String, Vec<String>>,
 }
 
 impl Default for GuiConfig {
@@ -55,6 +57,7 @@ impl Default for GuiConfig {
             translate_target_language: "English".to_string(),
             use_custom_decorations: default_use_custom_decorations(),
             default_file_ide: "auto".to_string(),
+            keyboard_shortcuts: HashMap::new(),
         }
     }
 }
@@ -129,4 +132,30 @@ pub fn save_gui_config(config_dir: &std::path::Path, config: &GuiConfig) -> anyh
     let content = toml::to_string_pretty(config)?;
     std::fs::write(path, content)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gui_config_shortcut_overrides_default_to_empty() {
+        assert!(GuiConfig::default().keyboard_shortcuts.is_empty());
+    }
+
+    #[test]
+    fn test_gui_config_shortcut_overrides_round_trip_through_toml() {
+        let mut config = GuiConfig::default();
+        config
+            .keyboard_shortcuts
+            .insert("new_chat".to_string(), vec!["Mod+Shift+N".to_string()]);
+
+        let encoded = toml::to_string(&config).expect("GUI config should serialize");
+        let decoded: GuiConfig = toml::from_str(&encoded).expect("GUI config should deserialize");
+
+        assert_eq!(
+            decoded.keyboard_shortcuts.get("new_chat"),
+            Some(&vec!["Mod+Shift+N".to_string()])
+        );
+    }
 }

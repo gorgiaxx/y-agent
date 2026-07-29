@@ -1,0 +1,15 @@
+# Copy this file to the user configuration directory as `tui-keymap.toml`.
+# Path: ~/.config/y-agent/tui-keymap.toml
+#
+# Each entry replaces every built-in chord for that semantic action while
+# preserving the contexts in which the action is valid. Use an empty array to
+# disable an action. The TUI rejects unknown actions, invalid chords, and
+# bindings that conflict in a simultaneously active context.
+
+[bindings]
+# show_help = ["F2"]
+# open_external_editor = ["Ctrl+E", "F4"]
+# open_history_search = ["Ctrl+R"]
+# paste_image = ["Ctrl+V"]
+# enter_backtrack = ["Ctrl+B"]
+# show_raw_scrollback = []

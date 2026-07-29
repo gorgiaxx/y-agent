@@ -714,6 +714,11 @@ submitting the service-owned turn request.
 TUI shortcuts resolve through stable semantic action IDs and explicit contexts.
 Dispatch, visible help, footer hints, terminal fallbacks, and user overrides use
 the same registry; presentation code must not maintain a second shortcut table.
+The TUI loads action-level overrides from the user-owned
+`tui-keymap.toml`; `config/tui-keymap.example.toml` documents the supported
+shape. Missing configuration preserves built-in defaults, while invalid chords,
+unknown actions, and simultaneously active conflicts fail closed with a visible
+diagnostic.
 Persistent prompt history and unfinished drafts are bounded, atomically written,
 and stored outside transcripts. Composer fragments and attachment chips remain
 presentation state until the exact turn is submitted to `y-service`.
@@ -739,6 +744,21 @@ free-text choice, and returns an `answers` payload through
 `UserInteractionOrchestrator`. While that modal is active, its dismiss binding
 takes precedence over stream cancellation so the waiting tool call is resolved
 rather than leaving the turn blocked until timeout.
+
+## Interactive GUI Boundary
+
+The shared React GUI owns a semantic shortcut registry that is independent from
+the TUI keymap. Definitions provide stable action IDs, descriptions, categories,
+and platform-neutral default chords. Global dispatch and the shortcut settings
+screen resolve through that registry rather than maintaining parallel key lists.
+
+GUI overrides are presentation preferences persisted with `GuiConfig`: Tauri
+stores them in the user-owned `gui.toml`, while the web transport uses its
+existing browser-local GUI configuration adapter. An explicit empty binding list
+means unassigned; a missing action override inherits the built-in default.
+Capture rejects unmodified printable keys and duplicate global chords so one
+keyboard event dispatches at most one semantic GUI action. Host-specific glyphs
+and the `Mod` primary modifier are resolved only at the presentation boundary.
 
 ## Provider Attempt Contract
 
