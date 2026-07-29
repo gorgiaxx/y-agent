@@ -27,7 +27,7 @@ use crate::tui::state::{
 };
 use crate::tui::theme::Theme;
 use crate::tui::tool_renderers::{
-    group_tool_indexes, present_tool, quick_summary, ToolRenderGroup,
+    group_tool_indexes, present_tool, quick_summary, ToolKind, ToolLine, ToolRenderGroup, ToolTone,
 };
 
 // ---------------------------------------------------------------------------
@@ -1294,7 +1294,7 @@ fn render_tool_call_card(
 
     let header_spans = vec![
         Span::styled(
-            format!("{indent}\u{2692} "),
+            format!("{indent}\u{2022} "),
             Style::default().fg(t.tool_card_accent()),
         ),
         Span::styled(
@@ -1408,7 +1408,7 @@ fn render_exploration_group(
     let timing = if total_duration == 0 {
         String::new()
     } else {
-        format!(" ({total_duration}ms)")
+        format!(" ({})", humanize_ms(total_duration))
     };
     let group_selected = selected_tool.is_some_and(|selected| {
         selected.message_index == message_index && tool_indexes.contains(&selected.tool_index)
@@ -1450,9 +1450,9 @@ fn render_exploration_group(
                 message_index,
                 tool_index,
             });
-        let timing = tool
-            .duration_ms
-            .map_or_else(String::new, |duration| format!(" ({duration}ms)"));
+        let timing = tool.duration_ms.map_or_else(String::new, |duration| {
+            format!(" ({})", humanize_ms(duration))
+        });
         let selected_label = if selected { "  [selected]" } else { "" };
         let marker = if selected { ">" } else { "-" };
 
@@ -1525,6 +1525,7 @@ fn render_exploration_group(
                     80,
                     t.tool_card_text(),
                     t,
+                    false,
                 );
             }
             let result_limit = match tool.display_mode {
@@ -1539,6 +1540,7 @@ fn render_exploration_group(
                 result_limit,
                 t.muted(),
                 t,
+                presentation.kind == ToolKind::Shell,
             );
         }
         tool_ranges.push((tool_index, child_start..lines.len()));
@@ -1567,15 +1569,20 @@ fn render_tool_call_executed_card(
         ToolCallStatus::Failed => ("Failed", t.error()),
     };
     let presentation = present_tool(tc, content_width.saturating_sub(indent.len() + 4));
-    let timing = tc
-        .duration_ms
-        .map_or_else(String::new, |duration| format!(" ({duration}ms)"));
+    let timing = tc.duration_ms.map_or_else(String::new, |duration| {
+        format!(" ({})", humanize_ms(duration))
+    });
     let collapsed_summary =
         if tc.display_mode == ToolCallDisplayMode::Collapsed && !presentation.summary.is_empty() {
             format!("  {}", truncate_str(&presentation.summary, 48))
         } else {
             String::new()
         };
+    let meta_chips = if presentation.meta.is_empty() {
+        String::new()
+    } else {
+        format!("  {}", presentation.meta.join(" · "))
+    };
 
     let selected_label = if selected { "  [selected]" } else { "" };
     let heading =
@@ -1604,6 +1611,7 @@ fn render_tool_call_executed_card(
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(collapsed_summary.clone(), Style::default().fg(t.muted())),
+        Span::styled(meta_chips.clone(), Style::default().fg(t.muted())),
         Span::styled("  ", Style::default()),
         Span::styled(
             format!("{status_label}{timing}"),
@@ -1615,10 +1623,11 @@ fn render_tool_call_executed_card(
         ),
     ];
     let header_plain = format!(
-        "{indent}{} {}{}  {status_label}{timing}{selected_label}",
+        "{indent}{} {}{}{}  {status_label}{timing}{selected_label}",
         if selected { ">" } else { "*" },
         heading,
-        collapsed_summary
+        collapsed_summary,
+        meta_chips
     );
     lines.push(Line::from(header_spans));
     plain.push(header_plain);
@@ -1634,6 +1643,7 @@ fn render_tool_call_executed_card(
                 80,
                 t.tool_card_text(),
                 t,
+                false,
             );
         }
 
@@ -1642,6 +1652,9 @@ fn render_tool_call_executed_card(
             ToolCallDisplayMode::Preview => 4,
             ToolCallDisplayMode::Expanded => 200,
         };
+        // Shell output keeps the *tail* in preview: build/log failures carry
+        // their signal in the last lines, not the first.
+        let tail = presentation.kind == ToolKind::Shell;
         push_tool_section(
             lines,
             plain,
@@ -1649,44 +1662,81 @@ fn render_tool_call_executed_card(
             result_limit,
             t.muted(),
             t,
+            tail,
         );
     }
 
     tool_ranges.push((tool_index, card_start..lines.len()));
 }
 
-/// Push tool output lines with plain indentation. Arguments and results are
-/// distinguished by color (callers pass different colors), not by labels or
-/// border glyphs.
+/// Push tool output lines with plain indentation. `Plain`-toned lines take
+/// `color`; other tones map onto theme roles (diff colors, stderr, dim).
+/// When `tail` is set and the content overflows `limit`, the *last* `limit`
+/// lines are kept (logs carry their signal at the end) behind an `N earlier
+/// lines` marker; otherwise the first `limit` lines are kept.
 fn push_tool_section(
     lines: &mut Vec<Line>,
     plain: &mut Vec<String>,
-    content: &[String],
+    content: &[ToolLine],
     limit: usize,
     color: Color,
     t: &Theme,
+    tail: bool,
 ) {
     if content.is_empty() || limit == 0 {
         return;
     }
     let indent = "     ";
-    let shown = content.len().min(limit);
-    for line in content.iter().take(shown) {
-        let output_line = format!("{indent}  {line}");
+    let (window, earlier) = if tail && content.len() > limit {
+        (&content[content.len() - limit..], content.len() - limit)
+    } else {
+        (&content[..content.len().min(limit)], 0)
+    };
+    if earlier > 0 {
+        let marker = format!("{indent}    ... {earlier} earlier lines (ctrl+o to expand)");
+        lines.push(Line::from(Span::styled(
+            marker.clone(),
+            Style::default().fg(t.muted()),
+        )));
+        plain.push(marker);
+    }
+    for tool_line in window {
+        let output_line = format!("{indent}  {}", tool_line.text);
         lines.push(Line::from(Span::styled(
             output_line.clone(),
-            Style::default().fg(color),
+            Style::default().fg(tool_tone_color(tool_line.tone, color, t)),
         )));
         plain.push(output_line);
     }
-    if content.len() > shown {
-        let omitted = content.len() - shown;
-        let more_line = format!("{indent}    ... {omitted} more lines");
+    if earlier == 0 && content.len() > window.len() {
+        let omitted = content.len() - window.len();
+        let more_line = format!("{indent}    ... {omitted} more lines (ctrl+o to expand)");
         lines.push(Line::from(Span::styled(
             more_line.clone(),
             Style::default().fg(t.muted()),
         )));
         plain.push(more_line);
+    }
+}
+
+/// Map a line's semantic tone onto a concrete theme color; `default` is the
+/// section color chosen by the caller (args vs results).
+fn tool_tone_color(tone: ToolTone, default: Color, t: &Theme) -> Color {
+    match tone {
+        ToolTone::Plain => default,
+        ToolTone::Dim => t.muted(),
+        ToolTone::Added => t.success(),
+        ToolTone::Removed => t.error(),
+        ToolTone::Stderr => t.warning(),
+    }
+}
+
+/// `123ms` under a second, `1.2s` above — compact timing for card headers.
+fn humanize_ms(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else {
+        format!("{:.1}s", ms as f64 / 1000.0)
     }
 }
 

@@ -119,6 +119,8 @@ pub enum KeyAction {
     AskUserToggle,
     /// Dismiss a pending `AskUser` question without an answer.
     AskUserDismiss,
+    /// Dismiss a pending permission or plan-review prompt (deny / reject).
+    PermissionDismiss,
     /// Toggle pin on the selected session.
     SessionPin,
     /// Archive the selected session.
@@ -188,6 +190,7 @@ impl KeyAction {
             Self::TasksRefresh => "tasks_refresh",
             Self::AskUserToggle => "ask_user_toggle",
             Self::AskUserDismiss => "ask_user_dismiss",
+            Self::PermissionDismiss => "permission_dismiss",
             Self::SessionPin => "session_pin",
             Self::SessionArchive => "session_archive",
             Self::SessionDelete => "session_delete",
@@ -255,6 +258,7 @@ impl KeyAction {
             Self::TasksRefresh => "Refresh tasks",
             Self::AskUserToggle => "Toggle the focused answer",
             Self::AskUserDismiss => "Dismiss the question",
+            Self::PermissionDismiss => "Deny or reject the prompt",
             Self::SessionPin => "Pin or unpin selected session",
             Self::SessionArchive => "Archive selected session",
             Self::SessionDelete => "Delete selected session with confirmation",
@@ -316,6 +320,7 @@ const ALL_ACTIONS: &[KeyAction] = &[
     KeyAction::TasksRefresh,
     KeyAction::AskUserToggle,
     KeyAction::AskUserDismiss,
+    KeyAction::PermissionDismiss,
     KeyAction::SessionPin,
     KeyAction::SessionArchive,
     KeyAction::SessionDelete,
@@ -346,6 +351,7 @@ pub enum KeyContext {
     Queue,
     Tasks,
     AskUser,
+    Permission,
 }
 
 impl KeyContext {
@@ -367,6 +373,7 @@ impl KeyContext {
             Self::Queue => "follow-up queue",
             Self::Tasks => "tasks",
             Self::AskUser => "AskUser prompt",
+            Self::Permission => "permission prompt",
         }
     }
 }
@@ -1053,6 +1060,11 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::AskUser, plain(KeyCode::Up), A::ScrollUp),
         binding(C::AskUser, plain(KeyCode::Down), A::ScrollDown),
         binding(C::AskUser, plain(KeyCode::Char(' ')), A::AskUserToggle),
+        binding(C::Permission, plain(KeyCode::Esc), A::PermissionDismiss),
+        binding(C::Permission, ctrl('c'), A::PermissionDismiss),
+        binding(C::Permission, plain(KeyCode::Enter), A::Submit),
+        binding(C::Permission, plain(KeyCode::Up), A::ScrollUp),
+        binding(C::Permission, plain(KeyCode::Down), A::ScrollDown),
     ]
 }
 
@@ -1060,7 +1072,11 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
     let mut contexts = vec![KeyContext::Global];
     if state.is_cancelling {
         contexts.insert(0, KeyContext::Cancelling);
-    } else if state.is_streaming && state.mode != InteractionMode::AskUser {
+    } else if state.is_streaming
+        && state.mode != InteractionMode::AskUser
+        && state.mode != InteractionMode::Permission
+        && state.mode != InteractionMode::PlanReview
+    {
         contexts.insert(0, KeyContext::Streaming);
     }
     let mode = match state.mode {
@@ -1076,6 +1092,7 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
         InteractionMode::Queue => KeyContext::Queue,
         InteractionMode::Tasks => KeyContext::Tasks,
         InteractionMode::AskUser => KeyContext::AskUser,
+        InteractionMode::Permission | InteractionMode::PlanReview => KeyContext::Permission,
         InteractionMode::Resume => KeyContext::SessionHub,
         InteractionMode::Copy => KeyContext::CopyPicker,
         InteractionMode::HistorySearch
@@ -1097,9 +1114,11 @@ fn fallback_action(state: &AppState) -> KeyAction {
         | InteractionMode::Resume
         | InteractionMode::Prompt
         | InteractionMode::AskUser => KeyAction::InputPassthrough,
-        InteractionMode::Help | InteractionMode::Queue | InteractionMode::Tasks => {
-            KeyAction::Consumed
-        }
+        InteractionMode::Help
+        | InteractionMode::Queue
+        | InteractionMode::Tasks
+        | InteractionMode::Permission
+        | InteractionMode::PlanReview => KeyAction::Consumed,
         InteractionMode::Normal | InteractionMode::Select => KeyAction::Unhandled,
     }
 }
@@ -1730,5 +1749,29 @@ mod tests {
             dispatch(key(KeyCode::Char('x')), &state),
             KeyAction::InputPassthrough
         );
+    }
+
+    #[test]
+    fn test_permission_bindings_override_stream_cancellation() {
+        let keymap = Keymap::default();
+        let mut state = AppState::new();
+        state.is_streaming = true;
+
+        for mode in [InteractionMode::Permission, InteractionMode::PlanReview] {
+            state.mode = mode;
+            assert_eq!(
+                keymap.dispatch_with_composer(key(KeyCode::Esc), &state, true),
+                KeyAction::PermissionDismiss,
+                "Esc must answer the prompt, not cancel the run ({mode:?})"
+            );
+            assert_eq!(dispatch(key(KeyCode::Enter), &state), KeyAction::Submit);
+            assert_eq!(dispatch(key(KeyCode::Up), &state), KeyAction::ScrollUp);
+            assert_eq!(dispatch(key(KeyCode::Down), &state), KeyAction::ScrollDown);
+            assert_eq!(
+                dispatch(key(KeyCode::Char('x')), &state),
+                KeyAction::Consumed,
+                "prompts have no text target ({mode:?})"
+            );
+        }
     }
 }

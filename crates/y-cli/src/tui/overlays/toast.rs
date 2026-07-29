@@ -38,11 +38,16 @@ pub fn level_color(level: ToastLevel) -> Color {
 }
 
 /// Map a `ToastLevel` to its prefix icon.
+///
+/// Uses plain ASCII for info/warning: `ℹ`/`⚠` get emoji-presentation
+/// substitution on macOS terminals, rendering 2 cells wide while
+/// unicode-width counts 1 — that desyncs ratatui's diff model and leaves
+/// stale cells behind neighbouring content.
 fn level_icon(level: ToastLevel) -> &'static str {
     match level {
-        ToastLevel::Info => "ℹ ",
+        ToastLevel::Info => "i ",
         ToastLevel::Success => "✓ ",
-        ToastLevel::Warning => "⚠ ",
+        ToastLevel::Warning => "! ",
         ToastLevel::Error => "✗ ",
     }
 }

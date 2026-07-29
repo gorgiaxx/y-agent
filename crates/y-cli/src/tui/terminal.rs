@@ -60,9 +60,7 @@ impl TerminalCapabilities {
                 Self::BRACKETED_PASTE | Self::OSC52_COPY | Self::FUNCTION_KEY_FALLBACKS
             }
             TerminalHost::Baseline | TerminalHost::Wsl => {
-                Self::BRACKETED_PASTE
-                    | Self::NATIVE_IMAGE_CLIPBOARD
-                    | Self::KEYBOARD_ENHANCEMENT
+                Self::BRACKETED_PASTE | Self::NATIVE_IMAGE_CLIPBOARD | Self::KEYBOARD_ENHANCEMENT
             }
         };
         Self { host, features }
@@ -111,10 +109,16 @@ mod tests {
         assert!(baseline.supports_keyboard_enhancement());
         assert_eq!(tmux.host, TerminalHost::Tmux);
         assert!(tmux.supports_osc52_copy());
-        assert!(!tmux.supports_keyboard_enhancement(), "tmux must not enable kitty kb");
+        assert!(
+            !tmux.supports_keyboard_enhancement(),
+            "tmux must not enable kitty kb"
+        );
         assert_eq!(ssh.host, TerminalHost::Ssh);
         assert!(ssh.needs_function_key_fallbacks());
-        assert!(!ssh.supports_keyboard_enhancement(), "ssh must not enable kitty kb");
+        assert!(
+            !ssh.supports_keyboard_enhancement(),
+            "ssh must not enable kitty kb"
+        );
         assert_eq!(nested.host, TerminalHost::TmuxOverSsh);
     }
 

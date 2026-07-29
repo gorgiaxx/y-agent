@@ -55,6 +55,10 @@ pub enum InteractionMode {
     Tasks,
     /// Modal response UI for a pending `AskUser` tool call.
     AskUser,
+    /// Modal allow/deny prompt for a pending tool-permission escalation.
+    Permission,
+    /// Modal approve/reject prompt for a pending plan review.
+    PlanReview,
 }
 
 /// Service-owned orchestration mode selected by the TUI operator.
@@ -654,6 +658,8 @@ impl AppState {
                     | InteractionMode::Queue
                     | InteractionMode::Tasks
                     | InteractionMode::AskUser
+                    | InteractionMode::Permission
+                    | InteractionMode::PlanReview
                     | InteractionMode::Normal
             ) | (
                 InteractionMode::Command
@@ -667,7 +673,9 @@ impl AppState {
                     | InteractionMode::Prompt
                     | InteractionMode::Queue
                     | InteractionMode::Tasks
-                    | InteractionMode::AskUser,
+                    | InteractionMode::AskUser
+                    | InteractionMode::Permission
+                    | InteractionMode::PlanReview,
                 InteractionMode::Normal
             ) | (
                 InteractionMode::Command,
@@ -678,6 +686,9 @@ impl AppState {
                     | InteractionMode::Prompt
                     | InteractionMode::Queue
                     | InteractionMode::Tasks
+            ) | (
+                InteractionMode::Permission | InteractionMode::PlanReview,
+                InteractionMode::PlanReview | InteractionMode::Permission
             )
         );
 

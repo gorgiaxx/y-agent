@@ -385,7 +385,9 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
 
-        message.set_attachments(&[attachment.clone()]).unwrap();
+        message
+            .set_attachments(std::slice::from_ref(&attachment))
+            .unwrap();
 
         assert_eq!(message.attachments().unwrap(), vec![attachment]);
         assert_eq!(

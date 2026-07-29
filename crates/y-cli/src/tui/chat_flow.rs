@@ -78,6 +78,25 @@ pub enum ChatEvent {
         interaction_id: String,
         questions: serde_json::Value,
     },
+    /// A dangerous tool call escalated to the HITL permission gate and is
+    /// waiting for an allow/deny answer.
+    PermissionRequested {
+        request_id: String,
+        tool_name: String,
+        action_description: String,
+        reason: String,
+        content_preview: Option<String>,
+    },
+    /// A drafted plan is waiting for manual review before execution.
+    PlanReviewRequested {
+        review_id: String,
+        plan_title: String,
+        plan_file: String,
+        estimated_effort: String,
+        overview: String,
+        scope_in: Vec<String>,
+        scope_out: Vec<String>,
+    },
     /// The active service run acknowledged cancellation.
     Cancelled,
 }
@@ -561,6 +580,45 @@ fn submit_message_with_mode_and_attachments(
                             })
                             .await;
                     }
+                    y_service::TurnEvent::PermissionRequest {
+                        request_id,
+                        tool_name,
+                        action_description,
+                        reason,
+                        content_preview,
+                    } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::PermissionRequested {
+                                request_id,
+                                tool_name,
+                                action_description,
+                                reason,
+                                content_preview,
+                            })
+                            .await;
+                    }
+                    y_service::TurnEvent::PlanReviewRequest {
+                        review_id,
+                        plan_title,
+                        plan_file,
+                        estimated_effort,
+                        overview,
+                        scope_in,
+                        scope_out,
+                        ..
+                    } => {
+                        let _ = tx_stream
+                            .send(ChatEvent::PlanReviewRequested {
+                                review_id,
+                                plan_title,
+                                plan_file,
+                                estimated_effort,
+                                overview,
+                                scope_in,
+                                scope_out,
+                            })
+                            .await;
+                    }
                     _ => {}
                 }
             }
@@ -886,7 +944,9 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 crate::tui::state::ToastLevel::Info,
             );
         }
-        ChatEvent::AskUserRequested { .. } => {}
+        ChatEvent::AskUserRequested { .. }
+        | ChatEvent::PermissionRequested { .. }
+        | ChatEvent::PlanReviewRequested { .. } => {}
         ChatEvent::Cancelled => {
             if let Some(last) = state.messages.last_mut() {
                 if last.role == MessageRole::Assistant && last.is_streaming {

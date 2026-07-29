@@ -8,6 +8,7 @@ pub mod command_palette;
 pub mod copy_picker;
 pub mod help;
 pub mod history_search;
+pub mod permission;
 pub mod picker;
 pub mod prompt_picker;
 pub mod queue_picker;

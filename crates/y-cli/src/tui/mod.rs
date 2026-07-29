@@ -24,6 +24,7 @@ pub mod theme;
 pub mod tool_renderers;
 pub mod tracing_bridge;
 
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::io::{self, Stdout};
@@ -62,6 +63,7 @@ use overlays::ask_user::{AskUserState, AskUserSubmit};
 use overlays::command_palette::CommandPaletteState;
 use overlays::copy_picker::CopyPickerState;
 use overlays::history_search::HistorySearchState;
+use overlays::permission::{PermissionPromptState, PlanReviewPromptState};
 use overlays::prompt_picker::{PromptPickerSelection, PromptPickerState};
 use overlays::queue_picker::QueuePickerState;
 use overlays::session_picker::SessionPickerState;
@@ -126,6 +128,14 @@ pub struct TuiApp {
     tasks_picker: TasksPickerState,
     /// Pending structured question emitted by an `AskUser` tool call.
     ask_user: AskUserState,
+    /// Pending allow/deny prompt emitted by a dangerous tool call.
+    permission: PermissionPromptState,
+    /// Permission prompts waiting for the active modal to close.
+    permission_queue: VecDeque<PermissionPromptState>,
+    /// Pending approve/reject prompt emitted by the plan orchestrator.
+    plan_review: PlanReviewPromptState,
+    /// Plan-review prompts waiting for the active modal to close.
+    plan_review_queue: VecDeque<PlanReviewPromptState>,
     /// Latest background-task list poll, driving the `bg: N` status-bar badge
     /// and the `/tasks` overlay rows.
     bg_tasks_cache: Vec<y_service::BackgroundTaskInfo>,
@@ -249,9 +259,6 @@ impl TuiApp {
         } else {
             false
         };
-        // Persist whether the push succeeded so restore pops it only when it did.
-        let keyboard_enhanced = keyboard_enhanced;
-
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
@@ -315,6 +322,10 @@ impl TuiApp {
             queue_picker,
             tasks_picker,
             ask_user,
+            permission: PermissionPromptState::default(),
+            permission_queue: VecDeque::new(),
+            plan_review: PlanReviewPromptState::default(),
+            plan_review_queue: VecDeque::new(),
             bg_tasks_cache: Vec::new(),
             bg_poll_tx,
             bg_poll_rx,
@@ -508,6 +519,8 @@ impl TuiApp {
         let mut submission_failed = false;
         let mut submission_finished = false;
         let mut ask_user_requests = Vec::new();
+        let mut permission_requests = Vec::new();
+        let mut plan_review_requests = Vec::new();
         loop {
             match active_chat.events.try_recv() {
                 Ok(event) => {
@@ -524,6 +537,36 @@ impl TuiApp {
                             interaction_id,
                             questions,
                         } => ask_user_requests.push((interaction_id, questions)),
+                        chat_flow::ChatEvent::PermissionRequested {
+                            request_id,
+                            tool_name,
+                            action_description,
+                            reason,
+                            content_preview,
+                        } => permission_requests.push(PermissionPromptState::new(
+                            request_id,
+                            tool_name,
+                            action_description,
+                            reason,
+                            content_preview,
+                        )),
+                        chat_flow::ChatEvent::PlanReviewRequested {
+                            review_id,
+                            plan_title,
+                            plan_file,
+                            estimated_effort,
+                            overview,
+                            scope_in,
+                            scope_out,
+                        } => plan_review_requests.push(PlanReviewPromptState::new(
+                            review_id,
+                            plan_title,
+                            plan_file,
+                            estimated_effort,
+                            overview,
+                            scope_in,
+                            scope_out,
+                        )),
                         event => chat_flow::apply_chat_event(event, &mut self.state),
                     }
                     applied = true;
@@ -540,9 +583,27 @@ impl TuiApp {
         for (interaction_id, questions) in ask_user_requests {
             self.open_ask_user(interaction_id, questions);
         }
+        for prompt in permission_requests {
+            self.open_permission(prompt);
+        }
+        for prompt in plan_review_requests {
+            self.open_plan_review(prompt);
+        }
         if (submission_failed || submission_finished) && self.state.mode == InteractionMode::AskUser
         {
             self.close_ask_user();
+        }
+        // The turn ended, so any gate still showing was resolved server-side
+        // (timeout/deny) — close it instead of leaving a dead modal up.
+        if (submission_failed || submission_finished)
+            && self.state.mode == InteractionMode::Permission
+        {
+            self.close_permission();
+        }
+        if (submission_failed || submission_finished)
+            && self.state.mode == InteractionMode::PlanReview
+        {
+            self.close_plan_review();
         }
         if submission_failed {
             self.restore_failed_submission();
@@ -578,6 +639,16 @@ impl TuiApp {
     fn open_ask_user(&mut self, interaction_id: String, questions: serde_json::Value) {
         match AskUserState::new(interaction_id.clone(), questions) {
             Ok(ask_user) => {
+                // AskUser outranks passive confirm prompts: re-queue an active
+                // permission/plan-review modal so it reopens after the answers.
+                if self.permission.request_id().is_some() {
+                    self.permission_queue
+                        .push_front(std::mem::take(&mut self.permission));
+                }
+                if self.plan_review.review_id().is_some() {
+                    self.plan_review_queue
+                        .push_front(std::mem::take(&mut self.plan_review));
+                }
                 if self.state.mode != InteractionMode::Normal {
                     self.state.set_mode(InteractionMode::Normal);
                 }
@@ -626,9 +697,129 @@ impl TuiApp {
             self.state.set_mode(InteractionMode::Normal);
             self.state.set_focus(PanelFocus::Input);
         }
+        self.maybe_open_next_prompt();
+    }
+
+    /// Open a tool-permission prompt. An unanswered gate blocks (and then
+    /// kills) the whole turn, so the prompt takes over any mode except
+    /// `AskUser` — losing the operator's typed answers there would be worse
+    /// than waiting one question. Queued requests chain after the active one.
+    fn open_permission(&mut self, prompt: PermissionPromptState) {
+        if self.permission.request_id().is_some() || self.state.mode == InteractionMode::AskUser {
+            self.permission_queue.push_back(prompt);
+            return;
+        }
+        self.permission = prompt;
+        if self.state.mode != InteractionMode::Normal {
+            self.state.set_mode(InteractionMode::Normal);
+        }
+        self.state.set_mode(InteractionMode::Permission);
+    }
+
+    /// Open a plan-review prompt (same takeover rules as permission).
+    fn open_plan_review(&mut self, prompt: PlanReviewPromptState) {
+        if self.plan_review.review_id().is_some() || self.state.mode == InteractionMode::AskUser {
+            self.plan_review_queue.push_back(prompt);
+            return;
+        }
+        self.plan_review = prompt;
+        if self.state.mode != InteractionMode::Normal {
+            self.state.set_mode(InteractionMode::Normal);
+        }
+        self.state.set_mode(InteractionMode::PlanReview);
+    }
+
+    /// Modal prompts (permission, plan review) only take over from Normal or
+    /// from each other; they must not interrupt text-entry modals (`AskUser`,
+    /// pickers, shell/command input).
+    fn can_show_modal_prompt(&self) -> bool {
+        matches!(
+            self.state.mode,
+            InteractionMode::Normal | InteractionMode::Permission | InteractionMode::PlanReview
+        )
+    }
+
+    /// Pop the next queued modal prompt now that the previous one closed.
+    fn maybe_open_next_prompt(&mut self) {
+        if self.permission.request_id().is_some()
+            || self.plan_review.review_id().is_some()
+            || !self.can_show_modal_prompt()
+        {
+            return;
+        }
+        if let Some(prompt) = self.permission_queue.pop_front() {
+            self.open_permission(prompt);
+        } else if let Some(prompt) = self.plan_review_queue.pop_front() {
+            self.open_plan_review(prompt);
+        }
+    }
+
+    async fn deliver_permission_decision(&mut self, response: y_service::PermissionPromptResponse) {
+        let Some(request_id) = self.permission.request_id().map(str::to_owned) else {
+            self.close_permission();
+            return;
+        };
+        let delivered = {
+            let mut map = self.services.session_state.pending_permissions.lock().await;
+            map.remove(&request_id)
+                .is_some_and(|pending| pending.send(response).is_ok())
+        };
+        if !delivered {
+            self.state.push_toast(
+                "Permission request expired before it could be answered.".into(),
+                ToastLevel::Warning,
+            );
+        }
+        self.close_permission();
+    }
+
+    fn close_permission(&mut self) {
+        self.permission = PermissionPromptState::default();
+        if self.state.mode == InteractionMode::Permission {
+            self.state.set_mode(InteractionMode::Normal);
+            self.state.set_focus(PanelFocus::Input);
+        }
+        self.maybe_open_next_prompt();
+    }
+
+    async fn deliver_plan_review_decision(
+        &mut self,
+        decision: y_service::chat_types::PlanReviewDecision,
+    ) {
+        let Some(review_id) = self.plan_review.review_id().map(str::to_owned) else {
+            self.close_plan_review();
+            return;
+        };
+        let delivered = {
+            let mut map = self
+                .services
+                .session_state
+                .pending_plan_reviews
+                .lock()
+                .await;
+            map.remove(&review_id)
+                .is_some_and(|pending| pending.send(decision).is_ok())
+        };
+        if !delivered {
+            self.state.push_toast(
+                "Plan review expired before it could be answered.".into(),
+                ToastLevel::Warning,
+            );
+        }
+        self.close_plan_review();
+    }
+
+    fn close_plan_review(&mut self) {
+        self.plan_review = PlanReviewPromptState::default();
+        if self.state.mode == InteractionMode::PlanReview {
+            self.state.set_mode(InteractionMode::Normal);
+            self.state.set_focus(PanelFocus::Input);
+        }
+        self.maybe_open_next_prompt();
     }
 
     /// Process a key event. Returns `true` when the app should quit.
+    #[allow(clippy::too_many_lines)]
     async fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> bool {
         let action =
             self.keymap
@@ -687,6 +878,10 @@ impl TuiApp {
             KeyAction::ScrollUp => {
                 if self.state.mode == InteractionMode::AskUser {
                     self.ask_user.select_prev();
+                } else if self.state.mode == InteractionMode::Permission {
+                    self.permission.select_prev();
+                } else if self.state.mode == InteractionMode::PlanReview {
+                    self.plan_review.select_prev();
                 } else if self.state.mode == InteractionMode::Help {
                     self.help_scroll = self.help_scroll.saturating_sub(1);
                 } else if self.state.mode == InteractionMode::Resume {
@@ -712,6 +907,10 @@ impl TuiApp {
             KeyAction::ScrollDown => {
                 if self.state.mode == InteractionMode::AskUser {
                     self.ask_user.select_next();
+                } else if self.state.mode == InteractionMode::Permission {
+                    self.permission.select_next();
+                } else if self.state.mode == InteractionMode::PlanReview {
+                    self.plan_review.select_next();
                 } else if self.state.mode == InteractionMode::Help {
                     self.help_scroll = self.help_scroll.saturating_add(1);
                 } else if self.state.mode == InteractionMode::Resume {
@@ -948,6 +1147,15 @@ impl TuiApp {
                 self.deliver_ask_user_answer(serde_json::json!({ "answers": {} }))
                     .await;
             }
+            KeyAction::PermissionDismiss => {
+                if self.state.mode == InteractionMode::PlanReview {
+                    let decision = PlanReviewPromptState::dismiss();
+                    self.deliver_plan_review_decision(decision).await;
+                } else {
+                    let response = PermissionPromptState::dismiss();
+                    self.deliver_permission_decision(response).await;
+                }
+            }
             action @ (KeyAction::SessionPin
             | KeyAction::SessionArchive
             | KeyAction::SessionDelete
@@ -969,7 +1177,13 @@ impl TuiApp {
     /// slash command, or queued follow-up). Returns `true` when the executed
     /// command requested quitting the app.
     async fn handle_submit(&mut self) -> bool {
-        if self.state.mode == InteractionMode::AskUser {
+        if self.state.mode == InteractionMode::Permission {
+            let response = self.permission.submit();
+            self.deliver_permission_decision(response).await;
+        } else if self.state.mode == InteractionMode::PlanReview {
+            let decision = self.plan_review.submit();
+            self.deliver_plan_review_decision(decision).await;
+        } else if self.state.mode == InteractionMode::AskUser {
             if let AskUserSubmit::Complete(answer) = self.ask_user.submit() {
                 self.deliver_ask_user_answer(answer).await;
             }
@@ -1824,7 +2038,12 @@ impl TuiApp {
                 // With no active selection the toggle targets the most recent
                 // tool card (the one the user is watching); the toast only
                 // fires when the transcript has no tool cards at all.
-                if !toggle_tool_display(&mut self.state) {
+                if toggle_tool_display(&mut self.state) {
+                    // Expanded output can leave physically stale cells when
+                    // the terminal renders a glyph wider/narrower than
+                    // unicode-width assumes; a full repaint resyncs the model.
+                    let _ = self.terminal.clear();
+                } else {
                     self.state.push_toast(
                         "No tool calls in this conversation.".into(),
                         ToastLevel::Info,
@@ -1963,6 +2182,9 @@ impl TuiApp {
                             if let Some(tool) = tool_at_row(&self.chat_tool_rows, row) {
                                 self.state.selected_tool = Some(tool);
                                 self.state.cycle_selected_tool_display();
+                                // See ToggleSelectedTool: expanded output can
+                                // desync the diff model; force a full repaint.
+                                let _ = self.terminal.clear();
                             }
                         }
                     }
@@ -2267,6 +2489,24 @@ impl TuiApp {
 
             if state.mode == InteractionMode::AskUser {
                 overlays::ask_user::render(frame, area, &self.ask_user, &state.theme);
+            }
+
+            if state.mode == InteractionMode::Permission {
+                overlays::permission::render_permission(
+                    frame,
+                    area,
+                    &self.permission,
+                    &state.theme,
+                );
+            }
+
+            if state.mode == InteractionMode::PlanReview {
+                overlays::permission::render_plan_review(
+                    frame,
+                    area,
+                    &self.plan_review,
+                    &state.theme,
+                );
             }
 
             // Render help overlay if in Help mode.

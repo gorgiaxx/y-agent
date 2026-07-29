@@ -1159,6 +1159,7 @@ mod tests {
     }
 
     impl SlowProvider {
+        #[allow(clippy::new_ret_no_self)]
         fn new() -> Arc<dyn LlmProvider> {
             Arc::new(Self {
                 meta: ProviderMetadata {

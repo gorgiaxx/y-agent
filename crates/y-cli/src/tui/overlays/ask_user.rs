@@ -191,7 +191,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AskUserState, theme: &Theme
     let Some(question) = state.current_question() else {
         return;
     };
-    let width = area.width.saturating_sub(4).min(78).max(24);
+    let width = area.width.saturating_sub(4).clamp(24, 78);
     let height = (question.options.len() as u16 + 8)
         .min(area.height.saturating_sub(2))
         .max(10);
