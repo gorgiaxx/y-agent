@@ -675,6 +675,13 @@ permission preflight and runtime path. Shell mode accepts raw commands until
 the operator exits with Escape; a presentation confirmation may satisfy `Ask`,
 but can never override `Deny`.
 
+`AskUser` remains a service-owned pending interaction. The TUI renders its
+structured questions as a modal keyboard workflow, adds the standard `Other`
+free-text choice, and returns an `answers` payload through
+`UserInteractionOrchestrator`. While that modal is active, its dismiss binding
+takes precedence over stream cancellation so the waiting tool call is resolved
+rather than leaving the turn blocked until timeout.
+
 ## Provider Attempt Contract
 
 Provider construction resolves a versioned provider profile and model profile,
