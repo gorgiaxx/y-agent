@@ -1,16 +1,15 @@
 //! Status bar renderer.
 //!
-//! Single-line bar aligned with the GUI's `StatusBar.tsx` layout:
+//! Flat powerline-style bar (no background blocks), modeled on
+//! pi-powerline-footer: foreground-colored segments joined by a thin
+//! powerline separator (`\u{E0B1}`, ASCII `›` fallback) in one dim gray:
 //!
 //! ```text
-//! [Left]                                        [Right]
-//! session  mode  prompt  model  tokens/context (pct%)  $cost      / commands
-//!             [=========-------]
+//! [Left]                                                          [Right]
+//! running  session  mode  prompt  path  git  model  ctx (pct%)  $cost   / commands
 //! ```
-//!
-//! Data is pulled from `AppState` (populated by the chat flow after each
-//! LLM response).
 
+use chrono::Utc;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -29,7 +28,17 @@ use crate::tui::theme::Theme;
 /// Render the status bar into the given area using live data from `AppState`.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let t = &state.theme;
-    let sep = Span::styled(" | ", Style::default().fg(t.status_sep()));
+    // Thin powerline separator between segments (one dim gray, no bg blocks);
+    // ASCII fallback for terminals without Nerd Font glyphs.
+    let sep_glyph = if state.powerline_glyphs {
+        "\u{E0B1}"
+    } else {
+        "\u{203A}"
+    };
+    let sep = Span::styled(
+        format!(" {sep_glyph} "),
+        Style::default().fg(t.status_sep()),
+    );
 
     // -- Left section --
     let mut left_spans: Vec<Span> = vec![Span::styled(" ", Style::default())];
@@ -64,6 +73,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     if let Some(agents_span) = build_subagent_status_span(state, t) {
         left_spans.push(sep.clone());
         left_spans.push(agents_span);
+    }
+
+    // Workspace path (teal) and git working-tree status.
+    if let Some(path_span) = build_path_span(state, t) {
+        left_spans.push(sep.clone());
+        left_spans.push(path_span);
+    }
+    let git_spans = build_git_spans(state, t);
+    if !git_spans.is_empty() {
+        left_spans.push(sep.clone());
+        left_spans.extend(git_spans);
     }
     left_spans.push(sep.clone());
 
@@ -142,20 +162,109 @@ fn build_prompt_status_span(state: &AppState, t: &Theme) -> Span<'static> {
 
 /// Build the always-on "running" segment shown while a response streams.
 ///
-/// The spinner frame is driven by `state.tick_counter` (100 ms ticks) and uses
-/// the same braille frames as the chat panel's streaming header marker.
+/// The spinner frame is driven by `state.tick_counter` (100 ms ticks) and
+/// the elapsed time counts up from the active message's timestamp, so the
+/// bar doubles as the at-a-glance "agent is still working" signal.
 /// Returns an empty vec when idle.
 fn build_running_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
     if !state.is_streaming {
         return Vec::new();
     }
     let frame = SPINNER_FRAMES[(state.tick_counter as usize) % SPINNER_FRAMES.len()];
+    let elapsed = state.messages.last().map(|message| {
+        let secs = (Utc::now() - message.timestamp).num_seconds().max(0);
+        if secs >= 60 {
+            format!(" {}m{:02}s", secs / 60, secs % 60)
+        } else {
+            format!(" {secs}s")
+        }
+    });
+    let label = match elapsed {
+        Some(elapsed) => format!("{frame} running{elapsed}"),
+        None => format!("{frame} running"),
+    };
     vec![Span::styled(
-        format!("{frame} running"),
+        label,
         Style::default()
             .fg(t.streaming_dot())
             .add_modifier(Modifier::BOLD),
     )]
+}
+
+/// Workspace path segment (teal), abbreviated home-relative.
+fn build_path_span(state: &AppState, t: &Theme) -> Option<Span<'static>> {
+    if state.workspace_dir.is_empty() {
+        return None;
+    }
+    Some(Span::styled(
+        abbreviate_path(&state.workspace_dir),
+        Style::default().fg(t.status_path()),
+    ))
+}
+
+/// Abbreviate a directory for the status bar: `$HOME` becomes `~`, and long
+/// paths collapse to `…/parent/leaf`.
+fn abbreviate_path(dir: &str) -> String {
+    const MAX: usize = 30;
+    let display = std::env::var("HOME").map_or_else(
+        |_| dir.to_string(),
+        |home| {
+            if !home.is_empty() && dir.starts_with(&home) {
+                format!("~{}", &dir[home.len()..])
+            } else {
+                dir.to_string()
+            }
+        },
+    );
+    if display.chars().count() <= MAX {
+        return display;
+    }
+    let mut parts = display.rsplit('/');
+    if let (Some(leaf), Some(parent)) = (parts.next(), parts.next()) {
+        if !leaf.is_empty() && !parent.is_empty() {
+            return format!("…/{parent}/{leaf}");
+        }
+    }
+    display
+}
+
+/// Git working-tree segment: branch (green when clean, yellow when dirty)
+/// plus per-category change counts, all from the polled cache.
+fn build_git_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
+    let Some(status) = &state.git_status else {
+        return Vec::new();
+    };
+    if status.branch.is_empty() {
+        return Vec::new();
+    }
+    let branch_color = if status.is_dirty() {
+        t.warning()
+    } else {
+        t.success()
+    };
+    let mut spans = vec![Span::styled(
+        status.branch.clone(),
+        Style::default().fg(branch_color),
+    )];
+    if status.staged > 0 {
+        spans.push(Span::styled(
+            format!("+{}", status.staged),
+            Style::default().fg(t.success()),
+        ));
+    }
+    if status.unstaged > 0 {
+        spans.push(Span::styled(
+            format!(" *{}", status.unstaged),
+            Style::default().fg(t.warning()),
+        ));
+    }
+    if status.untracked > 0 {
+        spans.push(Span::styled(
+            format!(" ?{}", status.untracked),
+            Style::default().fg(t.muted()),
+        ));
+    }
+    spans
 }
 
 /// Build the follow-up queue depth segment (`queue: N`), visible only while
@@ -203,9 +312,10 @@ fn build_subagent_status_span(state: &AppState, t: &Theme) -> Option<Span<'stati
 ///
 /// Format: `tokens/window (pct%) [=========-------]`
 ///
-/// Color coding:
-/// - Normal (accent) : < 80%
-/// - Warning (yellow) : >= 80%
+/// Color coding (mirrors pi-powerline-footer thresholds):
+/// - Normal (accent) : < 70%
+/// - Warning (yellow): >= 70%
+/// - Error (red)     : >= 90%
 fn build_context_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
     if state.context_window == 0 {
         if state.status_tokens.is_empty() {
@@ -228,7 +338,9 @@ fn build_context_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
     let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
     let empty = bar_width.saturating_sub(filled);
 
-    let bar_color = if pct >= 80.0 {
+    let level_color = if pct >= 90.0 {
+        t.error()
+    } else if pct >= 70.0 {
         t.status_bar_warn()
     } else {
         t.status_bar_normal()
@@ -243,12 +355,14 @@ fn build_context_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             format!("{used_label}/{total_label}"),
-            Style::default().fg(t.status_token_ratio()),
+            Style::default().fg(level_color),
         ),
         Span::styled(format!(" ({pct:.1}%) "), Style::default().fg(t.muted())),
         Span::styled(
             filled_str,
-            Style::default().fg(bar_color).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(level_color)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(empty_str, Style::default().fg(t.status_bar_track())),
     ]
@@ -585,5 +699,99 @@ mod tests {
         assert_eq!(take_display_width("abc好de", 4), "abc");
         assert_eq!(take_display_width("abc好de", 5), "abc好");
         assert_eq!(take_display_width("ab", 10), "ab");
+    }
+
+    #[test]
+    fn test_git_spans_hidden_without_status() {
+        let state = AppState::new();
+        assert!(build_git_spans(&state, &state.theme).is_empty());
+    }
+
+    #[test]
+    fn test_git_spans_branch_color_and_counts() {
+        let mut state = AppState::new();
+
+        state.git_status = Some(crate::tui::git_status::GitStatus {
+            branch: "main".into(),
+            staged: 0,
+            unstaged: 0,
+            untracked: 0,
+        });
+        let spans = build_git_spans(&state, &state.theme);
+        assert_eq!(spans.len(), 1, "clean tree shows the branch only");
+        assert_eq!(spans[0].content.as_ref(), "main");
+        assert_eq!(spans[0].style.fg, Some(state.theme.success()));
+
+        state.git_status = Some(crate::tui::git_status::GitStatus {
+            branch: "main".into(),
+            staged: 2,
+            unstaged: 1,
+            untracked: 3,
+        });
+        let spans = build_git_spans(&state, &state.theme);
+        let text: String = spans.iter().map(|span| span.content.as_ref()).collect();
+        assert_eq!(text, "main+2 *1 ?3");
+        assert_eq!(spans[0].style.fg, Some(state.theme.warning()));
+        assert_eq!(spans[1].style.fg, Some(state.theme.success()));
+        assert_eq!(spans[2].style.fg, Some(state.theme.warning()));
+        assert_eq!(spans[3].style.fg, Some(state.theme.muted()));
+    }
+
+    #[test]
+    fn test_path_segment_uses_teal_and_abbreviates() {
+        let mut state = AppState::new();
+        state.workspace_dir = String::new();
+        assert!(build_path_span(&state, &state.theme).is_none());
+
+        state.workspace_dir = "/tmp/work".into();
+        let span = build_path_span(&state, &state.theme).unwrap();
+        assert_eq!(span.style.fg, Some(state.theme.status_path()));
+        assert_eq!(span.content.as_ref(), "/tmp/work");
+
+        let long = format!("/{}/leaf", "a".repeat(40));
+        let abbreviated = abbreviate_path(&long);
+        assert!(
+            abbreviated.starts_with('…'),
+            "long paths collapse to a tail: {abbreviated}"
+        );
+        assert!(abbreviated.ends_with("/leaf"));
+    }
+
+    #[test]
+    fn test_running_spans_include_elapsed_time() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        state.messages.push(crate::tui::state::ChatMessage {
+            role: crate::tui::state::MessageRole::Assistant,
+            content: String::new(),
+            timestamp: Utc::now() - chrono::Duration::seconds(65),
+            is_streaming: true,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+        });
+
+        let spans = build_running_spans(&state, &state.theme);
+        let text = spans[0].content.as_ref();
+        assert!(text.contains("running"), "expected running label: {text}");
+        assert!(text.contains("1m05s"), "expected elapsed minutes: {text}");
+    }
+
+    #[test]
+    fn test_context_error_threshold_at_90_percent() {
+        let mut state = AppState::new();
+        state.context_window = 100;
+        let t = &state.theme;
+
+        state.last_input_tokens = 75;
+        let spans = build_context_spans(&state, t);
+        assert_eq!(spans[2].style.fg, Some(t.status_bar_warn()));
+
+        state.last_input_tokens = 95;
+        let spans = build_context_spans(&state, t);
+        assert_eq!(spans[2].style.fg, Some(t.error()));
+        assert_eq!(spans[0].style.fg, Some(t.error()));
     }
 }

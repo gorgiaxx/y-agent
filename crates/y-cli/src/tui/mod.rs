@@ -150,6 +150,17 @@ pub struct TuiApp {
     /// Whether a background-task list poll is currently in flight; prevents
     /// overlapping spawns when a poll outlives its interval.
     bg_poll_in_flight: bool,
+    /// Sender half of the git-status poll channel.
+    git_poll_tx: tokio::sync::mpsc::UnboundedSender<Option<git_status::GitStatus>>,
+    /// Receiver half of the git-status poll channel, drained on ticks.
+    git_poll_rx: tokio::sync::mpsc::UnboundedReceiver<Option<git_status::GitStatus>>,
+    /// Whether a git-status poll is currently in flight.
+    git_poll_in_flight: Toggle,
+    /// Tick counter value when the last git-status poll started (rate limit).
+    git_last_poll_tick: u64,
+    /// Forces a git-status poll on the next tick (set when a turn finishes:
+    /// tool calls may have changed the working tree).
+    git_poll_due_now: Toggle,
     /// Application services (LLM, session, etc.).
     services: Arc<AppServices>,
     /// Active service turn, including progress events and cancellation.
@@ -307,6 +318,7 @@ impl TuiApp {
         let tasks_picker = TasksPickerState::default();
         let ask_user = AskUserState::default();
         let (bg_poll_tx, bg_poll_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (git_poll_tx, git_poll_rx) = tokio::sync::mpsc::unbounded_channel();
         let (clipboard_image_tx, clipboard_image_rx) = tokio::sync::mpsc::unbounded_channel();
 
         Ok(Self {
@@ -331,6 +343,11 @@ impl TuiApp {
             bg_poll_tx,
             bg_poll_rx,
             bg_poll_in_flight: false,
+            git_poll_tx,
+            git_poll_rx,
+            git_poll_in_flight: Toggle::Off,
+            git_last_poll_tick: 0,
+            git_poll_due_now: Toggle::On,
             services,
             active_chat: None,
             toast_rx,
@@ -614,6 +631,11 @@ impl TuiApp {
                     self.state.push_toast(error, ToastLevel::Error);
                 }
             }
+        }
+        // A finished turn may have changed the working tree: refresh the
+        // git segment on the next tick instead of waiting out the interval.
+        if submission_finished {
+            self.git_poll_due_now = Toggle::On;
         }
         // A `/permission` selection made before any session existed applies
         // to the session this turn just created.
@@ -2229,6 +2251,8 @@ impl TuiApp {
 
         self.poll_background_activity();
 
+        self.poll_git_status();
+
         if tick_marks_dirty(
             self.state.is_streaming,
             !self.state.toasts.is_empty(),
@@ -2305,6 +2329,41 @@ impl TuiApp {
     /// cheap enough to read on every tick. The background-task list needs an
     /// async service call, so it is throttled (~1.5 s) and spawned off the
     /// UI loop; the result arrives through a channel drained on later ticks.
+    /// Poll the workspace's git status off the UI loop. The status bar reads
+    /// the cached value (serve-stale), so the segment never blanks out while
+    /// a refresh is in flight.
+    fn poll_git_status(&mut self) {
+        while let Ok(status) = self.git_poll_rx.try_recv() {
+            self.git_poll_in_flight = Toggle::Off;
+            if status != self.state.git_status {
+                self.state.git_status = status;
+                self.needs_redraw = Toggle::On;
+            }
+        }
+        if self.git_poll_in_flight.is_on() || self.state.workspace_dir.is_empty() {
+            return;
+        }
+        // 30 ticks at 100 ms = a 3 s refresh cadence; turn completion forces
+        // an immediate re-poll via `git_poll_due_now`.
+        let due = std::mem::take(&mut self.git_poll_due_now).is_on()
+            || self
+                .state
+                .tick_counter
+                .saturating_sub(self.git_last_poll_tick)
+                >= 30;
+        if !due {
+            return;
+        }
+        self.git_poll_in_flight = Toggle::On;
+        self.git_last_poll_tick = self.state.tick_counter;
+        let workdir = self.state.workspace_dir.clone();
+        let tx = self.git_poll_tx.clone();
+        tokio::spawn(async move {
+            // A send failure means the app is shutting down; drop the result.
+            let _ = tx.send(git_status::query(&workdir).await);
+        });
+    }
+
     fn poll_background_activity(&mut self) {
         // Apply a finished poll first so counts update as soon as possible.
         while let Ok(result) = self.bg_poll_rx.try_recv() {

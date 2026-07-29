@@ -1,22 +1,28 @@
 import { useState, useRef, useMemo, useCallback } from 'react';
 import type { ComponentType } from 'react';
 import { X, Search, ChevronDown } from 'lucide-react';
-import { toc } from '@lobehub/icons';
-import type { IconToc } from '@lobehub/icons';
-import * as AllIcons from '@lobehub/icons';
+import { toc } from '@lobehub/icons/es/toc';
+import type { IconToc } from '@lobehub/icons/es/toc';
 import { Popover, PopoverTrigger, PopoverContent } from '../ui';
 
 // ---------------------------------------------------------------------------
 // Static icon lookup map -- all icons are bundled at build time
 // ---------------------------------------------------------------------------
 
-const allIconsRecord = AllIcons as Record<string, unknown>;
+type IconModule = {
+  default: ComponentType<{ size?: number | string }>;
+};
+
+const iconModules = import.meta.glob<IconModule>(
+  '/node_modules/@lobehub/icons/es/*/components/Mono.js',
+  { eager: true },
+);
 const iconMap: Record<string, ComponentType<{ size?: number | string }>> = {};
 
-for (const entry of toc) {
-  const comp = allIconsRecord[entry.id];
-  if (comp) {
-    iconMap[entry.id] = comp as ComponentType<{ size?: number | string }>;
+for (const [path, iconModule] of Object.entries(iconModules)) {
+  const iconId = path.split('/').at(-3);
+  if (iconId) {
+    iconMap[iconId] = iconModule.default;
   }
 }
 

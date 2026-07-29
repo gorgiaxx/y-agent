@@ -578,6 +578,15 @@ pub struct AppState {
     /// Maintained by the app loop's polling task; read by the status bar
     /// (`agents: N` segment) and the future `/tasks` overlay.
     pub active_subagent_count: usize,
+    /// Workspace directory shown in the status bar path segment and used as
+    /// the working directory for git status polls.
+    pub workspace_dir: String,
+    /// Latest polled git working-tree status (serve-stale: kept on screen
+    /// while a refresh is in flight).
+    pub git_status: Option<crate::tui::git_status::GitStatus>,
+    /// Whether the terminal is expected to have Nerd Font glyphs (powerline
+    /// separators); falls back to ASCII separators otherwise.
+    pub powerline_glyphs: bool,
 }
 
 impl Default for AppState {
@@ -617,6 +626,11 @@ impl Default for AppState {
             pending_permission_mode: None,
             bg_task_count: 0,
             active_subagent_count: 0,
+            workspace_dir: std::env::current_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            git_status: None,
+            powerline_glyphs: crate::tui::terminal::nerd_font_available(),
         }
     }
 }

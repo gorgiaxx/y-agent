@@ -90,6 +90,30 @@ impl TerminalCapabilities {
     }
 }
 
+/// Whether the terminal is expected to ship Nerd Font glyphs (powerline
+/// separators like `\u{E0B1}`). Mirrors pi-powerline-footer's detection: an
+/// explicit `Y_AGENT_NERD_FONTS` override wins, then well-known
+/// Nerd-Font-capable terminal programs; Apple Terminal and unknown hosts
+/// fall back to ASCII separators.
+pub fn nerd_font_available() -> bool {
+    nerd_font_from_environment(
+        std::env::var("Y_AGENT_NERD_FONTS").ok().as_deref(),
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+    )
+}
+
+fn nerd_font_from_environment(override_flag: Option<&str>, term_program: Option<&str>) -> bool {
+    if let Some(flag) = override_flag {
+        return !matches!(flag, "0" | "false" | "no");
+    }
+    term_program.is_some_and(|program| {
+        matches!(
+            program.to_ascii_lowercase().as_str(),
+            "iterm.app" | "wezterm" | "kitty" | "ghostty" | "alacritty"
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,5 +154,21 @@ mod tests {
         assert!(!caps.supports_osc52_copy());
         assert!(!caps.supports_keyboard_enhancement());
         assert!(caps.needs_function_key_fallbacks());
+    }
+
+    #[test]
+    fn nerd_font_detection_matrix() {
+        assert!(nerd_font_from_environment(None, Some("iTerm.app")));
+        assert!(nerd_font_from_environment(None, Some("WezTerm")));
+        assert!(nerd_font_from_environment(None, Some("ghostty")));
+        assert!(!nerd_font_from_environment(None, Some("Apple_Terminal")));
+        assert!(!nerd_font_from_environment(None, Some("vscode")));
+        assert!(!nerd_font_from_environment(None, None));
+        // Explicit override wins in both directions.
+        assert!(nerd_font_from_environment(
+            Some("1"),
+            Some("Apple_Terminal")
+        ));
+        assert!(!nerd_font_from_environment(Some("0"), Some("iTerm.app")));
     }
 }

@@ -267,10 +267,10 @@ impl Theme {
         self.color(Color::Rgb(180, 140, 255), Color::Indexed(183))
     }
 
-    /// Token ratio text.
-    pub fn status_token_ratio(&self) -> Color {
-        // RGB(150,150,170) -> index 252 (light gray)
-        self.color(Color::Rgb(150, 150, 170), Color::Indexed(252))
+    /// Workspace path text (teal).
+    pub fn status_path(&self) -> Color {
+        // RGB(0,175,175) -> index 37 (teal)
+        self.color(Color::Rgb(0, 175, 175), Color::Indexed(37))
     }
 
     /// Context bar track (empty portion).
@@ -410,7 +410,7 @@ mod tests {
         let _ = theme.code_fg();
         let _ = theme.code_block_fg();
         let _ = theme.status_model();
-        let _ = theme.status_token_ratio();
+        let _ = theme.status_path();
         let _ = theme.status_bar_track();
         let _ = theme.status_bar_normal();
         let _ = theme.status_bar_warn();
