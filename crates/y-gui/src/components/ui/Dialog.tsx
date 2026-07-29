@@ -56,11 +56,11 @@ export const DialogContent = forwardRef<HTMLDivElement, DialogContentProps>(
             className={[
               'bg-[var(--surface-primary)]',
               'border border-solid border-[var(--border)]',
-              'rounded-[var(--radius-lg)]',
+              'rounded-[var(--radius-md)]',
               'max-w-[calc(100vw-32px)]',
               'p-6',
               'flex flex-col items-center text-center gap-2',
-              'shadow-[0_16px_48px_rgba(0,0,0,0.3),0_0_0_1px_rgba(255,255,255,0.04)]',
+              'shadow-lg',
               'data-[state=open]:animate-[dialogContentIn_0.2s_cubic-bezier(0.34,1.56,0.64,1)]',
               'outline-none',
               className,

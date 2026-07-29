@@ -35,7 +35,7 @@ export const TabsTrigger = forwardRef<
       'flex-1 inline-flex items-center justify-center',
       'px-3.5 py-1.5',
       'bg-transparent border-none',
-      'rounded-[6px]',
+      'rounded-[var(--radius-sm)]',
       'text-13px font-500',
       'text-text-secondary',
       'cursor-pointer outline-none',

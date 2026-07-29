@@ -36,7 +36,7 @@
   background: var(--surface-tertiary);
   border: 1px solid var(--border);
   padding: 10px 14px;
-  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
+  border-radius: var(--radius-md) var(--radius-md) var(--radius-sm) var(--radius-md);
   display: inline-block;
   text-align: left;
   white-space: pre-wrap;

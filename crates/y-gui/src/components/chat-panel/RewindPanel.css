@@ -20,7 +20,7 @@
 .rewind-panel {
   background: var(--surface-secondary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   width: 480px;
   max-width: 90vw;
   max-height: 70vh;

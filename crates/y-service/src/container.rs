@@ -1862,6 +1862,19 @@ impl ServiceContainer {
 ///
 /// These are the most frequently used tools; including them avoids an extra
 /// `ToolSearch` round-trip for common operations.
+#[cfg(feature = "agent_swarm")]
+pub(crate) const ESSENTIAL_TOOL_NAMES: &[&str] = &[
+    "ToolSearch",
+    "FileRead",
+    "FileWrite",
+    "ShellExec",
+    "Task",
+    "AgentSwarm",
+    "WebFetch",
+    "AskUser",
+];
+
+#[cfg(not(feature = "agent_swarm"))]
 pub(crate) const ESSENTIAL_TOOL_NAMES: &[&str] = &[
     "ToolSearch",
     "FileRead",

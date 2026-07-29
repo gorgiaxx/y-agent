@@ -268,6 +268,36 @@ Policy ownership and invariants:
    operations and remain subject to normal permission and file-mutation policy.
    Rehydration does not apply changes to the parent workspace.
 
+### 4.7 Bounded Batch Delegation
+
+`AgentSwarm` MAY be used for independent map-style work that applies one prompt
+template to multiple inputs. It is a feature-gated service adapter over
+`AgentDelegator`, not a separate invocation abstraction.
+
+The following rules are mandatory:
+
+1. Validate the complete batch before dispatch. The item count must be within
+   the tool contract's hard ceiling, the prompt template must contain
+   `{{item}}`, and rendered prompts must be non-empty and distinct.
+2. Concurrent children must not exceed
+   `MultiAgentConfig.max_agents_per_delegation`; additional validated items wait
+   in the service-owned batch queue.
+3. The `AgentPool` global concurrency semaphore applies to ordinary Task calls,
+   swarm children, and internal delegations alike. A swarm may not bypass it.
+4. `y-service` owns fan-out, cancellation, and deterministic input-order result
+   aggregation. A child failure is a per-item result and must not erase
+   successful sibling results.
+5. Every child executes through the ordinary Task delegation contract and
+   therefore retains the same agent lookup, context strategy, permissions,
+   guardrails, HITL, workspace isolation, diagnostics, and child-session rules.
+6. Cancellation must reach every running child. Items not admitted before
+   cancellation are reported separately from already-started children.
+7. Swarm coordination does not retry provider failures independently. Provider
+   retries, freezing, and fallback remain owned by the provider layer.
+8. Durable agent-context resume may be added only after delegation outputs carry
+   an ownership-checked, persisted execution identity. Workspace snapshot resume
+   is not equivalent to agent-context resume and must not be presented as such.
+
 ---
 
 ## 5. Prompt Management

@@ -134,7 +134,7 @@
   width: var(--generated-image-thumb-size);
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--surface-secondary);
   cursor: zoom-in;
@@ -149,7 +149,7 @@
   width: 100%;
   aspect-ratio: 1 / 1;
   object-fit: cover;
-  background: linear-gradient(135deg, var(--surface-secondary), var(--surface-tertiary));
+  background: var(--surface-secondary);
 }
 
 .generated-image-lightbox {
@@ -170,7 +170,7 @@
   max-height: 90vh;
   padding: var(--space-lg);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: calc(var(--radius-lg) + 4px);
+  border-radius: var(--radius-md);
   background: rgba(20, 24, 31, 0.92);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
 }
@@ -208,7 +208,6 @@
   display: block;
   max-width: 100%;
   max-height: calc(90vh - 72px);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   object-fit: contain;
 }
-

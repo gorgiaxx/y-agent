@@ -220,7 +220,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px var(--space-sm);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   margin-bottom: 1px;
 }
 
@@ -261,5 +261,4 @@
 .btn-session-action:hover {
   color: var(--text-primary);
 }
-
 

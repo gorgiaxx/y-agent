@@ -15,15 +15,15 @@ const variantStyles: Record<BadgeVariant, string> = {
   default:
     'bg-[var(--surface-hover)] text-[var(--text-primary)] border-[var(--border)]',
   accent:
-    'bg-[var(--accent-subtle)] text-[var(--accent)] border-[rgba(200,181,96,0.25)]',
+    'bg-[var(--accent-subtle)] text-[var(--accent)] border-[var(--accent-glow)]',
   success:
-    'bg-[rgba(111,207,151,0.08)] text-[var(--success)] border-[rgba(111,207,151,0.2)]',
+    'bg-[var(--success-subtle)] text-[var(--success)] border-[var(--success-border)]',
   error:
-    'bg-[var(--error-subtle)] text-[var(--error)] border-[rgba(229,115,115,0.2)]',
+    'bg-[var(--error-subtle)] text-[var(--error)] border-[var(--error-border)]',
   warning:
-    'bg-[rgba(240,192,80,0.10)] text-[var(--warning)] border-[rgba(240,192,80,0.25)]',
+    'bg-[var(--warning-subtle)] text-[var(--warning)] border-[var(--warning-border)]',
   info:
-    'bg-[var(--info-subtle)] text-[var(--info)] border-[rgba(96,165,250,0.2)]',
+    'bg-[var(--info-subtle)] text-[var(--info)] border-[var(--info-border)]',
   outline:
     'bg-transparent text-[var(--text-secondary)] border-[var(--border)]',
 }

@@ -40,7 +40,6 @@ export default defineConfig({
     borderRadius: {
       sm: 'var(--radius-sm)',
       md: 'var(--radius-md)',
-      lg: 'var(--radius-lg)',
     },
     boxShadow: {
       sm: 'var(--shadow-sm)',
@@ -50,6 +49,6 @@ export default defineConfig({
   },
   shortcuts: {
     // Surface card
-    'surface-card': 'bg-surface-primary border border-solid border-border rounded-lg shadow-lg',
+    'surface-card': 'bg-surface-primary border border-solid border-border rounded-md shadow-lg',
   },
 })

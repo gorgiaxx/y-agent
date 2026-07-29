@@ -348,6 +348,11 @@ impl AgentPool {
         self.config.max_delegation_depth
     }
 
+    /// Configured maximum concurrent children within one delegation batch.
+    pub fn max_agents_per_delegation(&self) -> usize {
+        self.config.max_agents_per_delegation
+    }
+
     /// Get an instance by ID.
     pub fn get(&self, instance_id: &str) -> Result<&AgentInstance, MultiAgentError> {
         self.instances
@@ -519,6 +524,14 @@ impl AgentDelegator for AgentPool {
             workspace_isolation,
             workspace_snapshot_id,
         };
+
+        // Apply the global agent limit to every real delegation path, including
+        // ordinary Task calls, internal agents, and AgentSwarm children.
+        let _concurrency_permit = self.concurrency_semaphore.acquire().await.map_err(|_| {
+            DelegationError::DelegationFailed {
+                message: "agent concurrency limiter is closed".to_string(),
+            }
+        })?;
 
         // Register for observability before execution.
         let delegation_id = self.delegation_tracker.register(agent_name);
@@ -753,6 +766,78 @@ mod tests {
         assert!(result.is_ok());
         let output = result.unwrap();
         assert!(output.text.contains("tool-engineer"));
+    }
+
+    #[tokio::test]
+    async fn test_agent_pool_delegate_enforces_global_concurrency_limit() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use y_core::agent::{AgentRunConfig, AgentRunOutput, AgentRunner};
+
+        struct ConcurrentRunner {
+            active: AtomicUsize,
+            max_active: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl AgentRunner for ConcurrentRunner {
+            async fn run(
+                &self,
+                _config: AgentRunConfig,
+            ) -> Result<AgentRunOutput, DelegationError> {
+                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.max_active.fetch_max(active, Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                Ok(AgentRunOutput {
+                    text: "done".into(),
+                    tokens_used: 1,
+                    input_tokens: 1,
+                    output_tokens: 0,
+                    model_used: "mock".into(),
+                    duration_ms: 20,
+                    workspace_isolation: None,
+                })
+            }
+        }
+
+        let runner = Arc::new(ConcurrentRunner {
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+        });
+        let mut pool = AgentPool::new(MultiAgentConfig {
+            max_concurrent_agents: 2,
+            ..Default::default()
+        });
+        pool.set_runner(Arc::clone(&runner) as Arc<dyn AgentRunner>);
+        let pool = Arc::new(pool);
+
+        let delegates = (0..4).map(|index| {
+            let pool = Arc::clone(&pool);
+            async move {
+                pool.delegate(
+                    "general-purpose",
+                    serde_json::json!({"task": format!("task {index}")}),
+                    ContextStrategyHint::None,
+                    None,
+                )
+                .await
+            }
+        });
+        let results = futures::future::join_all(delegates).await;
+
+        assert!(results.into_iter().all(|result| result.is_ok()));
+        assert_eq!(runner.max_active.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn test_agent_pool_exposes_per_delegation_concurrency_limit() {
+        let pool = AgentPool::new(MultiAgentConfig {
+            max_agents_per_delegation: 4,
+            ..Default::default()
+        });
+
+        assert_eq!(pool.max_agents_per_delegation(), 4);
     }
 
     #[tokio::test]

@@ -30,9 +30,15 @@
 
   /* Semantic */
   --success:       #6fcf97;
+  --success-subtle: rgba(111, 207, 151, 0.08);
+  --success-border: rgba(111, 207, 151, 0.20);
   --error:         #e57373;
   --error-subtle:  rgba(229, 115, 115, 0.08);
+  --error-border:  rgba(229, 115, 115, 0.20);
   --warning:       #f0c050;
+  --warning-subtle: rgba(240, 192, 80, 0.10);
+  --warning-border: rgba(240, 192, 80, 0.25);
+  --warning-contrast: #1a1917;
 
   /* Borders -- very subtle */
   --border: rgba(255, 255, 255, 0.06);
@@ -52,7 +58,6 @@
   /* Border radii */
   --radius-sm: 4px;
   --radius-md: 8px;
-  --radius-lg: 12px;
 
   /* Focus & active states */
   --border-focus: rgba(255, 255, 255, 0.15);
@@ -61,6 +66,11 @@
   /* Semantic: info (selections, mentions) */
   --info: #60a5fa;
   --info-subtle: rgba(96, 165, 250, 0.12);
+  --info-border: rgba(96, 165, 250, 0.20);
+
+  /* Scrollbar */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.10);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
 
   /* Search highlights */
   --search-match-bg: rgba(200, 181, 96, 0.25);
@@ -94,9 +104,15 @@
   --accent-glow:   rgba(154, 124, 42, 0.12);
 
   --success:       #3a9d6b;
+  --success-subtle: rgba(58, 157, 107, 0.08);
+  --success-border: rgba(58, 157, 107, 0.20);
   --error:         #c0392b;
   --error-subtle:  rgba(192, 57, 43, 0.07);
+  --error-border:  rgba(192, 57, 43, 0.20);
   --warning:       #c0880a;
+  --warning-subtle: rgba(192, 136, 10, 0.10);
+  --warning-border: rgba(192, 136, 10, 0.25);
+  --warning-contrast: #1a1917;
 
   --border: rgba(0, 0, 0, 0.07);
 
@@ -109,6 +125,10 @@
 
   --info: #2563eb;
   --info-subtle: rgba(37, 99, 235, 0.08);
+  --info-border: rgba(37, 99, 235, 0.20);
+
+  --scrollbar-thumb: rgba(0, 0, 0, 0.12);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.20);
 
   /* Search highlights */
   --search-match-bg: rgba(154, 124, 42, 0.18);
@@ -142,7 +162,7 @@ body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 /* The native macOS window provides the vibrancy material. Opaque content
@@ -168,20 +188,12 @@ html[data-host="tauri"][data-platform="macos"] body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.10);
+  background: var(--scrollbar-thumb);
   border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
-
-[data-theme="light"] ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.12);
-}
-
-[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.20);
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* ---- Selection ---- */

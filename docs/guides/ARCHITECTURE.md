@@ -28,7 +28,7 @@ The harness owns:
 | Goal semantics | `y-context` working memory and structured handoff documents preserve goals, constraints, decisions, and progress | No standalone persistent Goal service or CRUD API yet |
 | Plan mode | `y-service/src/plan_orchestrator/` creates reviewed structured plans and executes dependency-aware phases | Plans are task-scoped execution state, not historical design documents |
 | Loop mode | `y-service/src/loop_orchestrator.rs` iterates execution and self-review until convergence or limits | Used for exploratory work whose full graph is not known up front |
-| Self-orchestration | `y-agent` workflow meta-tools, DAG engine, durable dynamic-agent lifecycle and proposals, agent registry, and delegation plus `y-service` Auto-mode decisions and bounded cross-asset reuse planning | Dynamic creation/update/deactivation is validated and permission-bounded; repeated regression evidence can be rolled back or refined into a validated candidate, while strong existing assets are surfaced before new ones are created |
+| Self-orchestration | `y-agent` workflow meta-tools, DAG engine, durable dynamic-agent lifecycle and proposals, agent registry, delegation, and feature-gated bounded agent swarms plus `y-service` Auto-mode decisions and bounded cross-asset reuse planning | Dynamic creation/update/deactivation is validated and permission-bounded; repeated regression evidence can be rolled back or refined into a validated candidate, while strong existing assets are surfaced before new ones are created; swarm execution is map-style fan-out rather than a general shared-state agent society |
 | Delegated workspace isolation | `y-service` resolves effective write capability and provisions `y-runtime` Git worktrees for interactive delegated writers; results include bounded patch evidence and durable resumable snapshots | Worktrees never grant permissions or auto-merge; non-Git copy isolation and automatic conflict resolution are not implemented |
 | Skill evolution | `y-skills` durable experience/proposal journals, extraction, validation, content-addressed versions, regression, and rollback plus `y-service` turn capture and governed promotion orchestration | Validated promotion, automatic metric-triggered rollback, bounded Auto-mode skill reuse, and idempotent trace-linked user feedback are wired |
 | Knowledge | `y-knowledge` ingestion, canonical filtered retrieval requests, collection isolation, weighted RRF retrieval, provenance, and deterministic IR evaluation with `y-service` wiring | Qdrant is optional; local retrieval remains available, while richer candidate-loss and citation observability remain incomplete |
@@ -80,6 +80,7 @@ transport input and render output, but they must not implement domain workflows.
    - execute a tool;
    - request user approval or clarification;
    - delegate to a sub-agent;
+   - fan out one validated task template through a bounded agent swarm;
    - create or execute a workflow;
    - create or update a plan.
 6. Apply guardrails and runtime isolation before side effects.
@@ -111,6 +112,31 @@ research, diagnosis, and tasks whose graph emerges during execution.
 
 Mode selection changes orchestration strategy, not ownership of tools, safety,
 storage, or diagnostics.
+
+## Bounded Agent Swarm Contract
+
+The optional `agent_swarm` subsystem is a map-style batch adapter over the
+existing `AgentDelegator`; it is not a second agent pool, lifecycle registry, or
+permission path. `y-tools` owns the `AgentSwarm` input contract and `y-service`
+owns validation of the effective resource limit, concurrent dispatch, result
+aggregation, and cancellation behavior.
+
+All item prompts are materialized and validated before the first child starts.
+The tool contract sets a conservative hard batch-size ceiling, concurrent
+children are bounded by `MultiAgentConfig.max_agents_per_delegation`, and the
+`AgentPool` global semaphore limits all delegations across batches and ordinary
+`Task` calls. Results retain input order and report per-item `completed`,
+`failed`, or `aborted` status; one child failure does not discard successful
+sibling results. Each child still follows the ordinary Task path, including
+agent lookup, middleware, diagnostics, permission inheritance, HITL,
+workspace isolation, and durable child-session transcripts.
+
+The initial contract intentionally does not expose Kimi-style agent-ID resume:
+y-agent does not yet have a durable delegator execution identity with a
+resume-safe context contract. Isolated file work may continue through the
+existing workspace snapshot mechanism on an ordinary Task. Provider rate-limit
+retry and freeze behavior remains owned by `y-provider`; the swarm scheduler
+must not add an unbounded parallel retry loop above it.
 
 ## Permission and HITL Boundary
 

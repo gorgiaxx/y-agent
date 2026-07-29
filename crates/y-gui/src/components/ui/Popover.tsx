@@ -24,7 +24,7 @@ export const PopoverContent = forwardRef<HTMLDivElement, PopoverContentProps>(
           'bg-surface-primary',
           'border border-solid border-border',
           'rounded-md',
-          'shadow-[0_8px_24px_rgba(0,0,0,0.25)]',
+          'shadow-md',
           'animate-[selectIn_0.1s_ease-out]',
           'outline-none',
           className,

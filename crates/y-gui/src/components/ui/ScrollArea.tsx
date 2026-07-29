@@ -27,8 +27,8 @@ export const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(
           className={[
             'relative flex-1',
             'rounded-[2px]',
-            'bg-[rgba(255,255,255,0.10)]',
-            'hover:bg-[rgba(255,255,255,0.18)]',
+            'bg-[var(--scrollbar-thumb)]',
+            'hover:bg-[var(--scrollbar-thumb-hover)]',
           ].join(' ')}
         />
       </ScrollAreaPrimitive.Scrollbar>

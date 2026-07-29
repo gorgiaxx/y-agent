@@ -7,7 +7,7 @@
   right: 0;
   background: var(--surface-tertiary);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   max-height: 420px;
   display: flex;

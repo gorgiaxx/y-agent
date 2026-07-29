@@ -92,7 +92,7 @@
   padding: 8px 12px;
   background: none;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   cursor: pointer;
   text-align: left;
@@ -350,7 +350,7 @@
   gap: 5px;
   padding: 6px 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface-secondary);
   color: var(--text-primary);
   font-size: 13px;
@@ -520,7 +520,7 @@
   padding: 8px 12px;
   background: var(--surface-secondary);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
@@ -864,7 +864,7 @@
 
 .wf-task-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--surface-secondary);
   overflow: hidden;
   transition: border-color 0.15s;
@@ -937,7 +937,7 @@
   padding: 6px 10px;
   background: var(--surface-primary);
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: 13px;
   outline: none;
@@ -999,5 +999,5 @@
   padding: 14px 16px;
   background: var(--surface-secondary);
   border: 1px solid var(--accent-subtle);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }

@@ -116,8 +116,8 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
             'text-text-primary',
             'cursor-pointer text-12px font-sans',
             'transition-all duration-150',
-            'hover:border-[rgba(255,255,255,0.12)]',
-            'data-[state=open]:border-[rgba(255,255,255,0.15)]',
+            'hover:border-[var(--border-focus)]',
+            'data-[state=open]:border-[var(--border-focus)]',
           ].join(' ')}
         >
           {selectedIcon ? (
@@ -253,12 +253,12 @@ export function ProviderIconPicker({ value, onChange }: ProviderIconPickerProps)
                       'flex flex-col items-center justify-center gap-1',
                       'py-2 px-1',
                       'border border-solid',
-                      'rounded-md',
+                      'rounded-sm',
                       'cursor-pointer text-left',
                       'transition-all duration-100',
                       isSelected
                         ? 'border-accent bg-accent-subtle text-accent shadow-[0_0_0_1px_var(--accent-subtle)]'
-                        : 'border-border bg-surface-tertiary text-text-secondary hover:(bg-surface-hover text-text-primary border-[rgba(255,255,255,0.12)])',
+                        : 'border-border bg-surface-tertiary text-text-secondary hover:(bg-surface-hover text-text-primary border-[var(--border-focus)])',
                     ].join(' ')}
                     title={item.fullTitle}
                     onClick={() => handleSelect(item.id)}

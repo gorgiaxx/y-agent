@@ -164,7 +164,7 @@
   padding: 10px 11px;
   border: 1px solid transparent;
   border-left: 2px solid transparent;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;

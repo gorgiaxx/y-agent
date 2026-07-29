@@ -23,7 +23,7 @@ export const TooltipContent = forwardRef<
         'rounded-[var(--radius-sm)]',
         'text-11px text-[var(--text-secondary)]',
         'whitespace-nowrap',
-        'shadow-[0_4px_12px_rgba(0,0,0,0.2)]',
+        'shadow-md',
         'z-300',
         'animate-[tooltipIn_0.15s_ease]',
         className,

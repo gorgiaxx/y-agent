@@ -1375,7 +1375,7 @@ async fn prepare_file_mutation(
 
 /// Execute a tool call -- delegates to the tool registry.
 ///
-/// Special handling for `ToolSearch` and `task`: these meta-tools are
+/// Special handling for `ToolSearch`, `Task`, and `AgentSwarm`: these meta-tools are
 /// intercepted and routed to their respective orchestrators which have
 /// access to the full `ServiceContainer`.
 async fn execute_tool_call(
@@ -1527,6 +1527,36 @@ async fn execute_tool_call(
                     container.agent_delegator.as_ref(),
                     &container.agent_registry,
                     Some(session_uuid),
+                ),
+            )
+            .await;
+    }
+
+    #[cfg(feature = "agent_swarm")]
+    if tc.name == "AgentSwarm" {
+        let session_uuid =
+            uuid::Uuid::parse_str(session_id.as_str()).unwrap_or_else(|_| uuid::Uuid::new_v4());
+        let max_concurrency = container
+            .agent_pool
+            .read()
+            .await
+            .max_agents_per_delegation();
+        let interaction_ctx = super::delegation_ctx::DelegationInteractionCtx {
+            session_id: session_id.clone(),
+            progress: progress.cloned(),
+            cancel: cancel.cloned(),
+            working_directory: working_dir.map(ToOwned::to_owned),
+        };
+        return super::delegation_ctx::DELEGATION_INTERACTION_CTX
+            .scope(
+                interaction_ctx,
+                crate::agent_swarm_orchestrator::AgentSwarmOrchestrator::handle(
+                    &tc.arguments,
+                    container.agent_delegator.as_ref(),
+                    &container.agent_registry,
+                    Some(session_uuid),
+                    max_concurrency,
+                    cancel,
                 ),
             )
             .await;

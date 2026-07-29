@@ -20,7 +20,7 @@
   min-width: 0;
   height: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   z-index: 110;
   box-shadow: var(--shadow-lg);
   animation: info-expand-in 0.22s ease;
@@ -538,7 +538,7 @@
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--surface-primary);
   color: var(--text-primary);
   font-size: 12px;

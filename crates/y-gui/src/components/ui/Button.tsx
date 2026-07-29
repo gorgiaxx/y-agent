@@ -16,7 +16,7 @@ const variantStyles: Record<ButtonVariant, string> = {
   danger:
     'bg-error text-white border-transparent hover:op-85',
   warning:
-    'bg-[var(--warning)] text-[#1a1917] border-transparent hover:op-85',
+    'bg-[var(--warning)] text-[var(--warning-contrast)] border-transparent hover:op-85',
   outline:
     'bg-surface-primary text-text-secondary border-border hover:(bg-surface-hover text-text-primary)',
   icon:
@@ -44,7 +44,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         className={[
           'inline-flex items-center justify-center gap-1',
           'font-500 font-sans cursor-pointer',
-          'rounded-md',
+          'rounded-sm',
           'border border-solid',
           'transition-all duration-150',
           'outline-none',

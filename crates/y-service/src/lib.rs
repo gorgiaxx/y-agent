@@ -17,6 +17,8 @@
 
 pub mod agent_management;
 pub mod agent_service;
+#[cfg(feature = "agent_swarm")]
+pub mod agent_swarm_orchestrator;
 pub mod app_config;
 pub mod background_tasks;
 pub mod background_wake;

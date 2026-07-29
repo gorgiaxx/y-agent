@@ -450,7 +450,7 @@
 .knowledge-result-relevance {
   font-size: 11px;
   padding: 1px 6px;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--accent-subtle);
   color: var(--success);
 }

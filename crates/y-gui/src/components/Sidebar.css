@@ -43,7 +43,7 @@
   width: 28px;
   height: 28px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -97,7 +97,7 @@
   box-sizing: border-box;
   padding: 7px 32px 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--surface-secondary);
   color: var(--text-primary);
   font-size: 12px;
@@ -137,7 +137,7 @@
   width: 100%;
   padding: 7px 11px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--surface-primary);
   color: var(--text-primary);
   font-size: 12px;
@@ -172,7 +172,7 @@
 
 .sidebar-item {
   padding: 10px var(--space-sm);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background-color 0.12s ease;
   margin-bottom: 2px;

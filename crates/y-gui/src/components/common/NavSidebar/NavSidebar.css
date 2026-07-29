@@ -79,7 +79,7 @@ html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar-d
   width: 100%;
   padding: 7px 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   font-size: 13px;
@@ -137,7 +137,7 @@ html.custom-decorations[data-host="tauri"][data-platform="macos"] .nav-sidebar-d
 }
 
 .nav-item--primary:hover {
-  background: var(--accent-subtle, rgba(56, 139, 253, 0.12));
+  background: var(--accent-subtle);
 }
 
 .nav-item--primary .nav-item-icon {

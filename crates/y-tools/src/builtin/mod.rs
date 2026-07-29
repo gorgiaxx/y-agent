@@ -6,6 +6,8 @@ pub mod code_summary;
 mod path_utils;
 
 pub mod agent_management;
+#[cfg(feature = "agent_swarm")]
+pub mod agent_swarm;
 pub mod dynamic_tool_management;
 pub mod file_edit;
 pub mod file_read;
@@ -224,6 +226,12 @@ pub async fn register_builtin_tools(
         ),
     ];
 
+    #[cfg(feature = "agent_swarm")]
+    tools.push((
+        Arc::new(agent_swarm::AgentSwarmTool::new()),
+        agent_swarm::AgentSwarmTool::tool_definition(),
+    ));
+
     // Register knowledge search tool if knowledge base is available.
     if let Some(kb) = knowledge {
         let tool = if let Some(emb) = embedding {
@@ -314,8 +322,14 @@ mod tests {
         register_builtin_tools(&registry, y_browser::BrowserConfig::default(), None, None).await;
         // 3 core + file_edit + Task + ToolSearch + Glob + Grep + AskUser + Browser + WebFetch
         // + 12 workflow/schedule + 1 plan + 1 loop + 8 dynamic-agent lifecycle
-        // + 3 governed skill-evolution + 5 dynamic-tool lifecycle tools = 41.
-        assert_eq!(registry.len().await, 41);
+        // + 3 governed skill-evolution + 5 dynamic-tool lifecycle tools = 41,
+        // plus AgentSwarm when its feature is enabled.
+        let expected = if cfg!(feature = "agent_swarm") {
+            42
+        } else {
+            41
+        };
+        assert_eq!(registry.len().await, expected);
     }
 
     #[tokio::test]
@@ -333,7 +347,12 @@ mod tests {
             None,
         )
         .await;
-        assert_eq!(registry.len().await, 42);
+        let expected = if cfg!(feature = "agent_swarm") {
+            43
+        } else {
+            42
+        };
+        assert_eq!(registry.len().await, expected);
     }
 
     #[tokio::test]
@@ -355,5 +374,8 @@ mod tests {
         assert!(names.contains(&"Glob"));
         assert!(names.contains(&"Grep"));
         assert!(names.contains(&"Task"));
+        if cfg!(feature = "agent_swarm") {
+            assert!(names.contains(&"AgentSwarm"));
+        }
     }
 }

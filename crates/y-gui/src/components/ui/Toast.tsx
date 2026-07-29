@@ -10,8 +10,8 @@ interface ToastData {
 
 /* ---- Viewport (renders at bottom-center) ---- */
 const typeStyles: Record<ToastType, string> = {
-  success: 'bg-[rgba(111,207,151,0.12)] border-[rgba(111,207,151,0.25)] text-[var(--success)]',
-  error: 'bg-[var(--error-subtle)] border-[rgba(229,115,115,0.2)] text-[var(--error)]',
+  success: 'bg-[var(--success-subtle)] border-[var(--success-border)] text-[var(--success)]',
+  error: 'bg-[var(--error-subtle)] border-[var(--error-border)] text-[var(--error)]',
   info: 'bg-[var(--surface-tertiary)] border-[var(--border)] text-[var(--text-primary)]',
 }
 

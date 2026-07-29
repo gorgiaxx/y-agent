@@ -17,7 +17,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   transition: background 0.12s ease, color 0.12s ease;
   -webkit-app-region: no-drag;
 }

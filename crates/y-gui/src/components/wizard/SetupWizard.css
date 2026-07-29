@@ -275,7 +275,7 @@ html.custom-decorations .wizard-header [role="button"] {
 }
 
 .wizard-info-card.warning {
-  background: rgba(240, 192, 80, 0.08);
+  background: var(--warning-subtle);
 }
 
 .wizard-info-card.warning .wizard-info-card-icon {
@@ -285,7 +285,7 @@ html.custom-decorations .wizard-header [role="button"] {
 /* ---- API type grid ---- */
 .wizard-api-types {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
 }
@@ -296,7 +296,7 @@ html.custom-decorations .wizard-header [role="button"] {
   gap: 10px;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--surface-primary);
   color: var(--text-secondary);
   cursor: pointer;
@@ -304,6 +304,7 @@ html.custom-decorations .wizard-header [role="button"] {
   font-family: inherit;
   transition: all 0.15s ease;
   text-align: left;
+  min-width: 0;
 }
 
 .wizard-api-type-btn:hover {
@@ -331,6 +332,7 @@ html.custom-decorations .wizard-header [role="button"] {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
+  overflow-wrap: anywhere;
 }
 
 /* ---- Title provider prompt ---- */
@@ -486,6 +488,29 @@ html.custom-decorations .wizard-header [role="button"] {
   color: var(--accent);
   flex-shrink: 0;
   animation: busyBreathe 1.6s ease-in-out infinite;
+}
+
+@media (max-width: 640px) {
+  .wizard-header,
+  .wizard-timeline,
+  .wizard-body,
+  .wizard-footer {
+    padding-right: var(--space-md);
+    padding-left: var(--space-md);
+  }
+
+  .wizard-logo {
+    margin-left: 0;
+  }
+
+  .wizard-api-types {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .wizard-api-type-btn {
+    gap: var(--space-sm);
+    padding: 10px;
+  }
 }
 
 /* ---- Final step (completion) ---- */
