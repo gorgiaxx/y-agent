@@ -13,7 +13,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
       ? "font-[SF_Mono,Fira_Code,Consolas,monospace]"
       : 'font-sans'
 
-    const numClass = numeric ? 'font-variant-numeric-tabular-nums' : ''
+    const numClass = numeric ? 'tabular-nums' : ''
 
     return (
       <input

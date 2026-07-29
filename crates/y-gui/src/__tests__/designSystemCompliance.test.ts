@@ -57,6 +57,18 @@ describe('DESIGN.md visual contracts', () => {
     expect(styles).not.toMatch(/letter-spacing:\s*-[\d.]+(?:em|px|rem)/)
   })
 
+  it('renders shortcut keycaps with native UI typography', () => {
+    const shortcuts = readSource('../components/settings/KeyboardShortcutsTab.css')
+    const keycap = cssRule(shortcuts, '.shortcut-binding kbd')
+
+    expect(keycap).toMatch(/font-family:[^;]*-apple-system/)
+    expect(keycap).not.toMatch(/font-family:\s*var\(--font-mono\);/)
+    expect(keycap).toMatch(/font-size:\s*13px;/)
+    expect(keycap).toMatch(/font-weight:\s*500;/)
+    expect(keycap).toMatch(/font-style:\s*normal;/)
+    expect(keycap).toMatch(/line-height:\s*1;/)
+  })
+
   it('gives shared buttons and fields the 4px control radius', () => {
     const button = readSource('../components/ui/Button.tsx')
     const input = readSource('../components/ui/Input.tsx')

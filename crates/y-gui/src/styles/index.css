@@ -196,6 +196,18 @@ html[data-host="tauri"][data-platform="macos"] body {
   background: var(--scrollbar-thumb-hover);
 }
 
+/* ---- Number inputs -- hide native stepper arrows for a consistent look ---- */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 /* ---- Selection ---- */
 ::selection {
   background: var(--accent-subtle);
