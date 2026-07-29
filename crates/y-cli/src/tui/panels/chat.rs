@@ -16,14 +16,14 @@ use std::ops::Range;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
 use crate::tui::selection::TextSelection;
 use crate::tui::state::{
-    AppState, CachedMessageRender, ChatMessage, ChatRenderCache, MessageRole, PanelFocus,
-    StreamSegment, ToolCallDisplayMode, ToolCallInfo, ToolCallStatus, ToolSelection,
+    AppState, CachedMessageRender, ChatMessage, ChatRenderCache, MessageRole, StreamSegment,
+    ToolCallDisplayMode, ToolCallInfo, ToolCallStatus, ToolSelection,
 };
 use crate::tui::theme::Theme;
 use crate::tui::tool_renderers::{
@@ -99,32 +99,18 @@ pub fn render(
     plain_out: &mut Vec<String>,
     tool_rows_out: &mut Vec<(Range<usize>, ToolSelection)>,
 ) {
-    let is_focused = state.focus == PanelFocus::Chat;
     let t = &state.theme;
 
-    let border_style = if is_focused {
-        Style::default().fg(t.assistant_accent())
-    } else {
-        Style::default().fg(t.border_unfocused())
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(border_style)
-        .title(" Chat ")
-        .title_style(Style::default().fg(t.title()));
-
-    // Available content width (subtract 2 for left/right borders).
-    let inner_width = area.width.saturating_sub(2) as usize;
+    // Borderless transcript: the conversation fills the panel edge to edge,
+    // so the full area is usable content width.
+    let inner_width = area.width as usize;
 
     plain_out.clear();
     tool_rows_out.clear();
 
     // Degenerate width: preserve the previous single-blank-row behavior.
     if inner_width == 0 {
-        let para = Paragraph::new(vec![Line::from("")])
-            .block(block)
-            .style(Style::default().bg(t.panel_bg()));
+        let para = Paragraph::new(vec![Line::from("")]);
         frame.render_widget(para, area);
         plain_out.push(String::new());
         return;
@@ -203,7 +189,7 @@ pub fn render(
     }
 
     // Compute scroll.
-    let inner_height = area.height.saturating_sub(2) as usize;
+    let inner_height = area.height as usize;
     let total_lines = row_cursor;
     let scroll_to = compute_scroll_to(total_lines, inner_height, state.scroll_offset);
     let visible_start = scroll_to.min(total_lines);
@@ -238,9 +224,7 @@ pub fn render(
         }
     }
 
-    let para = Paragraph::new(visible_lines)
-        .block(block)
-        .style(Style::default().bg(t.panel_bg()));
+    let para = Paragraph::new(visible_lines);
 
     frame.render_widget(para, area);
 
@@ -255,9 +239,9 @@ pub fn render(
         );
         let indicator_line = Line::from(indicator);
         let indicator_area = Rect {
-            x: area.x + 2,
-            y: area.y + area.height - 2,
-            width: area.width.saturating_sub(4).min(22),
+            x: area.x + 1,
+            y: area.y + area.height.saturating_sub(1),
+            width: area.width.saturating_sub(2).min(22),
             height: 1,
         };
         frame.render_widget(Paragraph::new(indicator_line), indicator_area);
@@ -635,40 +619,11 @@ fn render_message(
     content_width: usize,
     t: &Theme,
 ) {
-    let (role_label, role_color, prefix_char) = match msg.role {
-        MessageRole::User => ("You", t.user_accent(), ">"),
-        MessageRole::Assistant => ("Assistant", t.assistant_accent(), "*"),
-        MessageRole::System => ("System", t.system_accent(), "-"),
-        MessageRole::Tool => ("Tool", t.tool_accent(), "#"),
-    };
-
-    let role_style = Style::default().fg(role_color).add_modifier(Modifier::BOLD);
-
-    // Role header line.
-    let mut header_spans = vec![
-        Span::styled(format!(" {prefix_char} "), Style::default().fg(role_color)),
-        Span::styled(role_label.to_string(), role_style),
-    ];
-    let mut header_plain = format!(" {prefix_char} {role_label}");
-
-    if msg.is_streaming {
-        let spinner = SPINNER_FRAMES[(tick as usize) % SPINNER_FRAMES.len()];
-        let marker = format!("  {spinner}");
-        header_spans.push(Span::styled(
-            marker.clone(),
-            Style::default()
-                .fg(t.streaming_dot())
-                .add_modifier(Modifier::BOLD),
-        ));
-        header_plain.push_str(&marker);
-    }
-    if msg.is_cancelled {
-        header_spans.push(Span::styled(" [cancelled]", Style::default().fg(t.error())));
-        header_plain.push_str(" [cancelled]");
-    }
-
-    lines.push(Line::from(header_spans));
-    plain_lines.push(header_plain);
+    // No role header line: "You"/"Assistant" labels cost a full row per
+    // message and force every other line one indent level deeper. Instead
+    // the user's own text is highlighted (see render_content_lines) and
+    // tool/thought cards act as the visual separators between turns.
+    let content_start = lines.len();
 
     // Historical messages may only have the legacy aggregate reasoning field.
     // Streaming messages render reasoning from event-ordered segments below.
@@ -837,16 +792,34 @@ fn render_message(
         }
     }
 
+    // A streaming message that has not produced any renderable content yet
+    // still needs a visible placeholder (the status bar carries the global
+    // running indicator).
+    if msg.is_streaming && lines.len() == content_start {
+        let spinner = SPINNER_FRAMES[(tick as usize) % SPINNER_FRAMES.len()];
+        lines.push(Line::from(Span::styled(
+            spinner.to_string(),
+            Style::default().fg(t.streaming_dot()),
+        )));
+        plain_lines.push(spinner.to_string());
+    }
+
+    if msg.is_cancelled {
+        lines.push(Line::from(Span::styled(
+            "(cancelled)".to_string(),
+            Style::default().fg(t.error()),
+        )));
+        plain_lines.push("(cancelled)".to_string());
+    }
+
     // Footer: timestamp + tokens (for completed assistant messages only).
     if msg.role == MessageRole::Assistant && !msg.is_streaming && is_last {
         let time_str = msg.timestamp.format("%H:%M").to_string();
-        let footer_spans = vec![Span::styled(
-            format!("     {time_str}"),
+        lines.push(Line::from(Span::styled(
+            time_str.clone(),
             Style::default().fg(t.muted()),
-        )];
-        let footer_plain = format!("     {time_str}");
-        lines.push(Line::from(footer_spans));
-        plain_lines.push(footer_plain);
+        )));
+        plain_lines.push(time_str);
     }
 }
 
@@ -1196,7 +1169,8 @@ fn render_think_card(
     tick: u64,
     t: &Theme,
 ) {
-    let indent = "     ";
+    // Thought cards are top-level separators now: no indent.
+    let indent = "";
 
     let header_spans = if is_complete {
         let label_style = Style::default()
@@ -1284,7 +1258,7 @@ fn render_tool_call_card(
     is_streaming: bool,
     t: &Theme,
 ) {
-    let indent = "     ";
+    let indent = "";
 
     let (status_label, status_color) = if is_streaming {
         ("Running...", t.warning())
@@ -1400,7 +1374,7 @@ fn render_exploration_group(
     content_width: usize,
     t: &Theme,
 ) {
-    let indent = "     ";
+    let indent = "";
     let total_duration: u64 = tool_indexes
         .iter()
         .filter_map(|index| tools.get(*index)?.duration_ms)
@@ -1561,7 +1535,7 @@ fn render_tool_call_executed_card(
     t: &Theme,
 ) {
     let card_start = lines.len();
-    let indent = "     ";
+    let indent = "";
 
     let (status_label, status_color) = match tc.status {
         ToolCallStatus::Running => ("Running", t.warning()),
@@ -1686,7 +1660,7 @@ fn push_tool_section(
     if content.is_empty() || limit == 0 {
         return;
     }
-    let indent = "     ";
+    let indent = "";
     let (window, earlier) = if tail && content.len() > limit {
         (&content[content.len() - limit..], content.len() - limit)
     } else {
@@ -1797,17 +1771,22 @@ fn render_content_lines(
     content_width: usize,
     t: &Theme,
 ) {
-    let indent = "     ";
+    let indent = "";
     let content_style = match role {
-        MessageRole::User | MessageRole::Assistant => Style::default().fg(t.text()),
+        // The user's own text is the one highlighted element in the
+        // transcript: bold + accent makes sent messages pop without a
+        // "You" header line.
+        MessageRole::User => Style::default()
+            .fg(t.user_accent())
+            .add_modifier(Modifier::BOLD),
+        MessageRole::Assistant => Style::default().fg(t.text()),
         MessageRole::System => Style::default().fg(t.system_accent()),
         MessageRole::Tool => Style::default().fg(t.normal()),
     };
 
     // Use pulldown-cmark-based markdown renderer for assistant messages.
     if role == MessageRole::Assistant {
-        let md_width = content_width.saturating_sub(5);
-        let md_lines = crate::tui::markdown::render_markdown(content, md_width);
+        let md_lines = crate::tui::markdown::render_markdown(content, content_width);
         for md_line in md_lines {
             let plain_text: String = md_line.spans.iter().map(|s| s.content.as_ref()).collect();
             let plain = format!("{indent}{plain_text}");
@@ -2221,6 +2200,7 @@ mod tests {
         let mut lines = Vec::new();
         let mut plain = Vec::new();
         let mut tool_ranges = Vec::new();
+        let theme = Theme::default();
         render_message(
             &mut lines,
             &mut plain,
@@ -2231,19 +2211,24 @@ mod tests {
             false,
             0,
             80,
-            &Theme::default(),
+            &theme,
         );
 
-        // Header + 2 content lines = 3 lines.
-        assert_eq!(lines.len(), 3);
-        assert_eq!(plain.len(), 3);
+        // No role header line: just the 2 content lines.
+        assert_eq!(lines.len(), 2);
+        assert_eq!(plain.len(), 2);
+        assert_eq!(plain[0], "Hello");
+        // The user's own text carries the highlight: bold + user accent.
+        let first_span = &lines[0].spans[0];
+        assert_eq!(first_span.style.fg, Some(theme.user_accent()));
+        assert!(first_span.style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
-    fn test_streaming_indicator_in_header() {
+    fn test_streaming_placeholder_for_empty_message() {
         let msg = ChatMessage {
             role: MessageRole::Assistant,
-            content: "Thinking...".to_string(),
+            content: String::new(),
             timestamp: Utc::now(),
             is_streaming: true,
             is_cancelled: false,
@@ -2252,7 +2237,7 @@ mod tests {
             tool_calls: Vec::new(),
             segments: Vec::new(),
         };
-        let header_text_at = |tick: u64| {
+        let placeholder_at = |tick: u64| {
             let mut lines = Vec::new();
             let mut plain = Vec::new();
             let mut tool_ranges = Vec::new();
@@ -2269,17 +2254,19 @@ mod tests {
                 &Theme::default(),
             );
 
-            let header = &lines[0];
-            let header_text: String = header.spans.iter().map(|s| s.content.to_string()).collect();
-            // Styled and plain mirrors must agree on the animated marker.
+            assert_eq!(lines.len(), 1, "placeholder must be a single line");
             assert!(plain[0].contains(SPINNER_FRAMES[(tick as usize) % SPINNER_FRAMES.len()]));
-            header_text
+            lines[0]
+                .spans
+                .iter()
+                .map(|s| s.content.to_string())
+                .collect::<String>()
         };
 
-        // The streaming marker is the animated braille spinner, not a static `*`.
-        assert!(header_text_at(0).contains(SPINNER_FRAMES[0]));
-        assert!(header_text_at(1).contains(SPINNER_FRAMES[1]));
-        assert!(!header_text_at(0).contains(SPINNER_FRAMES[1]));
+        // The streaming placeholder is the animated braille spinner.
+        assert!(placeholder_at(0).contains(SPINNER_FRAMES[0]));
+        assert!(placeholder_at(1).contains(SPINNER_FRAMES[1]));
+        assert!(!placeholder_at(0).contains(SPINNER_FRAMES[1]));
     }
 
     #[test]
@@ -2889,8 +2876,8 @@ mod tests {
             })
             .unwrap();
 
-        // 50 messages x (header + 1 content) + 49 separators = 149 rows.
-        assert_eq!(plain.len(), 149);
+        // 50 messages x 1 content line + 49 separators = 99 rows.
+        assert_eq!(plain.len(), 99);
         assert!(plain.iter().any(|line| line.contains("message 0")));
         assert!(plain.iter().any(|line| line.contains("message 49")));
 
@@ -3123,7 +3110,7 @@ mod tests {
         assert_eq!(ranges.len(), 1, "one tool card must record one range");
         let (tool_index, range) = &ranges[0];
         assert_eq!(*tool_index, 0);
-        assert_eq!(range.start, 1, "card starts right after the role header");
+        assert_eq!(range.start, 0, "no role header: the card opens the message");
         assert_eq!(range.end, lines.len());
         assert_eq!(range.end, plain.len());
         assert!(
@@ -3164,12 +3151,12 @@ mod tests {
 
         let (lines, plain, ranges) = render_message_wrapped(&msg, 0, None, false, 0, 80, &theme);
 
-        // Layout: role header, group header, child 0 row, child 1 row.
-        assert_eq!(lines.len(), 4, "unexpected layout: {plain:?}");
+        // Layout: group header, child 0 row, child 1 row (no role header).
+        assert_eq!(lines.len(), 3, "unexpected layout: {plain:?}");
         // Each child gets its own range; the group header belongs to no child.
-        assert_eq!(ranges, vec![(0, 2..3), (1, 3..4)]);
-        assert!(plain[2].contains("src/lib.rs"));
-        assert!(plain[3].contains("ToolCallInfo"));
+        assert_eq!(ranges, vec![(0, 1..2), (1, 2..3)]);
+        assert!(plain[1].contains("src/lib.rs"));
+        assert!(plain[2].contains("ToolCallInfo"));
     }
 
     #[test]
@@ -3275,8 +3262,8 @@ mod tests {
             })
             .unwrap();
 
-        // Absolute rows: msg0 = rows 0..2, separator = row 2, msg1 header =
-        // row 3, msg1 content = row 4, card = rows 5...
+        // Absolute rows: msg0 content = row 0, separator = row 1, msg1
+        // content = row 2, card = rows 3...
         assert_eq!(tool_rows.len(), 1, "one tool card expected: {tool_rows:?}");
         let (range, selection) = &tool_rows[0];
         assert_eq!(
@@ -3286,7 +3273,7 @@ mod tests {
                 tool_index: 0,
             }
         );
-        assert_eq!(range.start, 5, "card start in absolute rows: {plain:?}");
+        assert_eq!(range.start, 3, "card start in absolute rows: {plain:?}");
         assert_eq!(range.end, plain.len());
         assert!(plain[range.start].contains("Ran cargo test"));
 
@@ -3304,7 +3291,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(tool_rows.len(), 1);
-        assert_eq!(tool_rows[0].0, 5..plain.len());
+        assert_eq!(tool_rows[0].0, 3..plain.len());
     }
 
     #[test]
@@ -3320,17 +3307,17 @@ mod tests {
     fn test_cached_message_render_streaming_message_revalidates_per_tick() {
         let theme = Theme::default();
         let mut cache = ChatRenderCache::default();
-        let mut msg = user_message("hi".to_string());
+        let mut msg = user_message(String::new());
         msg.is_streaming = true;
 
         let g1 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
         let g2 = cached_message_render(&mut cache, 0, &msg, None, true, 1, 80, &theme).generation;
-        assert_ne!(g1, g2, "streaming header spinner must re-render each tick");
+        assert_ne!(g1, g2, "streaming placeholder must re-render each tick");
 
-        let header = &cache.get(0).unwrap().plain[0];
+        let placeholder = &cache.get(0).unwrap().plain[0];
         assert!(
-            header.contains(SPINNER_FRAMES[1]),
-            "header must show the tick-1 spinner frame: {header}"
+            placeholder.contains(SPINNER_FRAMES[1]),
+            "placeholder must show the tick-1 spinner frame: {placeholder}"
         );
     }
 }

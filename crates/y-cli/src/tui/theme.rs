@@ -105,12 +105,6 @@ impl Theme {
         self.color(Color::Rgb(120, 180, 255), Color::Indexed(75))
     }
 
-    /// Unfocused panel border.
-    pub fn border_unfocused(&self) -> Color {
-        // RGB(50,50,65) -> grayscale index 239
-        self.color(Color::Rgb(50, 50, 65), Color::Indexed(239))
-    }
-
     // -----------------------------------------------------------------------
     // Text
     // -----------------------------------------------------------------------
@@ -153,12 +147,6 @@ impl Theme {
     pub fn system_accent(&self) -> Color {
         // RGB(220,200,100) -> index 179 (yellow)
         self.color(Color::Rgb(220, 200, 100), Color::Indexed(179))
-    }
-
-    /// Tool role accent (purple).
-    pub fn tool_accent(&self) -> Color {
-        // RGB(200,140,255) -> index 177 (light magenta)
-        self.color(Color::Rgb(200, 140, 255), Color::Indexed(177))
     }
 
     // -----------------------------------------------------------------------
@@ -272,11 +260,6 @@ impl Theme {
     // -----------------------------------------------------------------------
     // Status bar
     // -----------------------------------------------------------------------
-
-    /// Status bar background (same as `panel_bg`).
-    pub fn status_bg(&self) -> Color {
-        self.panel_bg()
-    }
 
     /// Model name text.
     pub fn status_model(&self) -> Color {
@@ -404,14 +387,12 @@ mod tests {
         let _ = theme.panel_bg();
         let _ = theme.code_bg();
         let _ = theme.border_focused();
-        let _ = theme.border_unfocused();
         let _ = theme.title();
         let _ = theme.text();
         let _ = theme.muted();
         let _ = theme.user_accent();
         let _ = theme.assistant_accent();
         let _ = theme.system_accent();
-        let _ = theme.tool_accent();
         let _ = theme.selected();
         let _ = theme.active();
         let _ = theme.normal();
@@ -428,7 +409,6 @@ mod tests {
         let _ = theme.welcome();
         let _ = theme.code_fg();
         let _ = theme.code_block_fg();
-        let _ = theme.status_bg();
         let _ = theme.status_model();
         let _ = theme.status_token_ratio();
         let _ = theme.status_bar_track();

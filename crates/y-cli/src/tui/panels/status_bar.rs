@@ -126,7 +126,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 
     let line = Line::from(spans);
-    let para = Paragraph::new(line).style(Style::default().bg(t.status_bg()));
+    // No background fill: a tinted bar that stops where the text stops (or
+    // fights the terminal's own background) reads as a rendering bug. Plain
+    // foreground colors keep the bar visually flat.
+    let para = Paragraph::new(line);
     frame.render_widget(para, area);
 }
 
