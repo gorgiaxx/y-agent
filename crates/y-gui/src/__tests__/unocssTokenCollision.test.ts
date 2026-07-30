@@ -51,12 +51,15 @@ function productionSources(): string {
 }
 
 describe('UnoCSS / Prism token class collisions', () => {
+  // Scanning every production source file and generating CSS for it is CPU
+  // heavy (~280 files, ~1.7MB). The default 5s timeout is too tight on slower
+  // or loaded CI runners, so allow up to 30s for this integration-style test.
   it('never generates a .table display utility from source scanning', async () => {
     const uno = await createGenerator(unoConfig)
     const { css } = await uno.generate(productionSources(), { preflights: false })
 
     expect(css).not.toMatch(/\.table\s*\{[^}]*display\s*:\s*table/)
-  })
+  }, 30000)
 
   it('keeps Prism token spans inline inside highlighted code', () => {
     const styles = readFileSync(new URL('../styles/index.css', import.meta.url), 'utf8')
