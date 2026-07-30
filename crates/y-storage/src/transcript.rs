@@ -456,6 +456,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_transcript_read_last_zero_returns_empty() {
+        let (_dir, store) = temp_store();
+        let session_id = SessionId::new();
+        store
+            .append(&session_id, &test_message("present"))
+            .await
+            .unwrap();
+
+        let messages = store.read_last(&session_id, 0).await.unwrap();
+        assert!(messages.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_transcript_message_count() {
         let (_dir, store) = temp_store();
         let session_id = SessionId::new();
