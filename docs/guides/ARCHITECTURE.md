@@ -227,6 +227,78 @@ Legacy session-to-workspace TOML assignments may backfill missing SQLite
 workspace paths after canonicalization. Sessions that cannot be mapped remain
 unassigned and are excluded from normal workspace-scoped resume results.
 
+## Automation and A2A CLI Contract
+
+External harnesses invoke y-agent through a headless `run` command rather than
+reimplementing the chat loop or calling presentation-only helpers. `y-service`
+owns automation request validation, workspace-scoped session resolution and
+creation, agent binding, turn preparation, and parameter precedence. `y-cli`
+only parses flags, renders protocol output, and selects an exit code.
+
+An automation request may select either ordinary chat behavior or one
+user-callable registered agent. Agent selection is creation-only: a resumed
+session restores its persisted agent binding, and an explicit conflicting
+agent is rejected. Turn-level request values override agent defaults; agent
+defaults override provider and harness defaults. The supported request surface
+includes provider/model, skills, knowledge collections, thinking effort,
+Fast/Plan/Loop/Auto orchestration, operation/permission mode, working directory,
+prompt text, and an optional per-turn deadline. Unknown agents, invalid modes,
+inaccessible workspaces, and ambiguous resume selectors fail before the model
+call.
+
+Every new automation session is persisted and its public session reference is
+flushed before turn execution begins. Human-readable references use the
+`ses_` prefix while retaining the existing internal identifier, so callers may
+store an unmistakable typed value without a schema migration. Callers may set a
+searchable creation-time session name; otherwise the service derives a bounded
+title from the first prompt. Resume accepts both the public form and legacy raw
+IDs. Resolution remains workspace-scoped; prefix or title matches must be unique
+rather than silently selecting the first candidate.
+
+`text` output reserves stdout for the final assistant content and writes the
+early session reference and diagnostics to stderr. `json` emits one final
+result object, while `jsonl` emits a versioned session-start record before work
+and terminal result or error records afterward. Structured records include the
+public and raw session IDs during the compatibility window. Successful process
+exit means the requested turn reached a terminal success state; validation,
+provider, tool, cancellation, and interrupted-turn failures use non-zero exit
+status.
+
+Headless `run` installs SIGINT and, on Unix, SIGTERM handlers around the
+service-owned turn. The first signal cancels through `TurnCancellationToken` so
+partial assistant/tool state can be persisted before the command emits a
+terminal `run_interrupted` record. Conventional shell status is 130 for SIGINT
+and 143 for SIGTERM. Text mode repeats the public session reference and a resume
+command on stderr. Uncatchable termination such as SIGKILL cannot emit a
+terminal record, so callers must retain the already-flushed session-start
+reference.
+
+An explicit `--timeout <seconds>` deadline uses the same cancellation and
+partial-state persistence path instead of abruptly dropping the turn future.
+Timeouts emit `run_timed_out`, repeat the session reference in text mode, and
+return status 124. A caller-level infrastructure timeout should therefore allow
+enough additional grace for service cancellation to finish.
+
+The legacy single-shot `print` command is a compatibility adapter over
+`AutomationRunService`; it does not construct sessions, prompt context, or turn
+inputs independently. Its historical JSON `session_id` remains the raw value,
+while `session_reference` exposes the preferred typed public value. New
+integrations use `run` for early session records, cancellation, and the complete
+parameter surface. The long-lived `rpc` protocol remains a separate legacy
+transport until its multi-request cancellation and event correlation semantics
+can be migrated without changing its wire contract.
+
+This contract follows the strongest common behavior in the local Kimi Code,
+Codex, OpenCode, and OMP implementations, together with Grok Build's documented
+headless and ACP surfaces: a distinct headless entry point, creation-time agent
+binding, structured event output, explicit model/reasoning overrides, early
+resumability, and a direct resume selector. A separate session database for A2A
+and replacement of stored UUIDs with short IDs were rejected: the former would
+split recovery and observability, while the latter would break existing
+transcripts, diagnostics, and external references. ACP and a long-lived daemon
+remain complementary future transports over the same service contract, not
+alternate business-logic paths.
+
 ## Session Prompt Template Contract
 
 Per-session prompt composition is stored in session metadata as a versioned
@@ -722,6 +794,22 @@ diagnostic.
 Persistent prompt history and unfinished drafts are bounded, atomically written,
 and stored outside transcripts. Composer fragments and attachment chips remain
 presentation state until the exact turn is submitted to `y-service`.
+
+During an active turn, the TUI projects the service-owned follow-up queue as a
+bounded TODO band immediately above the composer. Plain composer input and
+`/todo <text>` enqueue through `ChatService`; the inline "send next" action
+promotes the first pending item through the same single-steering-slot contract
+used by the GUI. The full queue overlay performs edit, delete, steer, and
+un-steer operations through service APIs. Inline hints and slash-palette
+shortcut labels resolve their displayed chords from semantic keymap actions so
+user overrides cannot leave a second hard-coded shortcut table behind.
+
+Slash completion is a projection of the primary composer, not a second input
+buffer. The composer retains the visible text, cursor, editing, paste, and
+history contract while the completion popup renders candidates above it. Tab
+replaces only the selected command token, Enter submits through the normal
+command path, and Escape dismisses completion before stream cancellation while
+preserving the draft.
 
 Streaming progress events are an optimistic live projection, not the completion
 source of truth. Before applying the terminal response, the TUI reconciles its

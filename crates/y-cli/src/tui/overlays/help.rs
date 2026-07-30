@@ -58,7 +58,7 @@ fn help_lines(keymap: &Keymap) -> Vec<Line<'static>> {
         ("Command palette", KeyContext::Command),
         ("Prompt backtrack", KeyContext::Select),
         ("Pickers", KeyContext::Picker),
-        ("Follow-up queue", KeyContext::Queue),
+        ("TODO queue", KeyContext::Queue),
         ("Tasks", KeyContext::Tasks),
         ("Help", KeyContext::Help),
     ];
@@ -118,7 +118,7 @@ mod tests {
         assert!(text.contains("F1"));
         assert!(text.contains("Ctrl+Q"));
         assert!(text.contains("Cancel the active response"));
-        assert!(text.contains("Follow-up queue"));
+        assert!(text.contains("TODO queue"));
         assert!(!text.contains("Ctrl+H"));
     }
 

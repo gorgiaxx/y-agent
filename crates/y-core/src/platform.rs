@@ -60,6 +60,19 @@ fn user_login_shell() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serializes tests that mutate the process-global `SHELL` variable;
+    /// without it they race under the default parallel test runner.
+    static SHELL_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Lock the env mutex, tolerating poisoning from a previously panicked
+    /// test so one failure does not cascade into the others.
+    fn shell_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        SHELL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     #[test]
     fn returns_non_empty_pair() {
@@ -70,6 +83,7 @@ mod tests {
 
     #[test]
     fn user_login_shell_respects_env_var() {
+        let _guard = shell_env_lock();
         // Points at a real binary on every Unix system.
         let saved = std::env::var("SHELL").ok();
         std::env::set_var("SHELL", "/bin/sh");
@@ -85,6 +99,7 @@ mod tests {
 
     #[test]
     fn user_login_shell_ignores_nonexistent_path() {
+        let _guard = shell_env_lock();
         let saved = std::env::var("SHELL").ok();
         std::env::set_var("SHELL", "/no/such/shell");
 
@@ -98,6 +113,7 @@ mod tests {
 
     #[test]
     fn user_login_shell_ignores_empty_value() {
+        let _guard = shell_env_lock();
         let saved = std::env::var("SHELL").ok();
         std::env::set_var("SHELL", "");
 

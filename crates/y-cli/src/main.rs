@@ -15,6 +15,7 @@ mod tui;
 mod wire;
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::Parser;
@@ -83,7 +84,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<ExitCode> {
     // Bare-prompt resolution: `y-agent "do X"` forwards to `chat -- "do X"`.
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
     let resolved_args = bare_prompt::resolve_for_clap(&raw_args);
@@ -91,13 +92,13 @@ async fn main() -> Result<()> {
 
     // Handle init command early -- it runs before config exists.
     if let Some(Commands::Init(args)) = &cli.command {
-        return commands::init::run(args).await;
+        return commands::init::run(args).await.map(|()| ExitCode::SUCCESS);
     }
 
     // Handle completion early -- no config needed.
     if let Some(Commands::Completion(args)) = &cli.command {
         commands::completion::run(args);
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
 
     // Build CLI overrides.
@@ -329,6 +330,11 @@ async fn main() -> Result<()> {
             let services = wire::wire(&config).await?;
             commands::rpc::run(&services).await?;
         }
+        #[cfg(feature = "automation_a2a")]
+        Some(Commands::Run(args)) => {
+            let services = wire::wire(&config).await?;
+            return run_automation_command(&services, args.clone()).await;
+        }
         #[cfg(feature = "tui")]
         Some(Commands::Tui { session }) => {
             let services = wire::wire(&config).await?;
@@ -418,14 +424,23 @@ async fn main() -> Result<()> {
                 let exit_info =
                     commands::tui_cmd::run(services, Some(toast_rx), resume_session).await?;
                 print_exit_summary(&exit_info);
-                return Ok(());
+                return Ok(ExitCode::SUCCESS);
             }
             println!("y-agent v{}", env!("CARGO_PKG_VERSION"));
             println!("Use --help for available commands.");
         }
     }
 
-    Ok(())
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(feature = "automation_a2a")]
+async fn run_automation_command(
+    services: &wire::AppServices,
+    args: commands::run::RunArgs,
+) -> Result<ExitCode> {
+    let outcome = Box::pin(commands::run::run(services, args)).await?;
+    Ok(ExitCode::from(outcome.exit_code_value()))
 }
 
 /// Resolve a named profile to its config directory.

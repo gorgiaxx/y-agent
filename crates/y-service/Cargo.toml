@@ -59,12 +59,14 @@ semver = { version = "1", optional = true }
 [features]
 default = [
     "agent_swarm",
+    "automation_a2a",
     "compaction_prefire",
     "hook_handlers",
     "instance_coordination",
     "worktree_isolation",
 ]
 agent_swarm = ["y-tools/agent_swarm"]
+automation_a2a = []
 background_auto_wake = []
 compaction_prefire = []
 capability_packs = ["dep:hex", "dep:semver"]

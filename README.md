@@ -116,6 +116,45 @@ instead of a persistent session sidebar. Useful commands include:
 /copy transcript         copy the complete visible transcript
 ```
 
+Headless callers and external harnesses use `run`. A new session reference is
+flushed before model execution so an interrupted process remains resumable:
+
+```bash
+# Ordinary chat with a named, searchable session.
+yagent run --name cve-2026-0001 --model gpt-5 --thinking high \
+  --mode loop --timeout 900 --format jsonl -- "Analyze CVE-2026-0001"
+
+# Invoke a user-callable registered agent with explicit context assets.
+yagent run --agent general-purpose --skill cve-triage \
+  --knowledge vulnerabilities --permission full-access -- "Analyze the queued CVE"
+
+# Continue by the typed reference emitted as session_id, or use --continue.
+yagent run --session ses_<id> -- "Continue from the last completed step"
+yagent run --continue -- "Continue from the last completed step"
+```
+
+`text` reserves stdout for the final answer and reports the session reference
+on stderr. `json` emits one terminal object; `jsonl` emits a
+`session_started` record before execution and a terminal record afterward.
+Resume is scoped to the selected workspace and also accepts legacy raw IDs,
+unique ID prefixes, and unique session titles.
+
+SIGINT and SIGTERM request graceful turn cancellation. Structured modes emit a
+`run_interrupted` terminal record; text mode repeats the session reference and
+resume command on stderr. Interrupted runs exit with status 130 for SIGINT or
+143 for SIGTERM. Even an uncatchable process termination remains resumable from
+the session reference flushed before model execution.
+
+`--timeout <seconds>` applies a graceful per-turn deadline through the same
+cancellation path. It emits `run_timed_out` in structured modes and exits with
+status 124 after partial state has been persisted.
+
+The older `yagent print` command remains available for script compatibility but
+now uses the same service-owned request preparation, including real `--agent`
+binding and session resolution. Its JSON output retains the raw `session_id`
+field and adds the preferred typed `session_reference`. New automation should
+use `run` for the complete option and interruption contract.
+
 While a response is running, the composer remains active: `Enter` queues the
 text as a service-owned follow-up and `Esc` requests cancellation without
 discarding the current draft.

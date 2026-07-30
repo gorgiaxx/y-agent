@@ -65,6 +65,8 @@ pub enum KeyAction {
     ShowRawScrollback,
     /// Enter command mode.
     EnterCommandMode,
+    /// Accept the highlighted slash-command completion into the composer.
+    CompleteCommand,
     /// Enter persistent shell mode.
     EnterShellMode,
     /// Return to normal mode.
@@ -105,12 +107,22 @@ pub enum KeyAction {
     CopyQuote,
     /// Open a selected filesystem path with the host shell.
     CopyOpenPath,
-    /// Remove the selected follow-up from the queue.
+    /// Open the copy target picker.
+    OpenCopy,
+    /// Open the active-run TODO queue.
+    OpenQueue,
+    /// Open the background tasks viewer.
+    OpenTasks,
+    /// Open the workspace session hub.
+    OpenSessionHub,
+    /// Remove the selected TODO from the queue.
     QueueDelete,
-    /// Promote the selected follow-up to the pending steer (or demote it).
+    /// Promote the selected TODO to the pending steer (or demote it).
     QueueSteer,
-    /// Remove the selected follow-up and recall it into the composer.
+    /// Remove the selected TODO and recall it into the composer.
     QueueRecall,
+    /// Promote the next pending TODO for immediate steering.
+    QueueSteerNext,
     /// Kill the selected entry in the `/tasks` overlay.
     TasksKill,
     /// Refresh the `/tasks` overlay contents.
@@ -163,6 +175,7 @@ impl KeyAction {
             Self::ShowHelp => "show_help",
             Self::ShowRawScrollback => "show_raw_scrollback",
             Self::EnterCommandMode => "enter_command_mode",
+            Self::CompleteCommand => "complete_command",
             Self::EnterShellMode => "enter_shell_mode",
             Self::ReturnToNormal => "return_to_normal",
             Self::EnterBacktrack => "enter_backtrack",
@@ -183,9 +196,14 @@ impl KeyAction {
             Self::CopySelectedTool => "copy_selected_tool",
             Self::CopyQuote => "copy_quote",
             Self::CopyOpenPath => "copy_open_path",
+            Self::OpenCopy => "open_copy",
+            Self::OpenQueue => "open_queue",
+            Self::OpenTasks => "open_tasks",
+            Self::OpenSessionHub => "open_session_hub",
             Self::QueueDelete => "queue_delete",
             Self::QueueSteer => "queue_steer",
             Self::QueueRecall => "queue_recall",
+            Self::QueueSteerNext => "queue_steer_next",
             Self::TasksKill => "tasks_kill",
             Self::TasksRefresh => "tasks_refresh",
             Self::AskUserToggle => "ask_user_toggle",
@@ -231,6 +249,7 @@ impl KeyAction {
             Self::ShowHelp => "Show keyboard help",
             Self::ShowRawScrollback => "Show transcript in terminal scrollback",
             Self::EnterCommandMode => "Open command palette",
+            Self::CompleteCommand => "Accept command completion",
             Self::EnterShellMode => "Enter shell mode",
             Self::ReturnToNormal => "Close the current overlay",
             Self::EnterBacktrack => "Select an earlier prompt",
@@ -251,9 +270,14 @@ impl KeyAction {
             Self::CopySelectedTool => "Copy selected tool",
             Self::CopyQuote => "Quote selected copy target",
             Self::CopyOpenPath => "Open selected path",
-            Self::QueueDelete => "Delete queued follow-up",
-            Self::QueueSteer => "Steer or un-steer follow-up",
-            Self::QueueRecall => "Recall queued follow-up for editing",
+            Self::OpenCopy => "Open copy targets",
+            Self::OpenQueue => "Open the TODO queue",
+            Self::OpenTasks => "Open background tasks",
+            Self::OpenSessionHub => "Open workspace sessions",
+            Self::QueueDelete => "Delete queued TODO",
+            Self::QueueSteer => "Steer or un-steer TODO",
+            Self::QueueRecall => "Recall queued TODO for editing",
+            Self::QueueSteerNext => "Send the next TODO immediately",
             Self::TasksKill => "Kill selected background task",
             Self::TasksRefresh => "Refresh tasks",
             Self::AskUserToggle => "Toggle the focused answer",
@@ -293,6 +317,7 @@ const ALL_ACTIONS: &[KeyAction] = &[
     KeyAction::ShowHelp,
     KeyAction::ShowRawScrollback,
     KeyAction::EnterCommandMode,
+    KeyAction::CompleteCommand,
     KeyAction::EnterShellMode,
     KeyAction::ReturnToNormal,
     KeyAction::EnterBacktrack,
@@ -313,9 +338,14 @@ const ALL_ACTIONS: &[KeyAction] = &[
     KeyAction::CopySelectedTool,
     KeyAction::CopyQuote,
     KeyAction::CopyOpenPath,
+    KeyAction::OpenCopy,
+    KeyAction::OpenQueue,
+    KeyAction::OpenTasks,
+    KeyAction::OpenSessionHub,
     KeyAction::QueueDelete,
     KeyAction::QueueSteer,
     KeyAction::QueueRecall,
+    KeyAction::QueueSteerNext,
     KeyAction::TasksKill,
     KeyAction::TasksRefresh,
     KeyAction::AskUserToggle,
@@ -370,7 +400,7 @@ impl KeyContext {
             Self::Picker => "picker",
             Self::SessionHub => "session hub",
             Self::CopyPicker => "copy picker",
-            Self::Queue => "follow-up queue",
+            Self::Queue => "TODO queue",
             Self::Tasks => "tasks",
             Self::AskUser => "AskUser prompt",
             Self::Permission => "permission prompt",
@@ -750,6 +780,38 @@ impl Keymap {
         }
         entries
     }
+
+    /// Effective display chords for an action, de-duplicated across contexts.
+    pub fn shortcut_keys(&self, action: KeyAction) -> Vec<String> {
+        let mut keys = Vec::new();
+        for binding in &self.bindings {
+            if binding.action != action {
+                continue;
+            }
+            let key = binding.chord.to_string();
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys
+    }
+
+    /// Preferred compact chord for inline hints.
+    pub fn primary_shortcut(&self, action: KeyAction) -> Option<String> {
+        self.shortcut_keys(action).into_iter().next()
+    }
+
+    /// Preferred chord for an action in one interaction context.
+    pub fn primary_shortcut_in_context(
+        &self,
+        context: KeyContext,
+        action: KeyAction,
+    ) -> Option<String> {
+        self.bindings
+            .iter()
+            .find(|binding| binding.context == context && binding.action == action)
+            .map(|binding| binding.chord.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -782,6 +844,10 @@ fn ctrl(character: char) -> KeyChord {
     KeyChord::new(KeyCode::Char(character), KeyModifiers::CONTROL)
 }
 
+fn alt(character: char) -> KeyChord {
+    KeyChord::new(KeyCode::Char(character), KeyModifiers::ALT)
+}
+
 fn shift(character: char) -> KeyChord {
     KeyChord::new(KeyCode::Char(character), KeyModifiers::SHIFT)
 }
@@ -799,6 +865,7 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::Cancelling, ctrl('c'), A::Consumed),
         binding(C::Streaming, plain(KeyCode::Esc), A::CancelStreaming),
         binding(C::Streaming, ctrl('c'), A::CancelStreaming),
+        binding(C::Streaming, ctrl('s'), A::QueueSteerNext),
         binding(C::NormalInputEmpty, ctrl('c'), A::ConfirmQuit),
         binding(C::NormalInputEmpty, ctrl('d'), A::Quit),
         binding(C::NormalInputDraft, ctrl('c'), A::ClearInput),
@@ -857,6 +924,18 @@ fn default_bindings() -> Vec<KeyBinding> {
         // Ctrl+E as an alias for the same action.
         binding(C::NormalInputEmpty, ctrl('g'), A::OpenExternalEditor),
         binding(C::NormalInputDraft, ctrl('g'), A::OpenExternalEditor),
+        binding(C::NormalInputEmpty, alt('q'), A::OpenQueue),
+        binding(C::NormalInputDraft, alt('q'), A::OpenQueue),
+        binding(C::NormalChat, alt('q'), A::OpenQueue),
+        binding(C::NormalInputEmpty, alt('t'), A::OpenTasks),
+        binding(C::NormalInputDraft, alt('t'), A::OpenTasks),
+        binding(C::NormalChat, alt('t'), A::OpenTasks),
+        binding(C::NormalInputEmpty, alt('c'), A::OpenCopy),
+        binding(C::NormalInputDraft, alt('c'), A::OpenCopy),
+        binding(C::NormalChat, alt('c'), A::OpenCopy),
+        binding(C::NormalInputEmpty, alt('r'), A::OpenSessionHub),
+        binding(C::NormalInputDraft, alt('r'), A::OpenSessionHub),
+        binding(C::NormalChat, alt('r'), A::OpenSessionHub),
         binding(C::NormalInputEmpty, character(':'), A::EnterCommandMode),
         binding(C::NormalInputDraft, character(':'), A::EnterCommandMode),
         binding(C::NormalInputEmpty, character('!'), A::EnterShellMode),
@@ -955,9 +1034,19 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::Shell, ctrl('e'), A::OpenExternalEditor),
         binding(C::Command, plain(KeyCode::Esc), A::ReturnToNormal),
         binding(C::Command, plain(KeyCode::Enter), A::Submit),
+        binding(
+            C::Command,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            A::Consumed,
+        ),
+        binding(
+            C::Command,
+            KeyChord::new(KeyCode::Enter, KeyModifiers::ALT),
+            A::Consumed,
+        ),
         binding(C::Command, plain(KeyCode::Up), A::ScrollUp),
         binding(C::Command, plain(KeyCode::Down), A::ScrollDown),
-        binding(C::Command, plain(KeyCode::Tab), A::ScrollDown),
+        binding(C::Command, plain(KeyCode::Tab), A::CompleteCommand),
         binding(C::Select, plain(KeyCode::Esc), A::ReturnToNormal),
         binding(C::Select, character('i'), A::ReturnToNormal),
         binding(C::Select, plain(KeyCode::Up), A::BacktrackPrevious),
@@ -1099,7 +1188,11 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
         | InteractionMode::TranscriptSearch
         | InteractionMode::Prompt => KeyContext::Picker,
     };
-    contexts.push(mode);
+    if mode == KeyContext::Command && !state.is_cancelling {
+        contexts.insert(0, mode);
+    } else {
+        contexts.push(mode);
+    }
     contexts
 }
 
@@ -1391,6 +1484,23 @@ mod tests {
         let state = AppState::new(); // Input focus, Normal mode
         let action = dispatch(key(KeyCode::Char(':')), &state);
         assert_eq!(action, KeyAction::EnterCommandMode);
+    }
+
+    #[test]
+    fn test_command_completion_owns_tab_and_streaming_escape() {
+        let mut state = AppState::new();
+        state.mode = InteractionMode::Command;
+
+        assert_eq!(
+            dispatch(key(KeyCode::Tab), &state),
+            KeyAction::CompleteCommand
+        );
+
+        state.is_streaming = true;
+        assert_eq!(
+            dispatch(key(KeyCode::Esc), &state),
+            KeyAction::ReturnToNormal
+        );
     }
 
     #[test]
@@ -1773,5 +1883,29 @@ mod tests {
                 "prompts have no text target ({mode:?})"
             );
         }
+    }
+
+    #[test]
+    fn test_streaming_todo_shortcuts_are_semantic_actions() {
+        let keymap = Keymap::default();
+        let mut state = AppState::new();
+        state.is_streaming = true;
+
+        assert_eq!(
+            keymap.dispatch_with_composer(
+                key_with_mod(KeyCode::Char('s'), KeyModifiers::CONTROL),
+                &state,
+                true,
+            ),
+            KeyAction::QueueSteerNext
+        );
+        assert_eq!(
+            keymap.dispatch_with_composer(
+                key_with_mod(KeyCode::Char('q'), KeyModifiers::ALT),
+                &state,
+                true,
+            ),
+            KeyAction::OpenQueue
+        );
     }
 }

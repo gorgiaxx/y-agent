@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::tui::keys::KeyAction;
+
 /// Information about a registered command.
 #[derive(Debug, Clone)]
 pub struct CommandInfo {
@@ -19,6 +21,21 @@ pub struct CommandInfo {
     pub args: &'static str,
     /// Category for grouping.
     pub category: CommandCategory,
+}
+
+impl CommandInfo {
+    /// Semantic action that opens the same surface without typing the command.
+    pub fn shortcut_action(&self) -> Option<KeyAction> {
+        match self.name {
+            "resume" => Some(KeyAction::OpenSessionHub),
+            "shortcuts" => Some(KeyAction::ShowHelp),
+            "copy" => Some(KeyAction::OpenCopy),
+            "queue" => Some(KeyAction::OpenQueue),
+            "tasks" => Some(KeyAction::OpenTasks),
+            "quit" => Some(KeyAction::Quit),
+            _ => None,
+        }
+    }
 }
 
 /// Command categories for grouping in palette and help.
@@ -328,8 +345,15 @@ fn builtin_commands() -> Vec<CommandInfo> {
         CommandInfo {
             name: "queue",
             alias: None,
-            description: "Show the follow-up queue for the active run",
+            description: "Manage TODOs queued for the active run",
             args: "",
+            category: CommandCategory::General,
+        },
+        CommandInfo {
+            name: "todo",
+            alias: None,
+            description: "Add a TODO to the active run",
+            args: "<text>",
             category: CommandCategory::General,
         },
         CommandInfo {
@@ -464,6 +488,10 @@ mod tests {
             "queue command should be discoverable"
         );
         assert!(
+            reg.find("todo").is_some(),
+            "todo command should be discoverable"
+        );
+        assert!(
             reg.find("tasks").is_some(),
             "tasks command should be discoverable"
         );
@@ -484,6 +512,9 @@ mod tests {
 
         let prompt = reg.find("prompt").expect("prompt command");
         assert_eq!(prompt.args, "[template-id|default]");
+
+        let todo = reg.find("todo").expect("todo command");
+        assert_eq!(todo.args, "<text>");
     }
 
     #[test]

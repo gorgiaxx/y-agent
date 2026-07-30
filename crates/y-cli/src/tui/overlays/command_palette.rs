@@ -1,7 +1,7 @@
 //! Command palette overlay: floating popup showing filtered command list.
 //!
 //! Activated when the user types `/` or `:` (enters Command mode). Shows a
-//! fuzzy-filtered list of available commands that updates on each keystroke.
+//! fuzzy-filtered list projected from the primary composer's text.
 
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -10,28 +10,16 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use crate::tui::commands::registry::CommandRegistry;
+use crate::tui::keys::{KeyAction, KeyContext, Keymap};
 use crate::tui::theme::Theme;
 
 use super::picker::visible_range;
 
-/// Outcome of a Backspace press inside the palette.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PaletteBackspace {
-    /// Removed the last character of the filter input.
-    Popped,
-    /// Filter input was already empty in argument mode: argument
-    /// completion closed, returning to the command list.
-    ExitArgMode,
-    /// Filter input was already empty at the command list: the `/` that
-    /// opened the palette is deleted, so the palette itself should close.
-    Close,
-}
-
 /// State for the command palette overlay.
 #[derive(Debug, Clone)]
 pub struct CommandPaletteState {
-    /// Current input text (prefix being typed).
-    pub input: String,
+    /// Filter query projected from the primary composer.
+    pub query: String,
     /// Index of selected item in filtered results.
     pub selected: usize,
     /// Cached filtered results (names only, for display).
@@ -41,6 +29,8 @@ pub struct CommandPaletteState {
     /// Cached filtered argument synopses (e.g. "<session-id>"), aligned with
     /// `filtered_names` so rendering needs no registry lookups.
     pub filtered_synopses: Vec<&'static str>,
+    /// Semantic shortcut actions aligned with `filtered_names`.
+    pub filtered_shortcuts: Vec<Option<KeyAction>>,
     /// When set, the palette is in argument-completion mode for this command.
     pub arg_command: Option<String>,
     /// Available argument completions (e.g. provider IDs for `/model`).
@@ -59,11 +49,15 @@ impl CommandPaletteState {
     pub fn new() -> Self {
         let all = CommandRegistry::shared().all();
         Self {
-            input: String::new(),
+            query: String::new(),
             selected: 0,
             filtered_names: all.iter().map(|c| c.name.to_string()).collect(),
             filtered_descriptions: all.iter().map(|c| c.description.to_string()).collect(),
             filtered_synopses: all.iter().map(|c| c.args).collect(),
+            filtered_shortcuts: all
+                .iter()
+                .map(super::super::commands::registry::CommandInfo::shortcut_action)
+                .collect(),
             arg_command: None,
             arg_completions: Vec::new(),
             filtered_args: Vec::new(),
@@ -75,7 +69,7 @@ impl CommandPaletteState {
         self.arg_command = Some(command);
         self.arg_completions = completions.clone();
         self.filtered_args = completions;
-        self.input.clear();
+        self.query.clear();
         self.selected = 0;
     }
 
@@ -84,10 +78,41 @@ impl CommandPaletteState {
         self.arg_command.is_some()
     }
 
+    /// Rebuild completion state from the primary composer text.
+    ///
+    /// The palette never owns editable text: it is a projection of the
+    /// leading slash command around the composer's real cursor and buffer.
+    pub fn sync_from_composer(&mut self, composer_text: &str) -> bool {
+        let Some(command_text) = composer_text.trim_start().strip_prefix('/') else {
+            return false;
+        };
+        let separator = command_text.find(char::is_whitespace);
+        let command_name = separator.map_or(command_text, |index| &command_text[..index]);
+        let arguments = separator.map_or("", |index| command_text[index..].trim_start());
+
+        let argument_command_matches = self.arg_command.as_deref().is_some_and(|command| {
+            CommandRegistry::shared().resolve_alias(command_name) == command && separator.is_some()
+        });
+        if self.in_arg_mode() && !argument_command_matches {
+            self.arg_command = None;
+            self.arg_completions.clear();
+            self.filtered_args.clear();
+        }
+
+        self.query = if argument_command_matches {
+            arguments.to_string()
+        } else {
+            command_name.to_string()
+        };
+        self.selected = 0;
+        self.update_filter();
+        true
+    }
+
     /// Update the filtered results based on current input prefix.
     pub fn update_filter(&mut self) {
         if self.in_arg_mode() {
-            let query = self.input.to_lowercase();
+            let query = self.query.to_lowercase();
             self.filtered_args = if query.is_empty() {
                 self.arg_completions.clone()
             } else {
@@ -107,15 +132,16 @@ impl CommandPaletteState {
             return;
         }
         let registry = CommandRegistry::shared();
-        let results = if self.input.is_empty() {
+        let results = if self.query.is_empty() {
             registry.all().iter().collect::<Vec<_>>()
         } else {
-            registry.search(&self.input)
+            registry.search(&self.query)
         };
 
         self.filtered_names = results.iter().map(|c| c.name.to_string()).collect();
         self.filtered_descriptions = results.iter().map(|c| c.description.to_string()).collect();
         self.filtered_synopses = results.iter().map(|c| c.args).collect();
+        self.filtered_shortcuts = results.iter().map(|c| c.shortcut_action()).collect();
 
         // Clamp selected index.
         if self.selected >= self.filtered_names.len() {
@@ -150,6 +176,20 @@ impl CommandPaletteState {
             .map(std::string::String::as_str)
     }
 
+    /// Selected command name and argument synopsis for composer completion.
+    pub fn selected_command_completion(&self) -> Option<(&str, &str)> {
+        if self.in_arg_mode() {
+            return None;
+        }
+        Some((
+            self.filtered_names.get(self.selected)?.as_str(),
+            self.filtered_synopses
+                .get(self.selected)
+                .copied()
+                .unwrap_or(""),
+        ))
+    }
+
     /// Get the currently selected argument value (if in arg mode).
     pub fn selected_arg(&self) -> Option<&str> {
         if !self.in_arg_mode() {
@@ -159,58 +199,41 @@ impl CommandPaletteState {
             .get(self.selected)
             .map(|(id, _)| id.as_str())
     }
-
-    /// Push a character to the input.
-    pub fn push_char(&mut self, ch: char) {
-        self.input.push(ch);
-        self.selected = 0;
-        self.update_filter();
-    }
-
-    /// Pop the last character from the input.
-    pub fn pop_char(&mut self) {
-        self.input.pop();
-        self.selected = 0;
-        self.update_filter();
-    }
-
-    /// Handle a Backspace press, including the empty-input edges: leaving
-    /// argument mode, or signalling that the palette itself should close.
-    pub fn backspace(&mut self) -> PaletteBackspace {
-        if !self.input.is_empty() {
-            self.pop_char();
-            return PaletteBackspace::Popped;
-        }
-        if self.in_arg_mode() {
-            *self = Self::new();
-            return PaletteBackspace::ExitArgMode;
-        }
-        PaletteBackspace::Close
-    }
 }
 
 /// Render the command palette overlay.
 ///
-/// The palette is a floating popup anchored to the bottom of the screen,
-/// positioned above the input area.
-pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState, t: &Theme) {
+/// The palette is a completion popup anchored immediately above the primary
+/// composer. It renders suggestions and key hints only; editable text and the
+/// cursor remain owned by the composer.
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    composer_area: Rect,
+    palette: &CommandPaletteState,
+    keymap: &Keymap,
+    t: &Theme,
+) {
     let item_count = if palette.in_arg_mode() {
         palette.filtered_args.len()
     } else {
         palette.filtered_names.len()
     };
 
-    let popup_height = palette_height(item_count, area.height);
-    let popup_width = area.width.saturating_sub(4).clamp(30, 72);
-
-    let x = area.x + 2;
-    let y = area.y + area.height.saturating_sub(popup_height + 4);
+    let available_height = composer_area.y.saturating_sub(area.y);
+    let popup_width = composer_area.width.saturating_sub(2).min(72);
+    if available_height < 5 || popup_width < 20 {
+        return;
+    }
+    let popup_height = palette_height(item_count, area.height).min(available_height);
+    let x = composer_area.x + composer_area.width.saturating_sub(popup_width) / 2;
+    let y = composer_area.y.saturating_sub(popup_height);
 
     let popup_area = Rect::new(x, y, popup_width, popup_height);
     frame.render_widget(Clear, popup_area);
 
     let title = if let Some(cmd) = &palette.arg_command {
-        format!(" /{cmd} ")
+        format!(" /{cmd} arguments ")
     } else {
         " Commands ".to_string()
     };
@@ -232,32 +255,42 @@ pub fn render(frame: &mut Frame, area: Rect, palette: &CommandPaletteState, t: &
         return;
     }
 
-    let prefix = "/";
-    let display_input = if let Some(cmd) = &palette.arg_command {
-        format!("{cmd} {}", palette.input)
-    } else {
-        palette.input.clone()
-    };
-    let input_line = Line::from(vec![
-        Span::styled(prefix, Style::default().fg(t.warning())),
-        Span::styled(display_input, Style::default().fg(t.text())),
-        Span::styled("\u{2588}", Style::default().fg(t.input_border_focused())),
-    ]);
-    let input_area = Rect::new(inner.x, inner.y, inner.width, 1);
-    frame.render_widget(Paragraph::new(input_line), input_area);
-
+    // Candidate list on top, shortcut guidance on the bottom row. The real
+    // command text and cursor stay visible in the composer below the popup.
     let list_area = Rect::new(
         inner.x,
-        inner.y + 1,
+        inner.y,
         inner.width,
         inner.height.saturating_sub(1),
     );
+    let footer_area = Rect::new(inner.x, inner.y + list_area.height, inner.width, 1);
 
     if palette.in_arg_mode() {
         render_arg_list(frame, list_area, palette, t);
     } else {
-        render_command_list(frame, list_area, palette, t);
+        render_command_list(frame, list_area, palette, keymap, t);
     }
+
+    frame.render_widget(
+        Paragraph::new(palette_footer(keymap)).style(Style::default().fg(t.muted())),
+        footer_area,
+    );
+}
+
+fn palette_footer(keymap: &Keymap) -> String {
+    let hint = |action, fallback: &str| {
+        keymap
+            .primary_shortcut_in_context(KeyContext::Command, action)
+            .unwrap_or_else(|| fallback.to_string())
+    };
+    format!(
+        " {}/{} select  {} complete  {} run  {} close",
+        hint(KeyAction::ScrollUp, "Up"),
+        hint(KeyAction::ScrollDown, "Down"),
+        hint(KeyAction::CompleteCommand, "Tab"),
+        hint(KeyAction::Submit, "Enter"),
+        hint(KeyAction::ReturnToNormal, "Esc"),
+    )
 }
 
 fn palette_height(item_count: usize, area_height: u16) -> u16 {
@@ -272,6 +305,7 @@ fn render_command_list(
     frame: &mut Frame,
     list_area: Rect,
     palette: &CommandPaletteState,
+    keymap: &Keymap,
     t: &Theme,
 ) {
     let range = visible_range(
@@ -289,6 +323,12 @@ fn render_command_list(
                 .get(i)
                 .map_or("", std::string::String::as_str);
             let args = palette.filtered_synopses.get(i).copied().unwrap_or("");
+            let shortcut = palette
+                .filtered_shortcuts
+                .get(i)
+                .copied()
+                .flatten()
+                .and_then(|action| keymap.primary_shortcut(action));
 
             let style = if i == palette.selected {
                 Style::default()
@@ -307,10 +347,12 @@ fn render_command_list(
                 Style::default().fg(t.muted())
             };
 
-            ListItem::new(Line::from(vec![
-                Span::styled(format!(" /{name} {args}"), style),
-                Span::styled(format!("  {desc}"), desc_style),
-            ]))
+            let mut spans = vec![Span::styled(format!(" /{name} {args}"), style)];
+            if let Some(shortcut) = shortcut {
+                spans.push(Span::styled(format!("  [{shortcut}]"), desc_style));
+            }
+            spans.push(Span::styled(format!("  {desc}"), desc_style));
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -353,6 +395,7 @@ fn render_arg_list(frame: &mut Frame, list_area: Rect, palette: &CommandPaletteS
     if items.is_empty() {
         let message = match palette.arg_command.as_deref() {
             Some("goal") => " Type an objective and press Enter",
+            Some("todo") => " Type TODO text and press Enter",
             _ => " No matches",
         };
         let empty = ListItem::new(Line::from(Span::styled(
@@ -380,11 +423,30 @@ mod tests {
         let initial_count = palette.filtered_names.len();
         assert!(initial_count >= 15);
 
-        palette.push_char('n');
-        palette.push_char('e');
+        palette.sync_from_composer("/ne");
         // Should narrow to commands starting with "ne" or matching "ne" in description.
         assert!(palette.filtered_names.len() < initial_count);
         assert!(palette.filtered_names.contains(&"new".to_string()));
+    }
+
+    #[test]
+    fn test_palette_filters_from_composer_owned_slash_text() {
+        let mut palette = CommandPaletteState::new();
+
+        assert!(palette.sync_from_composer("/pla"));
+        assert_eq!(palette.query, "pla");
+        assert_eq!(palette.selected_command(), Some("plan"));
+
+        assert!(!palette.sync_from_composer("plain text"));
+    }
+
+    #[test]
+    fn test_argument_filter_is_derived_from_composer_text() {
+        let mut palette = CommandPaletteState::new();
+        palette.enter_arg_mode("goal".to_string(), Vec::new());
+
+        assert!(palette.sync_from_composer("/goal ship release"));
+        assert_eq!(palette.query, "ship release");
     }
 
     #[test]
@@ -413,57 +475,12 @@ mod tests {
     }
 
     #[test]
-    fn test_palette_backspace() {
-        let mut palette = CommandPaletteState::new();
-        palette.push_char('q');
-        let narrow_count = palette.filtered_names.len();
-
-        palette.pop_char();
-        assert!(palette.filtered_names.len() > narrow_count);
-    }
-
-    // T-PALETTE-BACKSPACE-01: Backspace on an empty command filter signals
-    // that the palette should close (the `/` that opened it is deleted).
-    #[test]
-    fn test_backspace_on_empty_command_input_closes_palette() {
-        let mut palette = CommandPaletteState::new();
-        assert_eq!(palette.backspace(), PaletteBackspace::Close);
-    }
-
-    // T-PALETTE-BACKSPACE-02: Backspace on an empty argument filter leaves
-    // argument mode and returns to the command list instead of closing.
-    #[test]
-    fn test_backspace_on_empty_arg_input_exits_arg_mode() {
-        let mut palette = CommandPaletteState::new();
-        palette.enter_arg_mode(
-            "model".to_string(),
-            vec![("gpt-5".to_string(), String::new())],
-        );
-        assert_eq!(palette.backspace(), PaletteBackspace::ExitArgMode);
-        assert!(!palette.in_arg_mode());
-        assert!(palette.input.is_empty());
-    }
-
-    // T-PALETTE-BACKSPACE-03: Backspace pops typed characters first; only an
-    // already-empty filter closes the palette.
-    #[test]
-    fn test_backspace_pops_typed_characters_before_closing() {
-        let mut palette = CommandPaletteState::new();
-        palette.push_char('n');
-        assert_eq!(palette.backspace(), PaletteBackspace::Popped);
-        assert!(palette.input.is_empty());
-        assert_eq!(palette.backspace(), PaletteBackspace::Close);
-    }
-
-    #[test]
     fn test_freeform_argument_mode_preserves_typed_goal() {
         let mut palette = CommandPaletteState::new();
         palette.enter_arg_mode("goal".to_string(), Vec::new());
-        for ch in "ship release".chars() {
-            palette.push_char(ch);
-        }
+        palette.sync_from_composer("/goal ship release");
 
-        assert_eq!(palette.input, "ship release");
+        assert_eq!(palette.query, "ship release");
         assert!(palette.selected_arg().is_none());
     }
 
@@ -487,8 +504,80 @@ mod tests {
         palette.select_next();
         assert_eq!(palette.selected, 2);
 
-        palette.push_char('r');
+        palette.sync_from_composer("/r");
         assert_eq!(palette.selected, 0);
+    }
+
+    // T-PALETTE-LAYOUT-01: autocomplete is anchored above the real composer
+    // and does not render a second input row or cursor.
+    #[test]
+    fn test_list_renders_above_composer_without_duplicate_input() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let palette = CommandPaletteState::new();
+        let first_command = palette.filtered_names[0].clone();
+        let keymap = Keymap::default();
+        let theme = Theme::default();
+        let composer = Rect::new(0, 20, 80, 3);
+        terminal
+            .draw(|frame| render(frame, frame.area(), composer, &palette, &keymap, &theme))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row_has = |y: u16, needle: &str| {
+            let row: String = (0..80)
+                .filter_map(|x| buffer.cell((x, y)).map(ratatui::buffer::Cell::symbol))
+                .collect();
+            row.contains(needle)
+        };
+
+        let item_row = (0..24).find(|&y| row_has(y, &format!("/{first_command}")));
+        let item_row = item_row.expect("palette must render command candidates");
+        assert!(item_row < composer.y);
+        assert!(!(0..24).any(|y| row_has(y, "\u{2588}")));
+    }
+
+    #[test]
+    fn test_slash_text_remains_visible_in_primary_composer() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let mut palette = CommandPaletteState::new();
+        palette.sync_from_composer("/pla");
+        let mut textarea = tui_textarea::TextArea::new(vec!["/pla".to_string()]);
+        textarea.move_cursor(tui_textarea::CursorMove::End);
+        let keymap = Keymap::default();
+        let theme = Theme::default();
+        let composer = Rect::new(0, 20, 80, 3);
+
+        terminal
+            .draw(|frame| {
+                crate::tui::panels::input::render(
+                    frame,
+                    composer,
+                    crate::tui::state::PanelFocus::Input,
+                    crate::tui::state::InteractionMode::Command,
+                    false,
+                    false,
+                    0,
+                    &mut textarea,
+                    &theme,
+                );
+                render(frame, frame.area(), composer, &palette, &keymap, &theme);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let composer_row: String = (0..80)
+            .filter_map(|x| {
+                buffer
+                    .cell((x, composer.y + 1))
+                    .map(ratatui::buffer::Cell::symbol)
+            })
+            .collect();
+        assert!(
+            composer_row.contains("/pla"),
+            "composer row: {composer_row:?}"
+        );
     }
 
     // T-PALETTE-CACHE-01: cached synopses stay aligned with filtered names.
@@ -506,9 +595,7 @@ mod tests {
             .expect("'new' command present");
         assert_eq!(palette.filtered_synopses[new_pos], "[label]");
 
-        for ch in "sw".chars() {
-            palette.push_char(ch);
-        }
+        palette.sync_from_composer("/sw");
         assert_eq!(
             palette.filtered_names.len(),
             palette.filtered_synopses.len()
@@ -519,5 +606,25 @@ mod tests {
             .position(|n| n == "switch")
             .expect("'switch' matches 'sw'");
         assert_eq!(palette.filtered_synopses[sw_pos], "<session-id|label>");
+    }
+
+    #[test]
+    fn test_command_shortcuts_stay_aligned_with_filtered_rows() {
+        let mut palette = CommandPaletteState::new();
+        assert_eq!(
+            palette.filtered_names.len(),
+            palette.filtered_shortcuts.len()
+        );
+
+        palette.sync_from_composer("/queue");
+        let queue = palette
+            .filtered_names
+            .iter()
+            .position(|name| name == "queue")
+            .unwrap();
+        assert_eq!(
+            palette.filtered_shortcuts[queue],
+            Some(KeyAction::OpenQueue)
+        );
     }
 }

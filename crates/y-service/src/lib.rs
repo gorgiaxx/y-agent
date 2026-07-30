@@ -20,6 +20,8 @@ pub mod agent_service;
 #[cfg(feature = "agent_swarm")]
 pub mod agent_swarm_orchestrator;
 pub mod app_config;
+#[cfg(feature = "automation_a2a")]
+pub mod automation_run;
 pub mod background_tasks;
 pub mod background_wake;
 pub mod bot;
@@ -93,6 +95,10 @@ pub use agent_service::{
 pub use app_config::{
     cleanup_old_logs, dirs_log, dirs_state, dirs_user_config, home_dir, validate_config,
     ConfigLoader, LoadedConfig, ProjectConfigProvenance, YAgentConfig,
+};
+#[cfg(feature = "automation_a2a")]
+pub use automation_run::{
+    AutomationRunError, AutomationRunRequest, AutomationRunService, PreparedAutomationRun,
 };
 pub use background_tasks::{
     BackgroundTaskInfo, BackgroundTaskPollRequest, BackgroundTaskService, BackgroundTaskSnapshot,

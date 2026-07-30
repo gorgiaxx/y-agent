@@ -45,8 +45,12 @@ pub enum CommandResult {
     Copy(CopyTarget),
     /// Open the full-screen copy target selector.
     OpenCopyPicker,
+    /// Open generated keyboard help backed by the active semantic keymap.
+    OpenHelpOverlay,
     /// Open the follow-up queue overlay for the active run.
     OpenQueueOverlay,
+    /// Add a TODO to the service-owned queue for the active run.
+    QueueFollowUp(String),
     /// Open the background task and subagent overlay.
     OpenTasksOverlay,
 }
@@ -316,11 +320,7 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             }
         }
 
-        "shortcuts" => {
-            let text = generate_shortcuts_text();
-            state.messages.push(ChatMessage::system(text));
-            CommandResult::Ok(None)
-        }
+        "shortcuts" => CommandResult::OpenHelpOverlay,
 
         "copy" if args.trim().is_empty() => CommandResult::OpenCopyPicker,
         "copy" => match copy::parse_target(args) {
@@ -329,6 +329,9 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
         },
 
         "queue" => CommandResult::OpenQueueOverlay,
+
+        "todo" if args.trim().is_empty() => CommandResult::Error("Usage: /todo <text>".into()),
+        "todo" => CommandResult::QueueFollowUp(args.trim().to_string()),
 
         "tasks" => CommandResult::OpenTasksOverlay,
 
@@ -404,89 +407,6 @@ fn generate_command_help(cmd_name: &str) -> String {
         }
         None => format!("Unknown command: /{cmd_name}"),
     }
-}
-
-/// Generate keyboard shortcuts reference text.
-fn generate_shortcuts_text() -> String {
-    let mut text = String::from("Keyboard Shortcuts:\n\n");
-
-    text.push_str(
-        "  [Global]
-    Ctrl+Q / Ctrl+D / Ctrl+C  Quit
-    Ctrl+H                    Show help\n\n",
-    );
-
-    text.push_str(
-        "  [Input Panel]
-    Enter                     Send message or queue follow-up while busy
-    Shift+Enter               New line
-    Tab                       Cycle focus (Input -> Chat)
-    /                         Open command palette (on empty input)
-    :                         Open command palette (vim-style)
-    Esc                       Cancel response / select prompt history\n\n",
-    );
-
-    text.push_str(
-        "  [Chat Panel]
-    j / Down / PageDown       Scroll down
-    k / Up / PageUp           Scroll up
-    i                         Return focus to input
-    Tab                       Cycle focus
-    Esc                       Select prompt history\n\n",
-    );
-
-    text.push_str(
-        "  [Prompt Backtrack]
-    Esc / Up / k              Select an older user prompt
-    Down / j                  Select a newer user prompt
-    Enter                     Branch before the prompt and edit it
-    q / i                     Close without branching\n\n",
-    );
-
-    text.push_str(
-        "  [Command Palette]
-    Up / Down                 Navigate suggestions
-    Tab                       Next suggestion
-    Enter                     Execute selected command
-    Esc                       Close palette\n\n",
-    );
-
-    text.push_str(
-        "  [Follow-up Queue]
-    /queue                    Open the queue for the active run
-    Up / Down / j / k         Navigate queued follow-ups
-    d                         Delete the selected follow-up
-    s                         Steer (or un-steer) the selected follow-up
-    Esc / q                   Close the queue\n\n",
-    );
-
-    text.push_str(
-        "  [Tasks]
-    /tasks                    Show background tasks and subagents
-    Up / Down / j / k         Navigate tasks and subagents
-    Enter                     Toggle the selected task's output
-    d                         Kill the selected background task
-    r                         Refresh the list
-    Esc / q                   Close the overlay\n\n",
-    );
-
-    text.push_str(
-        "  [Mouse]
-    Click                     Focus conversation or input
-    Scroll wheel              Scroll chat history
-    Shift + drag              Native text selection (terminal)
-    /resume                   Pick a recent session
-    /prompt                   Select a session prompt template
-    /prompt default           Return to the built-in prompt
-    /mode auto                Use automatic orchestration for later messages
-    /permission plan          Read-only tools allowed, write tools ask
-    /plan <prompt>            Switch to plan mode and submit immediately
-    /copy                     Copy latest assistant response
-    /copy code                Copy latest fenced code block
-    /copy transcript          Copy full transcript\n",
-    );
-
-    text
 }
 
 // ---------------------------------------------------------------------------
@@ -579,6 +499,19 @@ mod tests {
     }
 
     #[test]
+    fn test_todo_command_routes_text_to_active_run_queue() {
+        let mut state = AppState::new();
+        assert!(matches!(
+            execute("todo inspect the failing test", &mut state),
+            CommandResult::QueueFollowUp(text) if text == "inspect the failing test"
+        ));
+        assert!(matches!(
+            execute("todo", &mut state),
+            CommandResult::Error(message) if message.contains("/todo <text>")
+        ));
+    }
+
+    #[test]
     fn test_tasks_command_opens_tasks_overlay() {
         let mut state = AppState::new();
         assert!(matches!(
@@ -616,6 +549,15 @@ mod tests {
         assert!(matches!(result, CommandResult::Ok(None)));
         assert_eq!(state.messages.len(), 1);
         assert!(state.messages[0].content.contains("Available commands"));
+    }
+
+    #[test]
+    fn test_shortcuts_command_opens_dynamic_help_overlay() {
+        let mut state = AppState::new();
+        let result = execute("shortcuts", &mut state);
+
+        assert!(matches!(result, CommandResult::OpenHelpOverlay));
+        assert!(state.messages.is_empty());
     }
 
     // T-TUI-04-08: /help <command> shows details without a literal "\n".

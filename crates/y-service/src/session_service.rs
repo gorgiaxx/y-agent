@@ -29,6 +29,20 @@ struct SessionHubPreferences {
 }
 
 impl SessionService {
+    const PUBLIC_SESSION_PREFIX: &'static str = "ses_";
+
+    /// Render a typed public reference without changing the stored identifier.
+    pub fn public_session_reference(session_id: &SessionId) -> String {
+        format!("{}{session_id}", Self::PUBLIC_SESSION_PREFIX)
+    }
+
+    /// Accept either the typed public reference or a legacy raw identifier.
+    pub fn raw_session_target(target: &str) -> &str {
+        target
+            .strip_prefix(Self::PUBLIC_SESSION_PREFIX)
+            .unwrap_or(target)
+    }
+
     /// Create an interactive session bound to one canonical workspace.
     pub async fn create_session(
         manager: &SessionManager,
@@ -70,15 +84,34 @@ impl SessionService {
         target: &str,
     ) -> anyhow::Result<Option<SessionNode>> {
         let sessions = Self::list_resumable_sessions(manager, workspace, agent_id).await?;
-        let target_lower = target.to_lowercase();
-        Ok(sessions.into_iter().find(|session| {
-            session.id.as_str().starts_with(target)
-                || session
-                    .manual_title
-                    .as_ref()
-                    .or(session.title.as_ref())
-                    .is_some_and(|title| title.to_lowercase().contains(&target_lower))
-        }))
+        let raw_target = Self::raw_session_target(target);
+        if let Some(exact) = sessions
+            .iter()
+            .find(|session| session.id.as_str() == raw_target)
+        {
+            return Ok(Some(exact.clone()));
+        }
+
+        let target_lower = raw_target.to_lowercase();
+        let matches = sessions
+            .into_iter()
+            .filter(|session| {
+                session.id.as_str().starts_with(raw_target)
+                    || session
+                        .manual_title
+                        .as_ref()
+                        .or(session.title.as_ref())
+                        .is_some_and(|title| title.to_lowercase().contains(&target_lower))
+            })
+            .collect::<Vec<_>>();
+
+        match matches.len() {
+            0 => Ok(None),
+            1 => Ok(matches.into_iter().next()),
+            count => anyhow::bail!(
+                "ambiguous session target '{target}' matched {count} sessions; use a longer ID prefix"
+            ),
+        }
     }
 
     /// Assign an existing session to a canonical workspace.
@@ -523,5 +556,72 @@ mod tests {
         let saved = load_hub_preferences(&preferences).await.unwrap();
         assert!(!saved.pinned.contains(source.id.as_str()));
         assert!(saved.quick_slots.is_empty());
+    }
+
+    #[test]
+    fn public_session_reference_is_typed_and_reversible() {
+        let id = SessionId::from_string("0197dd0d-9f61-7a73-9aef-8d7e349a54f2");
+
+        let public = SessionService::public_session_reference(&id);
+
+        assert_eq!(public, "ses_0197dd0d-9f61-7a73-9aef-8d7e349a54f2");
+        assert_eq!(SessionService::raw_session_target(&public), id.as_str());
+        assert_eq!(SessionService::raw_session_target(id.as_str()), id.as_str());
+    }
+
+    #[tokio::test]
+    async fn resolve_resume_target_accepts_public_session_reference() {
+        let (manager, transcript_dir) = setup_manager().await;
+        let source = SessionService::create_session(
+            &manager,
+            CreateSessionOptions {
+                parent_id: None,
+                session_type: SessionType::Main,
+                agent_id: None,
+                title: Some("CVE analysis".into()),
+            },
+            transcript_dir.path(),
+        )
+        .await
+        .unwrap();
+        let public = SessionService::public_session_reference(&source.id);
+
+        let resolved =
+            SessionService::resolve_resume_target(&manager, transcript_dir.path(), None, &public)
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(resolved.id, source.id);
+    }
+
+    #[tokio::test]
+    async fn resolve_resume_target_rejects_ambiguous_titles() {
+        let (manager, transcript_dir) = setup_manager().await;
+        for title in ["CVE analysis alpha", "CVE analysis beta"] {
+            SessionService::create_session(
+                &manager,
+                CreateSessionOptions {
+                    parent_id: None,
+                    session_type: SessionType::Main,
+                    agent_id: None,
+                    title: Some(title.into()),
+                },
+                transcript_dir.path(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let error = SessionService::resolve_resume_target(
+            &manager,
+            transcript_dir.path(),
+            None,
+            "CVE analysis",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("ambiguous session target"));
     }
 }

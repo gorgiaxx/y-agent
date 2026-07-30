@@ -1,8 +1,8 @@
 //! Status bar renderer.
 //!
-//! Flat powerline-style bar (no background blocks), modeled on
-//! pi-powerline-footer: foreground-colored segments joined by a thin
-//! powerline separator (`\u{E0B1}`, ASCII `›` fallback) in one dim gray:
+//! Flat powerline-style bar on a subtle background band: foreground-colored
+//! segments joined by a thin powerline separator (`\u{E0B1}`, ASCII `›`
+//! fallback) in one dim gray:
 //!
 //! ```text
 //! [Left]                                                          [Right]
@@ -146,10 +146,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 
     let line = Line::from(spans);
-    // No background fill: a tinted bar that stops where the text stops (or
-    // fights the terminal's own background) reads as a rendering bug. Plain
-    // foreground colors keep the bar visually flat.
-    let para = Paragraph::new(line);
+    // The paragraph base style paints the full-width background band; span
+    // styles only patch foreground colors, so the band is uniform.
+    let para = Paragraph::new(line).style(Style::default().bg(t.status_bar_bg()));
     frame.render_widget(para, area);
 }
 
@@ -267,7 +266,7 @@ fn build_git_spans(state: &AppState, t: &Theme) -> Vec<Span<'static>> {
     spans
 }
 
-/// Build the follow-up queue depth segment (`queue: N`), visible only while
+/// Build the TODO queue depth segment (`todo: N`), visible only while
 /// the service-side queue holds pending messages.
 fn build_queue_status_span(state: &AppState, t: &Theme) -> Option<Span<'static>> {
     let depth = state.follow_up_queue.len();
@@ -275,7 +274,7 @@ fn build_queue_status_span(state: &AppState, t: &Theme) -> Option<Span<'static>>
         return None;
     }
     Some(Span::styled(
-        format!("queue: {depth}"),
+        format!("todo: {depth}"),
         Style::default().fg(t.active()),
     ))
 }
@@ -450,6 +449,31 @@ mod tests {
         assert_eq!(format_token_count(999), "999");
     }
 
+    // T-TUI-STATUS-BG: the bar paints its background band across the full row,
+    // including cells past the last segment.
+    #[test]
+    fn test_render_paints_background_band_full_width() {
+        let state = AppState::new();
+        let expected_bg = state.theme.status_bar_bg();
+
+        let backend = ratatui::backend::TestBackend::new(60, 3);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &state))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        for x in 0..60 {
+            for y in 0..3 {
+                let cell = buffer.cell((x, y)).unwrap();
+                assert_eq!(
+                    cell.bg, expected_bg,
+                    "cell ({x}, {y}) must carry the status bar background"
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_format_token_count_thousands() {
         assert_eq!(format_token_count(1_000), "1k");
@@ -547,7 +571,7 @@ mod tests {
         state.follow_up_queue.push(follow_up("two"));
 
         let span = build_queue_status_span(&state, &state.theme).unwrap();
-        assert_eq!(span.content.as_ref(), "queue: 2");
+        assert_eq!(span.content.as_ref(), "todo: 2");
     }
 
     #[test]

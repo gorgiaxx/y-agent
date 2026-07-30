@@ -61,11 +61,13 @@ two-face = { workspace = true, optional = true }
 [features]
 default = [
     "tui",
+    "automation_a2a",
     "background_auto_wake",
     "capability_packs",
     "lsp",
     "langfuse",
 ]
+automation_a2a = ["y-service/automation_a2a"]
 tui = ["ratatui", "crossterm", "tui-textarea", "unicode-width", "arboard", "base64", "png", "shell-words", "tempfile", "pulldown-cmark", "syntect", "two-face"]
 hook_handlers = ["y-service/hook_handlers"]
 llm_hooks = ["y-service/llm_hooks"]

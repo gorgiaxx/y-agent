@@ -1159,6 +1159,9 @@ impl ChatService {
             mcp_mode: turn_cfg.mcp_mode,
             mcp_servers: turn_cfg.mcp_servers,
             skills,
+            preferred_models: agent_config
+                .as_ref()
+                .map_or_else(Vec::new, |config| config.preferred_models.clone()),
             agent_config,
             image_generation_options: request.image_generation_options,
             pre_turn_message_count: None,
@@ -1315,6 +1318,9 @@ impl ChatService {
                 mcp_mode: turn_cfg.mcp_mode,
                 mcp_servers: turn_cfg.mcp_servers,
                 skills,
+                preferred_models: agent_config
+                    .as_ref()
+                    .map_or_else(Vec::new, |config| config.preferred_models.clone()),
                 agent_config,
                 image_generation_options: None,
                 pre_turn_message_count: Some(checkpoint.message_count_before),
@@ -1437,6 +1443,9 @@ impl ChatService {
             mcp_mode: turn_cfg.mcp_mode,
             mcp_servers: turn_cfg.mcp_servers,
             skills,
+            preferred_models: agent_config
+                .as_ref()
+                .map_or_else(Vec::new, |config| config.preferred_models.clone()),
             agent_config,
             image_generation_options: None,
             pre_turn_message_count: None,

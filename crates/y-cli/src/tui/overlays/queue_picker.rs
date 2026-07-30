@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use super::picker::{preview, visible_range, PickerItem, PickerState};
+use crate::tui::keys::{KeyAction, Keymap};
 use crate::tui::theme::Theme;
 
 /// A follow-up plus its precomputed lowercase match text, mirroring the
@@ -89,12 +90,18 @@ fn status_label(status: y_service::FollowUpStatus) -> &'static str {
     }
 }
 
-pub fn render(frame: &mut Frame, area: Rect, picker: &QueuePickerState, theme: &Theme) {
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    picker: &QueuePickerState,
+    keymap: &Keymap,
+    theme: &Theme,
+) {
     frame.render_widget(Clear, area);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.input_border_focused()))
-        .title(" Follow-up queue ")
+        .title(" TODO queue ")
         .title_style(
             Style::default()
                 .fg(theme.input_title())
@@ -140,7 +147,7 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &QueuePickerState, theme: &
         .collect();
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new(" (queue is empty)").style(Style::default().fg(theme.muted())),
+            Paragraph::new(" (TODO queue is empty)").style(Style::default().fg(theme.muted())),
             rows[0],
         );
     } else {
@@ -148,10 +155,24 @@ pub fn render(frame: &mut Frame, area: Rect, picker: &QueuePickerState, theme: &
     }
 
     frame.render_widget(
-        Paragraph::new(" Up/Down navigate  d delete  s steer  Esc close")
-            .style(Style::default().fg(theme.muted())),
+        Paragraph::new(queue_footer(keymap)).style(Style::default().fg(theme.muted())),
         rows[1],
     );
+}
+
+fn queue_footer(keymap: &Keymap) -> String {
+    let mut hints = vec!["Up/Down navigate".to_string()];
+    for (action, label) in [
+        (KeyAction::QueueDelete, "delete"),
+        (KeyAction::QueueSteer, "steer"),
+        (KeyAction::QueueRecall, "edit"),
+    ] {
+        if let Some(shortcut) = keymap.primary_shortcut(action) {
+            hints.push(format!("{shortcut} {label}"));
+        }
+    }
+    hints.push("Esc close".to_string());
+    hints.join("  ")
 }
 
 #[cfg(test)]
@@ -227,6 +248,17 @@ mod tests {
             "steering"
         );
         assert_eq!(status_label(y_service::FollowUpStatus::Pending), "pending");
+    }
+
+    #[test]
+    fn test_queue_footer_uses_effective_shortcuts() {
+        let keymap = crate::tui::keys::Keymap::default();
+        let footer = queue_footer(&keymap);
+
+        assert!(footer.contains("d delete"));
+        assert!(footer.contains("s steer"));
+        assert!(footer.contains("e edit"));
+        assert!(footer.contains("Esc close"));
     }
 
     #[test]

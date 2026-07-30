@@ -207,6 +207,7 @@ mod tests {
             mcp_mode: None,
             mcp_servers: Vec::new(),
             skills: Vec::new(),
+            preferred_models: Vec::new(),
             agent_config: None,
             image_generation_options: None,
             pre_turn_message_count: None,

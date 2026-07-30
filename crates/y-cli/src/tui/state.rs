@@ -33,7 +33,7 @@ pub enum InteractionMode {
     Normal,
     /// Persistent operator shell mode entered from an empty composer with `!`.
     Shell,
-    /// Slash-command mode: `/` was typed, command palette visible.
+    /// Slash-command completion is visible for text in the primary composer.
     Command,
     /// Select mode: choosing an earlier user prompt for a non-destructive branch.
     Select,

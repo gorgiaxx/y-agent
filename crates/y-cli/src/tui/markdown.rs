@@ -6,7 +6,8 @@
 //!
 //! Supported elements:
 //! - Headings (H1-H6) with bold + accent color
-//! - Code blocks (fenced) with syntax highlighting
+//! - Code blocks (fenced) with syntax highlighting, a line-number gutter,
+//!   and a uniform background band
 //! - Inline code with distinct background
 //! - Bold, italic, strikethrough
 //! - Bullet and ordered lists (nested, up to 3 levels)
@@ -69,6 +70,24 @@ fn color_table_border() -> Color {
 fn color_table_header() -> Color {
     tui_theme().text()
 }
+fn color_line_number() -> Color {
+    tui_theme().muted()
+}
+
+// ---------------------------------------------------------------------------
+// Rendered line (display + copy text)
+// ---------------------------------------------------------------------------
+
+/// One rendered markdown line: the styled line for display plus the plain
+/// text that selection/copy should extract.
+pub struct RenderedLine {
+    /// Styled line for display.
+    pub line: Line<'static>,
+    /// Text handed to the plain-line buffer (selection, clipboard).
+    /// Decorative spans — the code-block line-number gutter, the block
+    /// indent, and background band padding — are excluded.
+    pub copy_text: String,
+}
 
 // ---------------------------------------------------------------------------
 // Syntax highlighting singleton
@@ -98,7 +117,7 @@ fn highlight_state() -> &'static HighlightState {
 /// Render a markdown string into ratatui `Line`s.
 ///
 /// `width` is the available column width for word wrapping.
-pub fn render_markdown(text: &str, width: usize) -> Vec<Line<'static>> {
+pub fn render_markdown(text: &str, width: usize) -> Vec<RenderedLine> {
     let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
     let parser = Parser::new_ext(text, opts);
     let mut renderer = MdRenderer::new(width);
@@ -138,6 +157,9 @@ impl StyleFlags {
 
 struct MdRenderer {
     lines: Vec<Line<'static>>,
+    /// Per-line copy-text overrides, parallel to `lines`. `None` means the
+    /// copy text is the concatenation of the line's span contents.
+    copy_overrides: Vec<Option<String>>,
     /// Current line being built (accumulated spans).
     current_spans: Vec<Span<'static>>,
     /// Current column position for word wrapping.
@@ -180,6 +202,7 @@ impl MdRenderer {
     fn new(width: usize) -> Self {
         Self {
             lines: Vec::new(),
+            copy_overrides: Vec::new(),
             current_spans: Vec::new(),
             col: 0,
             width: width.max(20),
@@ -265,7 +288,7 @@ impl MdRenderer {
                 // Add blank line before paragraph unless we are in a list item
                 // or inside a table (tables suppress paragraph spacing).
                 if self.list_depth == 0 && !self.in_table && !self.lines.is_empty() {
-                    self.lines.push(Line::from(""));
+                    self.push_line(Line::from(""));
                 }
             }
             Tag::Table(_alignments) => {
@@ -446,7 +469,7 @@ impl MdRenderer {
     fn push_rule(&mut self) {
         self.flush_line();
         let rule_text = "\u{2500}".repeat(self.width.min(60));
-        self.lines.push(Line::from(Span::styled(
+        self.push_line(Line::from(Span::styled(
             rule_text,
             Style::default().fg(color_hr()),
         )));
@@ -490,10 +513,24 @@ impl MdRenderer {
         style
     }
 
+    /// Push a finished display line; its copy text is the concatenation of
+    /// its span contents.
+    fn push_line(&mut self, line: Line<'static>) {
+        self.copy_overrides.push(None);
+        self.lines.push(line);
+    }
+
+    /// Push a finished display line with an explicit copy text that excludes
+    /// decorative spans (gutter, indent, background padding).
+    fn push_line_with_copy(&mut self, line: Line<'static>, copy_text: String) {
+        self.copy_overrides.push(Some(copy_text));
+        self.lines.push(line);
+    }
+
     fn flush_line(&mut self) {
         if !self.current_spans.is_empty() {
             let spans = std::mem::take(&mut self.current_spans);
-            self.lines.push(Line::from(spans));
+            self.push_line(Line::from(spans));
         }
         self.col = 0;
     }
@@ -510,11 +547,26 @@ impl MdRenderer {
         };
 
         // Try syntax-highlighted rendering.
-        let highlighted = highlight_code(&hs.syntax_set, &hs.theme, syntax, &self.code_buffer);
+        let code = std::mem::take(&mut self.code_buffer);
+        let highlighted = highlight_code(&hs.syntax_set, &hs.theme, syntax, &code);
+        let raw_lines: Vec<&str> = code.lines().collect();
+
+        // Gutter: 2-space block indent + right-aligned line number + separator.
+        let number_width = raw_lines.len().max(1).to_string().len();
+        let gutter_width = 2 + number_width + 3; // "  " + number + " │ "
+
+        // Uniform background band: as wide as the widest code line, plus one
+        // extra column so the band never ends exactly at the text edge.
+        let max_code_width = highlighted
+            .iter()
+            .map(|spans| spans.iter().map(Span::width).sum::<usize>())
+            .max()
+            .unwrap_or(0);
+        let band_width = gutter_width + max_code_width + 1;
 
         // Language label.
         if !lang.is_empty() {
-            self.lines.push(Line::from(Span::styled(
+            self.push_line(Line::from(Span::styled(
                 format!("  {lang}"),
                 Style::default()
                     .fg(Color::Rgb(100, 100, 130))
@@ -522,10 +574,22 @@ impl MdRenderer {
             )));
         }
 
-        for line_spans in highlighted {
-            let mut spans = vec![Span::styled("  ", Style::default().bg(color_code_bg()))];
-            spans.extend(line_spans);
-            self.lines.push(Line::from(spans));
+        let gutter_style = Style::default().fg(color_line_number()).bg(color_code_bg());
+        let pad_style = Style::default().bg(color_code_bg());
+
+        for (index, line_spans) in highlighted.iter().enumerate() {
+            let gutter = format!("  {:>number_width$} │ ", index + 1);
+            let code_width: usize = line_spans.iter().map(Span::width).sum();
+            let mut spans = vec![Span::styled(gutter, gutter_style)];
+            spans.extend(line_spans.iter().cloned());
+            let pad_width = band_width - gutter_width - code_width;
+            spans.push(Span::styled(" ".repeat(pad_width), pad_style));
+            let copy_text = raw_lines
+                .get(index)
+                .copied()
+                .unwrap_or_default()
+                .to_string();
+            self.push_line_with_copy(Line::from(spans), copy_text);
         }
     }
 
@@ -541,15 +605,17 @@ impl MdRenderer {
         if self.table_rows.is_empty() {
             return;
         }
+        let table_rows = std::mem::take(&mut self.table_rows);
+        let header_count = self.table_header_count;
 
         // Determine column count and compute column widths.
-        let col_count = self.table_rows.iter().map(Vec::len).max().unwrap_or(0);
+        let col_count = table_rows.iter().map(Vec::len).max().unwrap_or(0);
         if col_count == 0 {
             return;
         }
 
         let mut col_widths: Vec<usize> = vec![0; col_count];
-        for row in &self.table_rows {
+        for row in &table_rows {
             for (i, cell) in row.iter().enumerate() {
                 let w = unicode_display_width(cell.trim());
                 if w > col_widths[i] {
@@ -581,8 +647,8 @@ impl MdRenderer {
             .add_modifier(Modifier::BOLD);
         let cell_style = Style::default().fg(Color::Rgb(200, 200, 220));
 
-        for (row_idx, row) in self.table_rows.iter().enumerate() {
-            let is_header = row_idx < self.table_header_count;
+        for (row_idx, row) in table_rows.iter().enumerate() {
+            let is_header = row_idx < header_count;
             let style = if is_header { header_style } else { cell_style };
 
             let mut spans: Vec<Span<'static>> = vec![Span::raw("  ".to_string())];
@@ -594,10 +660,10 @@ impl MdRenderer {
                 let padded = pad_or_truncate(cell_text, *width);
                 spans.push(Span::styled(padded, style));
             }
-            self.lines.push(Line::from(spans));
+            self.push_line(Line::from(spans));
 
             // Render separator line after the header row(s).
-            if is_header && row_idx + 1 == self.table_header_count {
+            if is_header && row_idx + 1 == header_count {
                 let mut sep_spans: Vec<Span<'static>> = vec![Span::raw("  ".to_string())];
                 for (col_idx, width) in col_widths.iter().enumerate() {
                     if col_idx > 0 {
@@ -605,14 +671,22 @@ impl MdRenderer {
                     }
                     sep_spans.push(Span::styled("-".repeat(*width), border_style));
                 }
-                self.lines.push(Line::from(sep_spans));
+                self.push_line(Line::from(sep_spans));
             }
         }
     }
 
-    fn finish(mut self) -> Vec<Line<'static>> {
+    fn finish(mut self) -> Vec<RenderedLine> {
         self.flush_line();
         self.lines
+            .into_iter()
+            .zip(self.copy_overrides)
+            .map(|(line, copy_override)| {
+                let copy_text = copy_override
+                    .unwrap_or_else(|| line.spans.iter().map(|s| s.content.as_ref()).collect());
+                RenderedLine { line, copy_text }
+            })
+            .collect()
     }
 }
 
@@ -705,7 +779,7 @@ mod tests {
         assert!(!lines.is_empty());
         let text: String = lines
             .iter()
-            .flat_map(|l| l.spans.iter())
+            .flat_map(|l| l.line.spans.iter())
             .map(|s| s.content.as_ref())
             .collect();
         assert!(text.contains("Hello world"));
@@ -717,7 +791,8 @@ mod tests {
         let lines = render_markdown("# Title", 80);
         assert!(!lines.is_empty());
         let has_bold = lines.iter().any(|l| {
-            l.spans
+            l.line
+                .spans
                 .iter()
                 .any(|s| s.style.add_modifier.contains(Modifier::BOLD))
         });
@@ -733,8 +808,108 @@ mod tests {
         // Code lines should have a background color set.
         let has_bg = lines
             .iter()
-            .any(|l| l.spans.iter().any(|s| s.style.bg.is_some()));
+            .any(|l| l.line.spans.iter().any(|s| s.style.bg.is_some()));
         assert!(has_bg, "code block should have background color");
+    }
+
+    // T-MD-11: Code block lines carry a line-number gutter.
+    #[test]
+    fn test_code_block_line_numbers() {
+        let md = "```rust\nfn main() {}\nprintln!();\n```";
+        let lines = render_markdown(md, 80);
+        let code_lines: Vec<_> = lines
+            .iter()
+            .filter(|l| l.copy_text.starts_with("fn main") || l.copy_text.starts_with("println"))
+            .collect();
+        assert_eq!(code_lines.len(), 2, "expected two code lines");
+        for (index, line) in code_lines.iter().enumerate() {
+            let gutter = &line.line.spans[0];
+            let number = (index + 1).to_string();
+            assert!(
+                gutter.content.contains(number.as_str()),
+                "line {} must show its number in the gutter: {:?}",
+                index + 1,
+                gutter.content
+            );
+            assert_eq!(
+                gutter.style.bg,
+                Some(color_code_bg()),
+                "gutter must sit on the code background band"
+            );
+        }
+    }
+
+    // T-MD-12: Copy text excludes the gutter, block indent, and band padding.
+    #[test]
+    fn test_code_block_copy_text_excludes_gutter() {
+        let md = "```rust\nfn main() {}\n  let x = 1;\n```";
+        let lines = render_markdown(md, 80);
+        let copies: Vec<&str> = lines.iter().map(|l| l.copy_text.as_str()).collect();
+        assert!(
+            copies.contains(&"fn main() {}"),
+            "copy text must be the raw code line: {copies:?}"
+        );
+        assert!(
+            copies.contains(&"  let x = 1;"),
+            "copy text must keep the code's own leading whitespace: {copies:?}"
+        );
+        for line in &lines {
+            assert!(
+                !line.copy_text.contains('\u{2502}'),
+                "copy text must not contain the gutter separator: {:?}",
+                line.copy_text
+            );
+        }
+    }
+
+    // T-MD-13: The background band is uniform across code lines and extends
+    // past the longest text line instead of stopping at each line's end.
+    #[test]
+    fn test_code_block_uniform_background_band() {
+        let md = "```rust\nshort\na much much longer code line here\n```";
+        let lines = render_markdown(md, 80);
+        let code_lines: Vec<_> = lines
+            .iter()
+            .filter(|l| {
+                l.line
+                    .spans
+                    .first()
+                    .is_some_and(|s| s.content.contains('\u{2502}'))
+            })
+            .collect();
+        assert_eq!(code_lines.len(), 2, "expected two code lines");
+
+        let widths: Vec<usize> = code_lines
+            .iter()
+            .map(|l| l.line.spans.iter().map(Span::width).sum::<usize>())
+            .collect();
+        assert_eq!(
+            widths[0], widths[1],
+            "background band must be uniform across lines: {widths:?}"
+        );
+
+        // The band must be wider than the longest text line (gutter + text).
+        let longest_text: usize = code_lines
+            .iter()
+            .map(|l| {
+                let gutter_w = Span::width(&l.line.spans[0]);
+                let text_w = unicode_display_width(l.copy_text.as_str());
+                gutter_w + text_w
+            })
+            .max()
+            .unwrap();
+        assert!(
+            widths[0] > longest_text,
+            "band {} must extend past the longest text line {}",
+            widths[0],
+            longest_text
+        );
+
+        // The trailing padding span carries the band background.
+        for line in &code_lines {
+            let pad = line.line.spans.last().unwrap();
+            assert_eq!(pad.style.bg, Some(color_code_bg()));
+        }
     }
 
     // T-MD-04: Inline code renders distinctly.
@@ -743,7 +918,7 @@ mod tests {
         let lines = render_markdown("Use `foo()` here", 80);
         let text: String = lines
             .iter()
-            .flat_map(|l| l.spans.iter())
+            .flat_map(|l| l.line.spans.iter())
             .map(|s| s.content.as_ref())
             .collect();
         assert!(text.contains("foo()"));
@@ -756,7 +931,7 @@ mod tests {
         let lines = render_markdown(md, 80);
         let text: String = lines
             .iter()
-            .flat_map(|l| l.spans.iter())
+            .flat_map(|l| l.line.spans.iter())
             .map(|s| s.content.as_ref())
             .collect();
         assert!(text.contains("- "), "bullet list should have dash prefix");
@@ -769,7 +944,7 @@ mod tests {
         let lines = render_markdown(md, 80);
         let text: String = lines
             .iter()
-            .flat_map(|l| l.spans.iter())
+            .flat_map(|l| l.line.spans.iter())
             .map(|s| s.content.as_ref())
             .collect();
         assert!(
@@ -785,7 +960,7 @@ mod tests {
         let lines = render_markdown(md, 80);
         let has_rule = lines
             .iter()
-            .any(|l| l.spans.iter().any(|s| s.content.contains('\u{2500}')));
+            .any(|l| l.line.spans.iter().any(|s| s.content.contains('\u{2500}')));
         assert!(has_rule, "should contain horizontal rule character");
     }
 
@@ -794,7 +969,7 @@ mod tests {
     fn test_bold() {
         let lines = render_markdown("**bold text**", 80);
         let has_bold = lines.iter().any(|l| {
-            l.spans.iter().any(|s| {
+            l.line.spans.iter().any(|s| {
                 s.style.add_modifier.contains(Modifier::BOLD) && s.content.contains("bold")
             })
         });

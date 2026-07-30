@@ -755,6 +755,8 @@ pub struct PreparedTurn {
     pub mcp_mode: Option<String>,
     pub mcp_servers: Vec<String>,
     pub skills: Vec<String>,
+    /// Ordered model preference after request and agent defaults are resolved.
+    pub preferred_models: Vec<String>,
     pub agent_config: Option<SessionAgentConfig>,
     pub image_generation_options: Option<ImageGenerationOptions>,
     pub pre_turn_message_count: Option<u32>,
@@ -785,10 +787,7 @@ impl PreparedTurn {
                 .agent_config
                 .as_ref()
                 .is_none_or(|config| config.features.toolcall),
-            preferred_models: self
-                .agent_config
-                .as_ref()
-                .map_or_else(Vec::new, |config| config.preferred_models.clone()),
+            preferred_models: self.preferred_models.clone(),
             provider_tags: self
                 .agent_config
                 .as_ref()

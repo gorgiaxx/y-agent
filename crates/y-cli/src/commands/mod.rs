@@ -17,6 +17,8 @@ pub mod print;
 pub mod provider;
 pub mod rewind;
 pub mod rpc;
+#[cfg(feature = "automation_a2a")]
+pub mod run;
 pub mod schedule;
 pub mod serve;
 pub mod session;
@@ -136,6 +138,10 @@ pub enum Commands {
     /// Reads JSON commands from stdin, writes JSON events/responses to stdout.
     Rpc,
 
+    /// Run one headless chat or user-callable agent turn for automation.
+    #[cfg(feature = "automation_a2a")]
+    Run(run::RunArgs),
+
     /// Launch the TUI interface.
     #[cfg(feature = "tui")]
     Tui {
@@ -232,6 +238,77 @@ mod tests {
     fn test_parse_status_command() {
         let cli = TestCli::parse_from(["y-agent", "status"]);
         assert!(matches!(cli.command, Some(super::Commands::Status)));
+    }
+
+    #[test]
+    fn test_parse_run_a2a_options() {
+        let cli = TestCli::parse_from([
+            "y-agent",
+            "run",
+            "--agent",
+            "general-purpose",
+            "--name",
+            "nightly-cve-analysis",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-5",
+            "--skill",
+            "cve-triage",
+            "--knowledge",
+            "vulnerabilities",
+            "--thinking",
+            "high",
+            "--mode",
+            "loop",
+            "--permission",
+            "full-access",
+            "--format",
+            "jsonl",
+            "--timeout",
+            "45",
+            "--",
+            "analyze CVE-2026-0001",
+        ]);
+
+        let Some(super::Commands::Run(args)) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(args.agent.as_deref(), Some("general-purpose"));
+        assert_eq!(args.session_name.as_deref(), Some("nightly-cve-analysis"));
+        assert_eq!(args.provider.as_deref(), Some("openai"));
+        assert_eq!(args.model.as_deref(), Some("gpt-5"));
+        assert_eq!(args.skills, ["cve-triage"]);
+        assert_eq!(args.knowledge, ["vulnerabilities"]);
+        assert_eq!(args.prompt, ["analyze CVE-2026-0001"]);
+        assert_eq!(args.thinking.to_string(), "high");
+        assert_eq!(args.execution_mode.to_string(), "loop");
+        assert_eq!(args.permission.to_string(), "full_access");
+        assert_eq!(args.format.to_string(), "jsonl");
+        assert_eq!(args.timeout_seconds, Some(45));
+    }
+
+    #[test]
+    fn test_run_rejects_agent_override_when_resuming() {
+        let parsed = TestCli::try_parse_from([
+            "y-agent",
+            "run",
+            "--session",
+            "ses_0197dd0d-9f61-7a73-9aef-8d7e349a54f2",
+            "--agent",
+            "general-purpose",
+            "continue",
+        ]);
+
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn test_run_rejects_zero_timeout() {
+        let parsed =
+            TestCli::try_parse_from(["y-agent", "run", "--timeout", "0", "analyze CVE-2026-0001"]);
+
+        assert!(parsed.is_err());
     }
 
     // T-CLI-003-03: test_parse_session_list

@@ -1777,10 +1777,11 @@ fn render_content_lines(
     if role == MessageRole::Assistant {
         let md_lines = crate::tui::markdown::render_markdown(content, content_width);
         for md_line in md_lines {
-            let plain_text: String = md_line.spans.iter().map(|s| s.content.as_ref()).collect();
-            let plain = format!("{indent}{plain_text}");
+            // The renderer supplies the copy text so decorative spans
+            // (code-block gutter, band padding) stay out of the clipboard.
+            let plain = format!("{indent}{}", md_line.copy_text);
             let mut spans = vec![Span::raw(indent.to_string())];
-            spans.extend(md_line.spans);
+            spans.extend(md_line.line.spans);
             lines.push(Line::from(spans));
             plain_lines.push(plain);
         }

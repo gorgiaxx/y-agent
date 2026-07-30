@@ -40,7 +40,7 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen, SetTitle,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Alignment;
@@ -61,7 +61,7 @@ use history::PromptHistoryStore;
 use keys::{KeyAction, Keymap};
 use layout::LayoutChunks;
 use overlays::ask_user::{AskUserState, AskUserSubmit};
-use overlays::command_palette::{CommandPaletteState, PaletteBackspace};
+use overlays::command_palette::CommandPaletteState;
 use overlays::copy_picker::CopyPickerState;
 use overlays::history_search::HistorySearchState;
 use overlays::permission::{PermissionPromptState, PlanReviewPromptState};
@@ -169,6 +169,8 @@ pub struct TuiApp {
     toast_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Toast>>,
     /// Last computed layout chunks for mouse hit-testing.
     last_chunks: Option<LayoutChunks>,
+    /// Last terminal window title emitted, so `SetTitle` is only sent on change.
+    last_terminal_title: Option<String>,
     /// Lazily loaded cache of user prompt templates.
     ///
     /// Loaded once on first use; only successful loads are cached so a
@@ -352,6 +354,7 @@ impl TuiApp {
             active_chat: None,
             toast_rx,
             last_chunks: None,
+            last_terminal_title: None,
             prompt_template_cache: None,
             chat_plain_lines: Vec::new(),
             chat_tool_rows: Vec::new(),
@@ -1022,20 +1025,16 @@ impl TuiApp {
                     self.state.clear_backtrack_selection();
                     self.state.set_mode(InteractionMode::Normal);
                 } else {
-                    // Close any other overlay first, then show help.
-                    if self.state.mode != InteractionMode::Normal {
-                        self.state.clear_backtrack_selection();
-                        self.state.set_mode(InteractionMode::Normal);
-                    }
-                    self.state.set_mode(InteractionMode::Help);
-                    self.help_scroll = 0;
+                    self.open_help_overlay();
                 }
             }
             KeyAction::ShowRawScrollback => self.show_raw_scrollback(),
             KeyAction::EnterCommandMode => {
                 if textarea_is_empty(&self.textarea) {
+                    self.replace_composer_text("/");
                     self.state.set_mode(InteractionMode::Command);
                     self.palette = CommandPaletteState::new();
+                    self.palette.sync_from_composer("/");
                     self.copy_picker = CopyPickerState::default();
                     self.session_picker = SessionPickerState::default();
                     self.prompt_picker = PromptPickerState::default();
@@ -1047,6 +1046,7 @@ impl TuiApp {
                     self.handle_input_passthrough(key);
                 }
             }
+            KeyAction::CompleteCommand => self.complete_command_selection().await,
             KeyAction::EnterShellMode => {
                 if textarea_is_empty(&self.textarea) {
                     self.state.set_mode(InteractionMode::Shell);
@@ -1146,6 +1146,12 @@ impl TuiApp {
             | KeyAction::CopySelectedTool) => self.handle_tool_action(action),
             KeyAction::CopyQuote => self.quote_copy_target(),
             KeyAction::CopyOpenPath => self.open_copy_path(),
+            KeyAction::OpenCopy => self.open_copy_picker(),
+            KeyAction::OpenQueue => self.open_queue_overlay(),
+            KeyAction::OpenTasks => self.open_tasks_overlay().await,
+            KeyAction::OpenSessionHub => {
+                self.open_session_picker().await;
+            }
             KeyAction::QueueDelete => {
                 self.queue_delete_selected();
             }
@@ -1153,6 +1159,7 @@ impl TuiApp {
                 self.queue_toggle_steer_selected().await;
             }
             KeyAction::QueueRecall => self.queue_recall_selected(),
+            KeyAction::QueueSteerNext => self.queue_steer_next().await,
             KeyAction::TasksKill => {
                 self.tasks_kill_selected().await;
             }
@@ -1196,7 +1203,7 @@ impl TuiApp {
     /// Handle `KeyAction::Submit` for the active interaction mode.
     ///
     /// Picker overlays confirm their selection, Command mode executes the
-    /// palette input, and Normal mode classifies the composer text (new turn,
+    /// composer-owned slash input, and Normal mode classifies composer text (new turn,
     /// slash command, or queued follow-up). Returns `true` when the executed
     /// command requested quitting the app.
     async fn handle_submit(&mut self) -> bool {
@@ -1274,7 +1281,7 @@ impl TuiApp {
                 let arg = self
                     .palette
                     .selected_arg()
-                    .map_or_else(|| self.palette.input.trim().to_string(), str::to_string);
+                    .map_or_else(|| self.palette.query.trim().to_string(), str::to_string);
                 let cmd_input = if arg.is_empty() {
                     cmd
                 } else {
@@ -1283,20 +1290,20 @@ impl TuiApp {
                 if self.execute_command(&cmd_input).await {
                     return true;
                 }
-                self.palette = CommandPaletteState::new();
-                self.state.set_mode(InteractionMode::Normal);
-                self.state.set_focus(PanelFocus::Input);
+                self.finish_command_submission();
             } else {
-                let cmd_input = resolve_palette_command(&self.palette);
+                let composer_text = self.textarea.lines().join("\n");
+                let cmd_input = resolve_palette_command(&composer_text, &self.palette);
                 if self.should_enter_arg_mode(&cmd_input).await {
-                    // Stay in command mode with arg completions.
+                    if self.state.mode != InteractionMode::Command {
+                        self.replace_composer_text("");
+                        self.palette = CommandPaletteState::new();
+                    }
                 } else {
                     if self.execute_command(&cmd_input).await {
                         return true;
                     }
-                    self.palette = CommandPaletteState::new();
-                    self.state.set_mode(InteractionMode::Normal);
-                    self.state.set_focus(PanelFocus::Input);
+                    self.finish_command_submission();
                 }
             }
         } else {
@@ -1439,23 +1446,11 @@ impl TuiApp {
                         );
                         return false;
                     }
-                    match chat_flow::enqueue_follow_up(&text, &self.state, &self.services) {
-                        Ok(_) => {
-                            self.record_prompt_history(&text);
-                            chat_flow::refresh_follow_up_queue(&mut self.state, &self.services);
-                            self.state.push_toast(
-                                "Follow-up queued for the active run.".into(),
-                                ToastLevel::Success,
-                            );
-                            true
-                        }
-                        Err(error) => {
-                            self.state.push_toast(
-                                format!("Could not queue follow-up: {error}"),
-                                ToastLevel::Error,
-                            );
-                            false
-                        }
+                    if self.enqueue_todo(&text) {
+                        self.record_prompt_history(&text);
+                        true
+                    } else {
+                        false
                     }
                 }
             };
@@ -1465,6 +1460,18 @@ impl TuiApp {
             }
         }
         false
+    }
+
+    fn finish_command_submission(&mut self) {
+        let preserve = std::mem::take(&mut self.preserve_composer_after_command).is_on();
+        if !preserve {
+            self.replace_composer_text("");
+        }
+        self.palette = CommandPaletteState::new();
+        if self.state.mode == InteractionMode::Command {
+            self.state.set_mode(InteractionMode::Normal);
+            self.state.set_focus(PanelFocus::Input);
+        }
     }
 
     fn record_prompt_history(&mut self, input: &str) {
@@ -1479,6 +1486,40 @@ impl TuiApp {
         }
         self.state.history_index = None;
         self.state.input_draft = None;
+    }
+
+    fn enqueue_todo(&mut self, text: &str) -> bool {
+        if !self.state.is_streaming {
+            self.state.push_toast(
+                "TODOs can only be added while an agent response is active.".into(),
+                ToastLevel::Warning,
+            );
+            return false;
+        }
+        match chat_flow::enqueue_follow_up(text, &self.state, &self.services) {
+            Ok(_) => {
+                chat_flow::refresh_follow_up_queue(&mut self.state, &self.services);
+                self.state.push_toast(
+                    "TODO queued for the active run.".into(),
+                    ToastLevel::Success,
+                );
+                true
+            }
+            Err(error) => {
+                self.state
+                    .push_toast(format!("Could not queue TODO: {error}"), ToastLevel::Error);
+                false
+            }
+        }
+    }
+
+    fn open_help_overlay(&mut self) {
+        if self.state.mode != InteractionMode::Normal {
+            self.state.clear_backtrack_selection();
+            self.state.set_mode(InteractionMode::Normal);
+        }
+        self.state.set_mode(InteractionMode::Help);
+        self.help_scroll = 0;
     }
 
     fn open_history_search(&mut self) {
@@ -1866,28 +1907,44 @@ impl TuiApp {
                 self.prompt_picker.pop_char();
             }
         } else if self.state.mode == InteractionMode::Command {
-            if let crossterm::event::KeyCode::Char(character) = key.code {
-                self.palette.push_char(character);
-            } else if key.code == crossterm::event::KeyCode::Backspace {
-                // Deleting past the `/` that opened the palette closes it:
-                // the slash is gone, so Command mode ends and the composer
-                // returns to Normal. This path also runs while streaming,
-                // where Esc is reserved for cancelling the response.
-                if self.palette.backspace() == PaletteBackspace::Close {
-                    self.state.set_mode(InteractionMode::Normal);
-                    self.state.set_focus(PanelFocus::Input);
-                }
+            let edits_text = key_edits_composer(key.code);
+            if !self.handle_word_motion(key) {
+                self.textarea.input(key);
+            }
+            if edits_text {
+                self.sync_command_palette_from_composer();
             }
         } else if self.handle_fragment_edit_key(key) {
-        } else if key.code == crossterm::event::KeyCode::Char('/')
-            && textarea_is_empty(&self.textarea)
-        {
-            self.state.set_mode(InteractionMode::Command);
-            self.palette = CommandPaletteState::new();
         } else if self.handle_word_motion(key) {
             // Consumed as a cursor move.
         } else {
+            let edits_text = key_edits_composer(key.code);
             self.textarea.input(key);
+            if edits_text {
+                self.maybe_open_command_palette();
+            }
+        }
+    }
+
+    fn maybe_open_command_palette(&mut self) {
+        if self.state.mode != InteractionMode::Normal || self.state.focus != PanelFocus::Input {
+            return;
+        }
+        let text = self.textarea.lines().join("\n");
+        if text.contains('\n') || !text.trim_start().starts_with('/') {
+            return;
+        }
+        self.state.set_mode(InteractionMode::Command);
+        self.palette = CommandPaletteState::new();
+        self.palette.sync_from_composer(&text);
+    }
+
+    fn sync_command_palette_from_composer(&mut self) {
+        let text = self.textarea.lines().join("\n");
+        if text.contains('\n') || !self.palette.sync_from_composer(&text) {
+            self.palette = CommandPaletteState::new();
+            self.state.set_mode(InteractionMode::Normal);
+            self.state.set_focus(PanelFocus::Input);
         }
     }
 
@@ -1954,18 +2011,17 @@ impl TuiApp {
                 }
             }
             InteractionMode::Command => {
-                for character in single_line_paste_text(text).chars() {
-                    self.palette.push_char(character);
-                }
+                self.textarea.insert_str(single_line_paste_text(text));
+                self.sync_command_palette_from_composer();
             }
             InteractionMode::AskUser => {
                 for character in single_line_paste_text(text).chars() {
                     self.ask_user.push_other_char(character);
                 }
             }
-            // Normal-ish modes insert into the composer. Unlike typed input,
-            // a paste never triggers mode switches: a leading '/' on an
-            // empty draft stays literal text.
+            // Normal-ish modes insert into the composer. A single-line
+            // leading slash reopens completion from the composer's text;
+            // multi-line and shell pastes remain ordinary draft content.
             _ => {
                 let pasted_text = if self.raw_paste_armed.is_on() {
                     self.raw_paste_armed = Toggle::Off;
@@ -1974,6 +2030,7 @@ impl TuiApp {
                     ComposerDraft::ingest_paste(text)
                 };
                 self.textarea.insert_str(pasted_text);
+                self.maybe_open_command_palette();
             }
         }
     }
@@ -2420,12 +2477,25 @@ impl TuiApp {
 
     /// Draw the current frame.
     fn draw(&mut self) -> Result<()> {
+        // Keep the terminal window title in sync with the active session.
+        if let Some(title) =
+            pending_terminal_title(self.last_terminal_title.as_deref(), &self.state)
+        {
+            let _ = execute!(self.terminal.backend_mut(), SetTitle(title.as_str()));
+            self.last_terminal_title = Some(title);
+        }
+
         // Pre-compute input height and layout outside the closure so we
         // can store them for mouse hit-testing.
         let input_lines = panels::input::input_height(&self.textarea);
         let term_size = self.terminal.size()?;
         let term_rect = ratatui::layout::Rect::new(0, 0, term_size.width, term_size.height);
-        let chunks = layout::compute_layout(term_rect, input_lines);
+        let todo_count = if self.state.is_streaming {
+            self.state.follow_up_queue.len()
+        } else {
+            0
+        };
+        let chunks = layout::compute_layout(term_rect, input_lines, todo_count);
 
         // Update page_height from the chat panel for page-scroll calculations.
         self.state.page_height = chunks.chat.height.saturating_sub(2) as usize;
@@ -2493,11 +2563,19 @@ impl TuiApp {
                 render_cache,
                 plain_lines,
                 tool_rows,
+                keymap,
             );
 
             // Render command palette overlay if in Command mode.
             if state.mode == InteractionMode::Command {
-                overlays::command_palette::render(frame, area, palette, &state.theme);
+                overlays::command_palette::render(
+                    frame,
+                    area,
+                    chunks.input,
+                    palette,
+                    keymap,
+                    &state.theme,
+                );
             }
 
             if state.mode == InteractionMode::Copy {
@@ -2530,7 +2608,13 @@ impl TuiApp {
             }
 
             if state.mode == InteractionMode::Queue {
-                overlays::queue_picker::render(frame, area, &self.queue_picker, &state.theme);
+                overlays::queue_picker::render(
+                    frame,
+                    area,
+                    &self.queue_picker,
+                    keymap,
+                    &state.theme,
+                );
             }
 
             if state.mode == InteractionMode::Tasks {
@@ -2585,67 +2669,18 @@ impl TuiApp {
     /// Check if a command should enter argument-completion mode instead of
     /// executing immediately. Returns `true` if arg mode was entered.
     async fn should_enter_arg_mode(&mut self, cmd_name: &str) -> bool {
-        let resolved = commands::registry::CommandRegistry::shared().resolve_alias(cmd_name);
+        let resolved = commands::registry::CommandRegistry::shared()
+            .resolve_alias(cmd_name)
+            .to_string();
+        if self
+            .enter_inline_argument_completion(resolved.as_str())
+            .await
+        {
+            return true;
+        }
 
-        match resolved {
-            "model" => {
-                let pool = self.services.provider_pool().await;
-                let metadata = pool.list_metadata();
-                if metadata.is_empty() {
-                    return false;
-                }
-                let completions: Vec<(String, String)> = metadata
-                    .iter()
-                    .map(|m| (m.id.as_str().to_string(), m.model.clone()))
-                    .collect();
-                self.palette.enter_arg_mode("model".into(), completions);
-                true
-            }
+        match resolved.as_str() {
             "resume" => self.open_session_picker().await,
-            "goal" => {
-                self.palette.enter_arg_mode("goal".into(), Vec::new());
-                true
-            }
-            "mode" => {
-                self.palette.enter_arg_mode(
-                    "mode".into(),
-                    vec![
-                        ("fast".into(), "Direct execution".into()),
-                        (
-                            "auto".into(),
-                            "Automatically select fast, plan, or loop".into(),
-                        ),
-                        ("plan".into(), "Reviewed structured planning".into()),
-                        ("loop".into(), "Iterative execution and self-review".into()),
-                    ],
-                );
-                true
-            }
-            "permission" => {
-                self.palette.enter_arg_mode(
-                    "permission".into(),
-                    vec![
-                        ("default".into(), "Evaluate each tool per its rules".into()),
-                        (
-                            "plan".into(),
-                            "Read-only tools allowed, write tools ask".into(),
-                        ),
-                        (
-                            "accept_edits".into(),
-                            "File edits auto-allowed, shell still asks".into(),
-                        ),
-                        (
-                            "bypass_permissions".into(),
-                            "Allow all except explicit Deny rules".into(),
-                        ),
-                        (
-                            "dont_ask".into(),
-                            "Auto-deny instead of asking (headless)".into(),
-                        ),
-                    ],
-                );
-                true
-            }
             "copy" => {
                 self.open_copy_picker();
                 true
@@ -2669,6 +2704,107 @@ impl TuiApp {
         }
     }
 
+    async fn enter_inline_argument_completion(&mut self, command: &str) -> bool {
+        let completions = match command {
+            "model" => {
+                let pool = self.services.provider_pool().await;
+                let metadata = pool.list_metadata();
+                if metadata.is_empty() {
+                    return false;
+                }
+                metadata
+                    .iter()
+                    .map(|item| (item.id.as_str().to_string(), item.model.clone()))
+                    .collect()
+            }
+            "goal" | "todo" => Vec::new(),
+            "mode" => vec![
+                ("fast".into(), "Direct execution".into()),
+                (
+                    "auto".into(),
+                    "Automatically select fast, plan, or loop".into(),
+                ),
+                ("plan".into(), "Reviewed structured planning".into()),
+                ("loop".into(), "Iterative execution and self-review".into()),
+            ],
+            "permission" => vec![
+                ("default".into(), "Evaluate each tool per its rules".into()),
+                (
+                    "plan".into(),
+                    "Read-only tools allowed, write tools ask".into(),
+                ),
+                (
+                    "accept_edits".into(),
+                    "File edits auto-allowed, shell still asks".into(),
+                ),
+                (
+                    "bypass_permissions".into(),
+                    "Allow all except explicit Deny rules".into(),
+                ),
+                (
+                    "dont_ask".into(),
+                    "Auto-deny instead of asking (headless)".into(),
+                ),
+            ],
+            _ => return false,
+        };
+        let composer_text = self.textarea.lines().join("\n");
+        let has_argument_slot = composer_text
+            .trim_start()
+            .strip_prefix('/')
+            .and_then(|text| {
+                let separator = text.find(char::is_whitespace)?;
+                Some((&text[..separator], separator))
+            })
+            .is_some_and(|(name, _)| {
+                commands::registry::CommandRegistry::shared().resolve_alias(name) == command
+            });
+        if !has_argument_slot {
+            self.replace_composer_text(&format!("/{command} "));
+        }
+        self.palette
+            .enter_arg_mode(command.to_string(), completions);
+        self.sync_command_palette_from_composer();
+        true
+    }
+
+    async fn complete_command_selection(&mut self) {
+        if self.state.mode != InteractionMode::Command {
+            return;
+        }
+        if let Some(command) = self.palette.arg_command.clone() {
+            if let Some(argument) = self.palette.selected_arg().map(str::to_string) {
+                self.replace_composer_text(&format!("/{command} {argument}"));
+                self.sync_command_palette_from_composer();
+            }
+            return;
+        }
+        let Some((command, synopsis)) = self
+            .palette
+            .selected_command_completion()
+            .map(|(command, synopsis)| (command.to_string(), synopsis.to_string()))
+        else {
+            return;
+        };
+        let composer_text = self.textarea.lines().join("\n");
+        let has_existing_arguments = composer_text
+            .trim_start()
+            .strip_prefix('/')
+            .and_then(|command_text| {
+                command_text
+                    .find(char::is_whitespace)
+                    .map(|i| &command_text[i..])
+            })
+            .is_some_and(|arguments| !arguments.trim().is_empty());
+        let completed = completed_slash_command(&composer_text, &command, !synopsis.is_empty());
+        self.replace_composer_text(&completed);
+        self.palette
+            .sync_from_composer(self.textarea.lines()[0].as_str());
+        if !synopsis.is_empty() && !has_existing_arguments {
+            self.enter_inline_argument_completion(&command).await;
+        }
+    }
+
     /// Execute a command and apply its result to state.
     /// Returns `true` if the app should quit.
     async fn execute_command(&mut self, cmd_input: &str) -> bool {
@@ -2683,6 +2819,7 @@ impl TuiApp {
                 self.state.push_toast(msg, ToastLevel::Info);
             }
             CommandResult::Error(msg) => {
+                self.preserve_composer_after_command = Toggle::On;
                 self.state
                     .push_toast(format!("Error: {msg}"), ToastLevel::Error);
             }
@@ -2704,7 +2841,7 @@ impl TuiApp {
             CommandResult::SubmitTurn { input, mode } => {
                 if self.state.is_streaming {
                     self.state.push_toast(
-                        "A response is active. Enter plain text to queue a follow-up, or press Esc to cancel."
+                        "A response is active. Enter plain text to queue a TODO, or press Esc to cancel."
                             .into(),
                         ToastLevel::Error,
                     );
@@ -2728,7 +2865,13 @@ impl TuiApp {
             }
             CommandResult::Copy(target) => self.copy_to_clipboard(target),
             CommandResult::OpenCopyPicker => self.open_copy_picker(),
+            CommandResult::OpenHelpOverlay => self.open_help_overlay(),
             CommandResult::OpenQueueOverlay => self.open_queue_overlay(),
+            CommandResult::QueueFollowUp(text) => {
+                if !self.enqueue_todo(&text) {
+                    self.preserve_composer_after_command = Toggle::On;
+                }
+            }
             CommandResult::OpenTasksOverlay => self.open_tasks_overlay().await,
         }
         false
@@ -3378,7 +3521,7 @@ impl TuiApp {
         }
     }
 
-    /// `/queue` -- open the follow-up queue overlay for the active run.
+    /// `/queue` -- open the TODO queue overlay for the active run.
     ///
     /// Refreshes the projection first so the overlay reflects the live
     /// service-side queue. An empty queue still opens (read-only view).
@@ -3425,10 +3568,10 @@ impl TuiApp {
         if y_service::ChatService::delete_follow_up(&self.services, &session_id, &item.id) {
             self.sync_queue_overlay();
             self.state
-                .push_toast("Follow-up removed.".into(), ToastLevel::Success);
+                .push_toast("TODO removed.".into(), ToastLevel::Success);
         } else {
             self.state.push_toast(
-                "Could not remove the follow-up; un-steer it first.".into(),
+                "Could not remove the TODO; un-steer it first.".into(),
                 ToastLevel::Error,
             );
         }
@@ -3445,7 +3588,7 @@ impl TuiApp {
         };
         if !y_service::ChatService::delete_follow_up(&self.services, &session_id, &item.id) {
             self.state.push_toast(
-                "Could not recall the follow-up; un-steer it first.".into(),
+                "Could not recall the TODO; un-steer it first.".into(),
                 ToastLevel::Error,
             );
             return;
@@ -3455,7 +3598,7 @@ impl TuiApp {
         self.state.set_mode(InteractionMode::Normal);
         self.state.set_focus(PanelFocus::Input);
         self.state.push_toast(
-            "Queued follow-up recalled for editing.".into(),
+            "Queued TODO recalled for editing.".into(),
             ToastLevel::Success,
         );
     }
@@ -3487,7 +3630,7 @@ impl TuiApp {
             Ok(()) => {
                 self.sync_queue_overlay();
                 let message = match item.status {
-                    y_service::FollowUpStatus::Pending => "Follow-up will steer the next step.",
+                    y_service::FollowUpStatus::Pending => "TODO will steer the next step.",
                     y_service::FollowUpStatus::Steering => "Steer moved back to the queue.",
                 };
                 self.state.push_toast(message.into(), ToastLevel::Success);
@@ -3498,6 +3641,52 @@ impl TuiApp {
                     ToastLevel::Error,
                 );
             }
+        }
+    }
+
+    /// Promote the first pending inline TODO without opening `/queue`.
+    async fn queue_steer_next(&mut self) {
+        let Some(session_id) = self.active_session_id() else {
+            self.state
+                .push_toast("No active session TODO queue.".into(), ToastLevel::Info);
+            return;
+        };
+        chat_flow::refresh_follow_up_queue(&mut self.state, &self.services);
+        if self
+            .state
+            .follow_up_queue
+            .iter()
+            .any(|item| item.status == y_service::FollowUpStatus::Steering)
+        {
+            self.state.push_toast(
+                "A TODO is already scheduled to steer the next step.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        }
+        let Some(item) = self
+            .state
+            .follow_up_queue
+            .iter()
+            .find(|item| item.status == y_service::FollowUpStatus::Pending)
+            .cloned()
+        else {
+            self.state
+                .push_toast("No pending TODO to send.".into(), ToastLevel::Info);
+            return;
+        };
+
+        match y_service::ChatService::steer_follow_up(&self.services, &session_id, &item.id).await {
+            Ok(_) => {
+                self.sync_queue_overlay();
+                self.state.push_toast(
+                    "TODO will steer the next agent step.".into(),
+                    ToastLevel::Success,
+                );
+            }
+            Err(error) => self
+                .state
+                .push_toast(format!("Could not send TODO: {error}"), ToastLevel::Error),
         }
     }
 
@@ -4118,6 +4307,7 @@ impl TuiApp {
         render_cache: &mut ChatRenderCache,
         plain_lines: &mut Vec<String>,
         tool_rows: &mut Vec<(std::ops::Range<usize>, ToolSelection)>,
+        keymap: &Keymap,
     ) {
         // Chat panel -- fills plain text lines for selection and tool-card
         // row ranges for mouse hit-testing.
@@ -4128,6 +4318,15 @@ impl TuiApp {
             render_cache,
             plain_lines,
             tool_rows,
+        );
+
+        let todo_shortcut = keymap.primary_shortcut(KeyAction::QueueSteerNext);
+        panels::todo::render(
+            frame,
+            chunks.todo,
+            &state.follow_up_queue,
+            todo_shortcut.as_deref(),
+            &state.theme,
         );
 
         // Status bar.
@@ -4446,12 +4645,42 @@ fn textarea_is_empty(textarea: &TextArea<'_>) -> bool {
     textarea.lines().iter().all(String::is_empty)
 }
 
+fn key_edits_composer(code: crossterm::event::KeyCode) -> bool {
+    matches!(
+        code,
+        crossterm::event::KeyCode::Char(_)
+            | crossterm::event::KeyCode::Backspace
+            | crossterm::event::KeyCode::Delete
+    )
+}
+
 fn textarea_from_text(text: &str) -> TextArea<'static> {
     if text.is_empty() {
         TextArea::default()
     } else {
-        TextArea::new(text.split('\n').map(String::from).collect())
+        let mut textarea = TextArea::new(text.split('\n').map(String::from).collect());
+        textarea.move_cursor(CursorMove::Bottom);
+        textarea.move_cursor(CursorMove::End);
+        textarea
     }
+}
+
+/// Replace only the leading slash-command token and preserve surrounding text.
+fn completed_slash_command(composer_text: &str, command: &str, has_arguments: bool) -> String {
+    let leading_len = composer_text.len() - composer_text.trim_start().len();
+    let trimmed = &composer_text[leading_len..];
+    let Some(after_slash) = trimmed.strip_prefix('/') else {
+        return composer_text.to_string();
+    };
+    let token_len = after_slash
+        .find(char::is_whitespace)
+        .unwrap_or(after_slash.len());
+    let remainder = &after_slash[token_len..];
+    let mut completed = format!("{}/{command}{remainder}", &composer_text[..leading_len]);
+    if remainder.is_empty() && has_arguments {
+        completed.push(' ');
+    }
+    completed
 }
 
 fn mime_type_for_path(path: &std::path::Path) -> &'static str {
@@ -4479,8 +4708,11 @@ fn mime_type_for_path(path: &std::path::Path) -> &'static str {
 /// fuzzy-highlighted item — typing `/plan` must not run `/auto` just because
 /// its description mentions "plan". Falls back to the highlighted command,
 /// then to the raw input.
-fn resolve_palette_command(palette: &CommandPaletteState) -> String {
-    let typed = palette.input.trim();
+fn resolve_palette_command(composer_text: &str, palette: &CommandPaletteState) -> String {
+    let typed = composer_text
+        .trim()
+        .strip_prefix('/')
+        .unwrap_or(composer_text.trim());
     let first = typed.split_whitespace().next().unwrap_or("");
     let registry = commands::registry::CommandRegistry::shared();
     let first_lower = first.to_lowercase();
@@ -4496,7 +4728,7 @@ fn resolve_palette_command(palette: &CommandPaletteState) -> String {
     if let Some(selected) = palette.selected_command() {
         return selected.to_string();
     }
-    palette.input.clone()
+    palette.query.clone()
 }
 
 /// Cycle the selected tool card's detail level, auto-selecting the most
@@ -4710,6 +4942,20 @@ impl Drop for TuiApp {
 }
 
 // ---------------------------------------------------------------------------
+// Terminal window title
+// ---------------------------------------------------------------------------
+
+/// Compute the terminal window title to emit, or `None` when unchanged.
+///
+/// The title tracks the active session title (falling back to the compact
+/// session label for untitled sessions), so tabs and window lists show which
+/// conversation each terminal holds.
+fn pending_terminal_title(last: Option<&str>, state: &AppState) -> Option<String> {
+    let title = state.current_session_label();
+    (last != Some(title.as_str())).then_some(title)
+}
+
+// ---------------------------------------------------------------------------
 // Transcript restoration helpers
 // ---------------------------------------------------------------------------
 
@@ -4889,6 +5135,40 @@ mod transcript_tests {
         assert!(bg_poll_due(60, false, 0, 0, true), "overlay open");
     }
 
+    // T-TITLE-01: the terminal title tracks the active session title and
+    // only reports a change when the label actually differs.
+    #[test]
+    fn test_pending_terminal_title_tracks_session() {
+        let mut state = AppState::new();
+
+        // Fresh app: no session yet -> "new session" pending once.
+        assert_eq!(
+            pending_terminal_title(None, &state).as_deref(),
+            Some("new session")
+        );
+        // Unchanged label -> no update.
+        assert_eq!(pending_terminal_title(Some("new session"), &state), None);
+
+        // Switching to a titled session changes the title.
+        state.current_session_id = Some("1234567890abcdef".to_string());
+        state.sessions.push(SessionListItem {
+            id: "1234567890abcdef".to_string(),
+            title: "Release work".to_string(),
+            updated_at: chrono::Utc::now(),
+            message_count: 3,
+            state: y_core::session::SessionState::Active,
+            parent_id: None,
+            depth: 0,
+            pinned: false,
+            quick_slot: None,
+        });
+        assert_eq!(
+            pending_terminal_title(Some("new session"), &state).as_deref(),
+            Some("Release work")
+        );
+        assert_eq!(pending_terminal_title(Some("Release work"), &state), None);
+    }
+
     #[test]
     fn test_extract_tool_calls_from_metadata_preserves_rich_fields() {
         let metadata = serde_json::json!({
@@ -4963,6 +5243,22 @@ mod transcript_tests {
             String::new(),
             "https://example.com".to_string()
         ])));
+    }
+
+    #[test]
+    fn test_textarea_from_text_places_cursor_at_end() {
+        let textarea = textarea_from_text("first\nsecond");
+        assert_eq!(textarea.cursor(), (1, 6));
+    }
+
+    #[test]
+    fn test_command_completion_preserves_existing_arguments() {
+        assert_eq!(
+            completed_slash_command("/pla keep this", "plan", true),
+            "/plan keep this"
+        );
+        assert_eq!(completed_slash_command("  /pla", "plan", true), "  /plan ");
+        assert_eq!(completed_slash_command("/queue", "queue", false), "/queue");
     }
 
     // Bracketed paste: picker/palette filters are single-line, so pasted
@@ -5081,38 +5377,36 @@ mod interaction_tests {
     #[test]
     fn test_resolve_palette_command_prefers_exact_typed_input() {
         let mut palette = CommandPaletteState::new();
-        for c in "plan".chars() {
-            palette.push_char(c);
-        }
-        assert_eq!(resolve_palette_command(&palette), "plan");
+        palette.sync_from_composer("/plan");
+        assert_eq!(resolve_palette_command("/plan", &palette), "plan");
     }
 
     #[test]
     fn test_resolve_palette_command_resolves_alias_and_keeps_args() {
         let mut palette = CommandPaletteState::new();
-        for c in "p do the refactor".chars() {
-            palette.push_char(c);
-        }
-        assert_eq!(resolve_palette_command(&palette), "plan do the refactor");
+        palette.sync_from_composer("/p do the refactor");
+        assert_eq!(
+            resolve_palette_command("/p do the refactor", &palette),
+            "plan do the refactor"
+        );
     }
 
     #[test]
     fn test_resolve_palette_command_falls_back_to_highlighted() {
         let mut palette = CommandPaletteState::new();
-        for c in "pla".chars() {
-            palette.push_char(c);
-        }
+        palette.sync_from_composer("/pla");
         // "pla" is not an exact command; the top fuzzy match (plan) executes.
-        assert_eq!(resolve_palette_command(&palette), "plan");
+        assert_eq!(resolve_palette_command("/pla", &palette), "plan");
     }
 
     #[test]
     fn test_resolve_palette_command_unknown_input_returned_raw() {
         let mut palette = CommandPaletteState::new();
-        for c in "nosuchthing".chars() {
-            palette.push_char(c);
-        }
-        assert_eq!(resolve_palette_command(&palette), "nosuchthing");
+        palette.sync_from_composer("/nosuchthing");
+        assert_eq!(
+            resolve_palette_command("/nosuchthing", &palette),
+            "nosuchthing"
+        );
     }
 
     fn tool_call(name: &str) -> state::ToolCallInfo {
