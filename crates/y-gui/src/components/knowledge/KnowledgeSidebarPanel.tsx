@@ -1,23 +1,16 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import {
   X,
   Plus,
-  Search,
   Database,
-  Clock3,
-  CheckCircle2,
-  AlertCircle,
-  ChevronRight,
-  ChevronDown,
-  Copy,
-  Check,
 } from 'lucide-react';
-import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import type { KnowledgeCollectionInfo } from '../../types';
 import type { KbIngestStatus, KbBatchProgress } from '../../hooks/useKnowledge';
 import { useSidebarSearch } from '../../hooks/useSidebarSearch';
+import { SidebarOperationStatus } from '../common/SidebarOperationStatus';
+import { SidebarSearchHeader } from '../common/SidebarSearchHeader';
 import './KnowledgeSidebarPanel.css';
 
 interface KnowledgeSidebarPanelProps {
@@ -47,16 +40,6 @@ export function KnowledgeSidebarPanel({
   const [showNewCollection, setShowNewCollection] = useState(false);
   const [newCollName, setNewCollName] = useState('');
   const [newCollDesc, setNewCollDesc] = useState('');
-  const [ingestStatusExpanded, setIngestStatusExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const copyError = useCallback(() => {
-    if (!kbIngestError) return;
-    navigator.clipboard.writeText(kbIngestError).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [kbIngestError]);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return collections;
@@ -70,28 +53,20 @@ export function KnowledgeSidebarPanel({
 
   return (
     <>
-      <div className="agent-session-toolbar">
-        <div className="agent-session-toolbar-label">
-          <span>Collections</span>
-          <div className="agent-session-toolbar-meta">
-            <Badge variant="outline">{collections.length}</Badge>
-          </div>
-        </div>
-        <div className="agent-session-toolbar-actions">
-          <Button
-            variant="icon"
-            size="sm"
-            onClick={() => {
-              if (searchOpen) {
-                closeSearch();
-              } else {
-                setSearchOpen(true);
-              }
-            }}
-            title="Search collections"
-          >
-            <Search size={14} />
-          </Button>
+      <SidebarSearchHeader
+        label="Collections"
+        count={collections.length}
+        searchTitle="Search collections"
+        searchPlaceholder="Search collections..."
+        searchOpen={searchOpen}
+        searchQuery={searchQuery}
+        searchInputRef={searchInputRef}
+        onSearchQueryChange={setSearchQuery}
+        onSearchToggle={() => {
+          if (searchOpen) closeSearch();
+          else setSearchOpen(true);
+        }}
+        actions={
           <Button
             variant="icon"
             size="sm"
@@ -100,23 +75,8 @@ export function KnowledgeSidebarPanel({
           >
             <Plus size={14} />
           </Button>
-        </div>
-      </div>
-      {searchOpen && (
-        <div className="sidebar-inline-search">
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="Search collections..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="sidebar-inline-search-input"
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') closeSearch();
-            }}
-          />
-        </div>
-      )}
+        }
+      />
       <div className="sidebar-list">
         {filtered.length === 0 ? (
           <div className="session-empty">
@@ -208,69 +168,19 @@ export function KnowledgeSidebarPanel({
         </div>
       )}
 
-      {/* Knowledge ingest status bar */}
-      {kbIngestStatus !== 'idle' && (
-        <div className={`import-status import-status--${kbIngestStatus === 'ingesting' ? 'importing' : kbIngestStatus} ${ingestStatusExpanded ? 'import-status--expanded' : ''}`}>
-          <div className="import-status-row">
-            {kbIngestStatus === 'ingesting' && (
-              <>
-                <Clock3 size={14} className="import-status-busy-icon" />
-                <span className={`import-status-msg ${ingestStatusExpanded ? 'import-status-msg--expanded' : ''}`}>
-                  {kbBatchProgress
-                    ? `Importing ${kbBatchProgress.current}/${kbBatchProgress.total}…`
-                    : 'Importing…'}
-                </span>
-              </>
-            )}
-            {kbIngestStatus === 'success' && (
-              <>
-                <CheckCircle2 size={14} />
-                <span className="import-status-msg">
-                  {kbBatchProgress
-                    ? `${kbBatchProgress.total} file${kbBatchProgress.total > 1 ? 's' : ''} imported`
-                    : 'Import complete'}
-                </span>
-              </>
-            )}
-            {kbIngestStatus === 'error' && (
-              <>
-                <AlertCircle size={14} className="import-status-icon" />
-                <span className={`import-status-msg ${ingestStatusExpanded ? 'import-status-msg--expanded' : ''}`}>{kbIngestError || 'Import failed'}</span>
-              </>
-            )}
-            <div className="import-status-actions">
-              {kbIngestStatus === 'error' && (
-                <button
-                  className="import-status-copy"
-                  onClick={copyError}
-                  title="Copy error"
-                >
-                  {copied ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              )}
-              {kbIngestStatus === 'error' && (
-                <button
-                  className="import-status-toggle"
-                  onClick={() => setIngestStatusExpanded(!ingestStatusExpanded)}
-                  title={ingestStatusExpanded ? 'Collapse' : 'Expand'}
-                >
-                  {ingestStatusExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                </button>
-              )}
-              {kbIngestStatus === 'ingesting' && (
-                <button className="import-status-dismiss" onClick={onCancelKbIngest} title="Cancel">
-                  <X size={12} />
-                </button>
-              )}
-              {kbIngestStatus !== 'ingesting' && (
-                <button className="import-status-dismiss" onClick={() => { onClearKbIngestStatus(); setIngestStatusExpanded(false); }} title="Dismiss">
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <SidebarOperationStatus
+        status={kbIngestStatus === 'ingesting' ? 'running' : kbIngestStatus}
+        runningMessage={kbBatchProgress
+          ? `Importing ${kbBatchProgress.current}/${kbBatchProgress.total}...`
+          : 'Importing...'}
+        successMessage={kbBatchProgress
+          ? `${kbBatchProgress.total} file${kbBatchProgress.total > 1 ? 's' : ''} imported`
+          : 'Import complete'}
+        errorMessage={kbIngestError}
+        fallbackErrorMessage="Import failed"
+        onDismiss={onClearKbIngestStatus}
+        onCancel={onCancelKbIngest}
+      />
     </>
   );
 }

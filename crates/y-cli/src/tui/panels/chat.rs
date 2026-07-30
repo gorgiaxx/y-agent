@@ -321,6 +321,25 @@ pub(crate) fn compute_scroll_to(
     }
 }
 
+/// Convert a terminal position inside the borderless chat area into a
+/// content-space (row, display-column) pair.
+///
+/// The chat transcript renders edge to edge with no border, so the mapping
+/// is a direct offset by the area origin plus the current scroll position.
+pub(crate) fn terminal_to_content_row_col(
+    x: u16,
+    y: u16,
+    area: Rect,
+    total_lines: usize,
+    inner_height: usize,
+    scroll_offset: usize,
+) -> (usize, usize) {
+    let display_col = x.saturating_sub(area.x) as usize;
+    let content_y = y.saturating_sub(area.y) as usize;
+    let scroll_to = compute_scroll_to(total_lines, inner_height, scroll_offset);
+    (scroll_to + content_y, display_col)
+}
+
 /// Return the cached render for a message, re-rendering only when one of the
 /// display-relevant inputs changed (content hash, width, tool selection, tail
 /// position, or the animation tick for spinner frames).
@@ -2748,6 +2767,26 @@ mod tests {
         let height = 50;
         assert_eq!(compute_scroll_to(total, height, 0), 69_950);
         assert_eq!(compute_scroll_to(total, height, 69_950), 0);
+    }
+
+    // T-CHAT-MOUSE-01: the chat panel is borderless, so terminal coordinates
+    // map directly onto content rows/columns (no border offset).
+    #[test]
+    fn test_terminal_to_content_row_col_borderless() {
+        let area = Rect::new(0, 0, 80, 10);
+        // Tail view: 20 content lines, 10 visible -> top visible row is 10.
+        let (row, col) = terminal_to_content_row_col(7, 5, area, 20, 10, 0);
+        assert_eq!((row, col), (15, 7));
+        // Top-left cell of the area is the first visible row, column 0.
+        let (row, col) = terminal_to_content_row_col(0, 0, area, 20, 10, 0);
+        assert_eq!((row, col), (10, 0));
+        // Scrolled up by 3 -> top visible row is 7.
+        let (row, _) = terminal_to_content_row_col(0, 0, area, 20, 10, 3);
+        assert_eq!(row, 7);
+        // A non-zero area origin is honored.
+        let area = Rect::new(4, 3, 80, 10);
+        let (row, col) = terminal_to_content_row_col(4, 3, area, 20, 10, 0);
+        assert_eq!((row, col), (10, 0));
     }
 
     /// Extract the full text of a `TestBackend` terminal buffer, one

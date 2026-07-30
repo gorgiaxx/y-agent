@@ -4,6 +4,7 @@
 // with implementations that work in both Tauri and browser environments.
 
 import type { Attachment } from '../types';
+import type { MenuOptions } from '@tauri-apps/api/menu';
 
 export interface FileFilter {
   name: string;
@@ -19,6 +20,7 @@ export interface OpenDialogOptions {
 
 export interface PlatformCapabilities {
   nativeWindowControls: boolean;
+  nativeContextMenus: boolean;
   nativeFilePaths: boolean;
   browserFileUpload: boolean;
   revealFileManager: boolean;
@@ -28,6 +30,11 @@ export interface PlatformCapabilities {
   remoteAuth: boolean;
   sseEvents: boolean;
 }
+
+export type ContextMenuItem =
+  | { kind: 'item'; text: string; enabled?: boolean; action?: () => void }
+  | { kind: 'separator' }
+  | { kind: 'submenu'; text: string; items: ContextMenuItem[] };
 
 export const MAX_BROWSER_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 
@@ -41,12 +48,14 @@ export interface Platform {
   convertFileSrc(filePath: string): string;
   saveRemoteImage(url: string): Promise<void>;
   getAppVersion(): Promise<string>;
+  showContextMenu(items: ContextMenuItem[]): Promise<void>;
   isTauri(): boolean;
 }
 
 class TauriPlatform implements Platform {
   readonly capabilities: PlatformCapabilities = {
     nativeWindowControls: true,
+    nativeContextMenus: true,
     nativeFilePaths: true,
     browserFileUpload: false,
     revealFileManager: true,
@@ -121,6 +130,12 @@ class TauriPlatform implements Platform {
     return getVersion();
   }
 
+  async showContextMenu(items: ContextMenuItem[]): Promise<void> {
+    const { Menu } = await import('@tauri-apps/api/menu');
+    const menu = await Menu.new({ items: items.map(toTauriMenuItem) });
+    await menu.popup();
+  }
+
   isTauri(): boolean {
     return true;
   }
@@ -129,6 +144,7 @@ class TauriPlatform implements Platform {
 class WebPlatform implements Platform {
   readonly capabilities: PlatformCapabilities = {
     nativeWindowControls: false,
+    nativeContextMenus: false,
     nativeFilePaths: false,
     browserFileUpload: true,
     revealFileManager: false,
@@ -234,6 +250,10 @@ class WebPlatform implements Platform {
     }
   }
 
+  async showContextMenu(): Promise<void> {
+    throw new Error('Native context menus are not supported in the browser');
+  }
+
   isTauri(): boolean {
     return false;
   }
@@ -287,6 +307,23 @@ export function getApiUrl(): string {
 
 export function isTauriEnvironment(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+}
+
+type TauriMenuItem = NonNullable<MenuOptions['items']>[number];
+
+function toTauriMenuItem(item: ContextMenuItem): TauriMenuItem {
+  if (item.kind === 'separator') return { item: 'Separator' };
+  if (item.kind === 'submenu') {
+    return {
+      text: item.text,
+      items: item.items.map(toTauriMenuItem),
+    };
+  }
+  return {
+    text: item.text,
+    enabled: item.enabled,
+    action: item.action ? () => item.action?.() : undefined,
+  };
 }
 
 export const platform: Platform = createPlatform(getApiUrl());

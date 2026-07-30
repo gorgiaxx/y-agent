@@ -1,3 +1,5 @@
+import { platform } from '../../../../lib';
+import type { ContextMenuItem } from '../../../../lib/platform';
 import type { PlanTaskDisplay } from '../planToolDisplay';
 
 export interface PlanStepMenuOptions {
@@ -7,23 +9,21 @@ export interface PlanStepMenuOptions {
   onRetryFromHere: (planRunId: string, taskId: string) => void;
 }
 
-export async function showPlanStepContextMenu(opts: PlanStepMenuOptions): Promise<void> {
+export function buildPlanStepContextMenuItems(
+  opts: PlanStepMenuOptions,
+): ContextMenuItem[] {
   const { planRunId, task, onRetryFromHere } = opts;
+  if (!planRunId) return [];
 
-  if (!planRunId) return;
+  return [{
+    kind: 'item',
+    text: `Retry from: ${task.title}`,
+    action: () => onRetryFromHere(planRunId, task.id),
+  }];
+}
 
-  try {
-    const { Menu } = await import('@tauri-apps/api/menu');
-    const menu = await Menu.new({
-      items: [
-        {
-          text: `Retry from: ${task.title}`,
-          action: () => onRetryFromHere(planRunId, task.id),
-        },
-      ],
-    });
-    await menu.popup();
-  } catch {
-    // Not in Tauri environment; silently no-op.
-  }
+export async function showPlanStepContextMenu(opts: PlanStepMenuOptions): Promise<void> {
+  if (!platform.capabilities.nativeContextMenus) return;
+  const items = buildPlanStepContextMenuItems(opts);
+  if (items.length > 0) await platform.showContextMenu(items);
 }

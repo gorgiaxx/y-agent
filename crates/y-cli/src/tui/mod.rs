@@ -2497,8 +2497,9 @@ impl TuiApp {
         };
         let chunks = layout::compute_layout(term_rect, input_lines, todo_count);
 
-        // Update page_height from the chat panel for page-scroll calculations.
-        self.state.page_height = chunks.chat.height.saturating_sub(2) as usize;
+        // Update page_height from the (borderless) chat panel for page-scroll
+        // calculations.
+        self.state.page_height = chunks.chat.height as usize;
 
         // Store the layout for mouse hit-testing, then borrow it back (this
         // avoids cloning the chunks on every frame).
@@ -4357,16 +4358,16 @@ impl TuiApp {
         y: u16,
         chat_area: ratatui::layout::Rect,
     ) -> (usize, usize) {
-        // Display column within the content area (after border).
-        let display_col = (x.saturating_sub(chat_area.x).saturating_sub(1)) as usize;
-        let content_y = (y.saturating_sub(chat_area.y).saturating_sub(1)) as usize;
-
-        let inner_height = chat_area.height.saturating_sub(2) as usize;
-        let total_lines = self.chat_plain_lines.len();
-        let scroll_to =
-            panels::chat::compute_scroll_to(total_lines, inner_height, self.state.scroll_offset);
-
-        let row = scroll_to + content_y;
+        // The chat transcript is borderless: terminal coordinates map
+        // directly onto content rows/columns (plus the scroll position).
+        let (row, display_col) = panels::chat::terminal_to_content_row_col(
+            x,
+            y,
+            chat_area,
+            self.chat_plain_lines.len(),
+            chat_area.height as usize,
+            self.state.scroll_offset,
+        );
 
         // Convert display column -> character index using unicode widths.
         let char_idx = if let Some(line) = self.chat_plain_lines.get(row) {

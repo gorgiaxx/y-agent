@@ -197,6 +197,7 @@ Minimum capability groups:
 | Capability | Required for |
 |------------|--------------|
 | `nativeWindowControls` | Minimize, maximize, close, custom decorations |
+| `nativeContextMenus` | Native host context menus; browser hosts use shared HTML menus |
 | `nativeFilePaths` | Reading local paths directly from the frontend |
 | `browserFileUpload` | Uploading or encoding browser-selected files through a Web-safe flow |
 | `revealFileManager` | Opening a file or folder in the OS file manager |

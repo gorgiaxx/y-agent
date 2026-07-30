@@ -18,6 +18,7 @@ describe('platform capabilities', () => {
     expect(platform.isTauri()).toBe(false);
     expect(platform.capabilities).toMatchObject({
       nativeWindowControls: false,
+      nativeContextMenus: false,
       nativeFilePaths: false,
       browserFileUpload: true,
       revealFileManager: false,
@@ -37,6 +38,7 @@ describe('platform capabilities', () => {
     expect(platform.isTauri()).toBe(true);
     expect(platform.capabilities).toMatchObject({
       nativeWindowControls: true,
+      nativeContextMenus: true,
       nativeFilePaths: true,
       browserFileUpload: false,
       revealFileManager: true,

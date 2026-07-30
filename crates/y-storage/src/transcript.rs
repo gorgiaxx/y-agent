@@ -472,6 +472,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_transcript_message_count_skips_corrupt_lines() {
+        let (_dir, store) = temp_store();
+        let session_id = SessionId::new();
+        let path = store.transcript_path(&session_id);
+        let first = serde_json::to_string(&test_message("first")).unwrap();
+        let third = serde_json::to_string(&test_message("third")).unwrap();
+
+        tokio::fs::write(&path, format!("{first}\nnot-json\n{third}\n"))
+            .await
+            .unwrap();
+
+        let count = store.message_count(&session_id).await.unwrap();
+        assert_eq!(count, 2, "only readable messages should be counted");
+    }
+
+    #[tokio::test]
     async fn test_transcript_empty_session() {
         let (_dir, store) = temp_store();
         let session_id = SessionId::new();

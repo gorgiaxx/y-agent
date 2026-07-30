@@ -1,23 +1,15 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useMemo } from 'react';
 import {
-  X,
   Plus,
-  Search,
   Puzzle,
-  Clock3,
-  CheckCircle2,
-  AlertCircle,
-  ChevronRight,
-  ChevronDown,
-  Copy,
-  Check,
   ShieldCheck,
 } from 'lucide-react';
-import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import type { SkillInfo } from '../../types';
 import type { ImportStatus } from '../../hooks/useSkills';
 import { useSidebarSearch } from '../../hooks/useSidebarSearch';
+import { SidebarOperationStatus } from '../common/SidebarOperationStatus';
+import { SidebarSearchHeader } from '../common/SidebarSearchHeader';
 interface SkillsSidebarPanelProps {
   skills: SkillInfo[];
   activeSkillName: string | null;
@@ -42,16 +34,6 @@ export function SkillsSidebarPanel({
   validating,
 }: SkillsSidebarPanelProps) {
   const { searchQuery, setSearchQuery, searchOpen, setSearchOpen, searchInputRef, closeSearch } = useSidebarSearch();
-  const [importStatusExpanded, setImportStatusExpanded] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const copyError = useCallback(() => {
-    if (!importError) return;
-    navigator.clipboard.writeText(importError).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [importError]);
 
   const filtered = useMemo(() => {
     if (!searchQuery) return skills;
@@ -66,59 +48,38 @@ export function SkillsSidebarPanel({
 
   return (
     <>
-      <div className="agent-session-toolbar">
-        <div className="agent-session-toolbar-label">
-          <span>Skills</span>
-          <div className="agent-session-toolbar-meta">
-            <Badge variant="outline">{skills.length}</Badge>
-          </div>
-        </div>
-        <div className="agent-session-toolbar-actions">
-          <Button
-            variant="icon"
-            size="sm"
-            onClick={() => {
-              if (searchOpen) {
-                closeSearch();
-              } else {
-                setSearchOpen(true);
-              }
-            }}
-            title="Search skills"
-          >
-            <Search size={14} />
-          </Button>
-          {onValidate && (
-            <Button
-              variant="icon"
-              size="sm"
-              onClick={onValidate}
-              disabled={validating}
-              title="Validate All Skills"
-            >
-              <ShieldCheck size={14} className={validating ? 'spin' : ''} />
+      <SidebarSearchHeader
+        label="Skills"
+        count={skills.length}
+        searchTitle="Search skills"
+        searchPlaceholder="Search skills..."
+        searchOpen={searchOpen}
+        searchQuery={searchQuery}
+        searchInputRef={searchInputRef}
+        onSearchQueryChange={setSearchQuery}
+        onSearchToggle={() => {
+          if (searchOpen) closeSearch();
+          else setSearchOpen(true);
+        }}
+        actions={
+          <>
+            {onValidate && (
+              <Button
+                variant="icon"
+                size="sm"
+                onClick={onValidate}
+                disabled={validating}
+                title="Validate All Skills"
+              >
+                <ShieldCheck size={14} className={validating ? 'spin' : ''} />
+              </Button>
+            )}
+            <Button variant="icon" size="sm" onClick={onImportClick} title="Import Skill">
+              <Plus size={14} />
             </Button>
-          )}
-          <Button variant="icon" size="sm" onClick={onImportClick} title="Import Skill">
-            <Plus size={14} />
-          </Button>
-        </div>
-      </div>
-      {searchOpen && (
-        <div className="sidebar-inline-search">
-          <input
-            ref={searchInputRef}
-            type="text"
-            placeholder="Search skills..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="sidebar-inline-search-input"
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') closeSearch();
-            }}
-          />
-        </div>
-      )}
+          </>
+        }
+      />
       <div className="sidebar-list">
         {filtered.length === 0 ? (
           <div className="session-empty">
@@ -151,56 +112,14 @@ export function SkillsSidebarPanel({
         )}
       </div>
 
-      {/* Import status bar */}
-      {importStatus !== 'idle' && (
-        <div className={`import-status import-status--${importStatus} ${importStatusExpanded ? 'import-status--expanded' : ''}`}>
-          <div className="import-status-row">
-            {importStatus === 'importing' && (
-              <>
-                <Clock3 size={14} className="import-status-busy-icon" />
-                <span className={`import-status-msg ${importStatusExpanded ? 'import-status-msg--expanded' : ''}`}>Importing skill…</span>
-              </>
-            )}
-            {importStatus === 'success' && (
-              <>
-                <CheckCircle2 size={14} />
-                <span className="import-status-msg">Skill imported</span>
-              </>
-            )}
-            {importStatus === 'error' && (
-              <>
-                <AlertCircle size={14} className="import-status-icon" />
-                <span className={`import-status-msg ${importStatusExpanded ? 'import-status-msg--expanded' : ''}`}>{importError || 'Import failed'}</span>
-              </>
-            )}
-            <div className="import-status-actions">
-              {importStatus === 'error' && (
-                <button
-                  className="import-status-copy"
-                  onClick={copyError}
-                  title="Copy error"
-                >
-                  {copied ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              )}
-              {importStatus === 'error' && (
-                <button
-                  className="import-status-toggle"
-                  onClick={() => setImportStatusExpanded(!importStatusExpanded)}
-                  title={importStatusExpanded ? 'Collapse' : 'Expand'}
-                >
-                  {importStatusExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                </button>
-              )}
-              {importStatus === 'error' && (
-                <button className="import-status-dismiss" onClick={() => { onClearImportStatus(); setImportStatusExpanded(false); }} title="Dismiss">
-                  <X size={12} />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      <SidebarOperationStatus
+        status={importStatus === 'importing' ? 'running' : importStatus}
+        runningMessage="Importing skill..."
+        successMessage="Skill imported"
+        errorMessage={importError}
+        fallbackErrorMessage="Import failed"
+        onDismiss={onClearImportStatus}
+      />
     </>
   );
 }

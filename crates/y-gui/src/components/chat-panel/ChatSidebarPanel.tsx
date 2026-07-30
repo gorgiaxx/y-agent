@@ -13,9 +13,11 @@ import {
   GitBranch,
 } from 'lucide-react';
 import { platform } from '../../lib';
-import { isTauriEnvironment } from '../../lib/platform';
 import type { SessionInfo, WorkspaceInfo } from '../../types';
-import { showSessionContextMenu, showWorkspaceContextMenu } from './nativeContextMenu';
+import {
+  buildSessionContextMenuItems,
+  buildWorkspaceContextMenuItems,
+} from './contextMenuItems';
 import { SessionItem } from '../shared/SessionItem';
 import { WorkspaceDialog } from './WorkspaceDialog';
 import { PanelToolbar, type SortField, type PanelToolbarAction } from '../common/PanelToolbar';
@@ -479,11 +481,11 @@ export function ChatSidebarPanel({
     setRenameValue('');
   }, []);
 
-  const openNativeSessionMenu = useCallback((session: SessionInfo) => {
+  const openSessionContextMenu = useCallback((session: SessionInfo) => {
     const isBatchMode = selectedIds.size > 1 && selectedIds.has(session.id);
     const batchIds = isBatchMode ? [...selectedIds] : null;
     const wsId = sessionWorkspaceMap[session.id] ?? null;
-    showSessionContextMenu({
+    void platform.showContextMenu(buildSessionContextMenuItems({
       session,
       workspaces: sortedWorkspaces,
       currentWorkspaceId: wsId,
@@ -495,21 +497,21 @@ export function ChatSidebarPanel({
       onFork: onForkSession ?? (() => {}),
       onDelete: onDeleteSession,
       onBatchDelete: handleBatchDelete,
-    });
+    }));
   }, [
     selectedIds, sessionWorkspaceMap, sortedWorkspaces,
     onForkSession, onAssignSession, onUnassignSession,
     onDeleteSession, handleBatchDelete, startRename,
   ]);
 
-  const openNativeWorkspaceMenu = useCallback((workspace: WorkspaceInfo) => {
-    showWorkspaceContextMenu({
+  const openWorkspaceContextMenu = useCallback((workspace: WorkspaceInfo) => {
+    void platform.showContextMenu(buildWorkspaceContextMenuItems({
       workspace,
       canReveal: platform.capabilities.revealFileManager,
       onEdit: (ws) => setEditingWorkspace(ws),
       onReveal: (path) => platform.revealInFileManager(path),
       onDelete: onDeleteWorkspace,
-    });
+    }));
   }, [onDeleteWorkspace]);
 
   const sessionById = useMemo(
@@ -613,8 +615,8 @@ export function ChatSidebarPanel({
           onContextMenu={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (isTauriEnvironment()) {
-              openNativeSessionMenu(session);
+            if (platform.capabilities.nativeContextMenus) {
+              openSessionContextMenu(session);
             } else {
               toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
             }
@@ -624,8 +626,8 @@ export function ChatSidebarPanel({
               className="btn-session-action"
               onClick={(e) => {
                 e.stopPropagation();
-                if (isTauriEnvironment()) {
-                  openNativeSessionMenu(session);
+                if (platform.capabilities.nativeContextMenus) {
+                  openSessionContextMenu(session);
                 } else {
                   toggleMenu({ kind: 'session', id: session.id }, e.currentTarget as HTMLElement);
                 }
@@ -868,8 +870,8 @@ export function ChatSidebarPanel({
                         onContextMenu={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          if (isTauriEnvironment()) {
-                            openNativeWorkspaceMenu(workspace);
+                          if (platform.capabilities.nativeContextMenus) {
+                            openWorkspaceContextMenu(workspace);
                           } else {
                             toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
                           }
@@ -897,8 +899,8 @@ export function ChatSidebarPanel({
                           className="panel-group-action-btn"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (isTauriEnvironment()) {
-                              openNativeWorkspaceMenu(workspace);
+                            if (platform.capabilities.nativeContextMenus) {
+                              openWorkspaceContextMenu(workspace);
                             } else {
                               toggleMenu({ kind: 'workspace', id: workspace.id }, e.currentTarget);
                             }

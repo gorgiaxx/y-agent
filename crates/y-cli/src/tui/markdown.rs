@@ -243,6 +243,9 @@ impl MdRenderer {
         match tag {
             Tag::Heading { level, .. } => {
                 self.flush_line();
+                if self.blockquote_depth == 0 {
+                    self.ensure_blank_line();
+                }
                 self.heading_level = match level {
                     pulldown_cmark::HeadingLevel::H1 => 1,
                     pulldown_cmark::HeadingLevel::H2 => 2,
@@ -254,6 +257,9 @@ impl MdRenderer {
             }
             Tag::CodeBlock(kind) => {
                 self.flush_line();
+                if self.blockquote_depth == 0 {
+                    self.ensure_blank_line();
+                }
                 self.flags.set(StyleFlags::CODE_BLOCK);
                 self.code_buffer.clear();
                 self.code_lang = match kind {
@@ -271,6 +277,9 @@ impl MdRenderer {
             Tag::List(start) => {
                 if self.list_depth == 0 {
                     self.flush_line();
+                    if self.blockquote_depth == 0 {
+                        self.ensure_blank_line();
+                    }
                 }
                 self.list_depth += 1;
                 let ordered = start.is_some();
@@ -282,17 +291,21 @@ impl MdRenderer {
             }
             Tag::BlockQuote(_) => {
                 self.flush_line();
+                if self.blockquote_depth == 0 {
+                    self.ensure_blank_line();
+                }
                 self.blockquote_depth += 1;
             }
             Tag::Paragraph => {
-                // Add blank line before paragraph unless we are in a list item
-                // or inside a table (tables suppress paragraph spacing).
-                if self.list_depth == 0 && !self.in_table && !self.lines.is_empty() {
-                    self.push_line(Line::from(""));
+                // Separate paragraphs from preceding blocks unless we are in
+                // a list item or inside a table (tables suppress spacing).
+                if self.list_depth == 0 && !self.in_table {
+                    self.ensure_blank_line();
                 }
             }
             Tag::Table(_alignments) => {
                 self.flush_line();
+                self.ensure_blank_line();
                 self.in_table = true;
                 self.table_rows.clear();
                 self.table_header_count = 0;
@@ -367,6 +380,12 @@ impl MdRenderer {
             }
             TagEnd::TableHead => {
                 self.in_table_head = false;
+                // pulldown-cmark emits header cells directly inside TableHead
+                // without a wrapping TableRow, so flush the header row here.
+                if !self.table_row_buf.is_empty() {
+                    self.table_rows
+                        .push(std::mem::take(&mut self.table_row_buf));
+                }
                 self.table_header_count = self.table_rows.len();
             }
             TagEnd::TableRow => {
@@ -468,6 +487,9 @@ impl MdRenderer {
 
     fn push_rule(&mut self) {
         self.flush_line();
+        if self.blockquote_depth == 0 {
+            self.ensure_blank_line();
+        }
         let rule_text = "\u{2500}".repeat(self.width.min(60));
         self.push_line(Line::from(Span::styled(
             rule_text,
@@ -511,6 +533,19 @@ impl MdRenderer {
             style = style.add_modifier(Modifier::CROSSED_OUT);
         }
         style
+    }
+
+    /// Push a blank separator line unless the output is empty or already
+    /// ends with a blank line, so adjacent block components stay visually
+    /// separated without producing double blanks.
+    fn ensure_blank_line(&mut self) {
+        let ends_blank = self
+            .lines
+            .last()
+            .is_some_and(|line| line.spans.iter().all(|span| span.content.is_empty()));
+        if !self.lines.is_empty() && !ends_blank {
+            self.push_line(Line::from(""));
+        }
     }
 
     /// Push a finished display line; its copy text is the concatenation of
@@ -989,5 +1024,83 @@ mod tests {
     fn test_empty() {
         let lines = render_markdown("", 80);
         assert!(lines.is_empty());
+    }
+
+    /// Concatenate each rendered line's span contents for block-layout
+    /// assertions.
+    fn line_texts(lines: &[RenderedLine]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|l| l.line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    }
+
+    // T-MD-14: Distinct block components are separated by a blank line, even
+    // when the source markdown has no blank line between them.
+    #[test]
+    fn test_blank_line_separates_distinct_blocks() {
+        let md = "intro paragraph\n# heading\n```rust\ncode_line\n```\n- bullet";
+        let texts = line_texts(&render_markdown(md, 80));
+        let find = |needle: &str| {
+            texts
+                .iter()
+                .position(|t| t.contains(needle))
+                .unwrap_or_else(|| panic!("missing {needle}: {texts:?}"))
+        };
+        let markers = [
+            find("intro paragraph"),
+            find("heading"),
+            find("code_line"),
+            find("bullet"),
+        ];
+        for pair in markers.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            assert!(
+                b > a + 1 && texts[a + 1].trim().is_empty(),
+                "expected a blank line between rows {a} and {b}: {texts:?}"
+            );
+        }
+        // No leading blank line at the document start.
+        assert!(
+            !texts[0].trim().is_empty(),
+            "document must not start with a blank line: {texts:?}"
+        );
+    }
+
+    // T-MD-15: Blockquotes and tables are separated from neighboring blocks.
+    #[test]
+    fn test_blank_line_around_blockquote_and_table() {
+        let texts = line_texts(&render_markdown("before\n\n> quote\n\nafter", 80));
+        let q = texts.iter().position(|t| t.contains("quote")).unwrap();
+        assert!(
+            texts[q - 1].trim().is_empty(),
+            "blank before quote: {texts:?}"
+        );
+        let a = texts.iter().position(|t| t.contains("after")).unwrap();
+        assert!(
+            texts[a - 1].trim().is_empty(),
+            "blank after quote: {texts:?}"
+        );
+
+        let texts = line_texts(&render_markdown(
+            "before\n\n| h |\n| - |\n| c |\n\nafter",
+            80,
+        ));
+        let h = texts.iter().position(|t| t.contains('h')).unwrap();
+        assert!(
+            texts[h - 1].trim().is_empty(),
+            "blank before table: {texts:?}"
+        );
+    }
+
+    // T-MD-16: A horizontal rule is separated from the preceding block.
+    #[test]
+    fn test_blank_line_before_horizontal_rule() {
+        let texts = line_texts(&render_markdown("above\n\n---\n\nbelow", 80));
+        let r = texts.iter().position(|t| t.contains('\u{2500}')).unwrap();
+        assert!(
+            texts[r - 1].trim().is_empty(),
+            "blank before rule: {texts:?}"
+        );
     }
 }
