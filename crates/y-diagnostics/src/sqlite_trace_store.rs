@@ -18,6 +18,27 @@ use crate::types::{
     TraceStatus,
 };
 
+#[cfg(test)]
+mod persistence_field_tests {
+    use super::*;
+
+    #[test]
+    fn trace_persistence_fields_clamp_unsigned_counters() {
+        let mut trace = Trace::new(Uuid::new_v4(), "test");
+        trace.total_input_tokens = u64::MAX;
+        trace.llm_duration_ms = u64::MAX;
+        trace.metadata = serde_json::json!({"source": "test"});
+        trace.tags = vec!["one".to_string()];
+
+        let fields = TracePersistenceFields::from(&trace);
+
+        assert_eq!(fields.input_tokens, i64::MAX);
+        assert_eq!(fields.llm_duration_ms, i64::MAX);
+        assert_eq!(fields.metadata, r#"{"source":"test"}"#);
+        assert_eq!(fields.tags, r#"["one"]"#);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Error helper
 // ---------------------------------------------------------------------------
@@ -25,6 +46,37 @@ use crate::types::{
 fn storage_err(msg: impl Into<String>) -> TraceStoreError {
     TraceStoreError::Storage {
         message: msg.into(),
+    }
+}
+
+struct TracePersistenceFields {
+    status: &'static str,
+    metadata: String,
+    completed_at: Option<String>,
+    input_tokens: i64,
+    output_tokens: i64,
+    llm_duration_ms: i64,
+    tool_duration_ms: i64,
+    tags: String,
+    replay_context: Option<String>,
+}
+
+impl From<&Trace> for TracePersistenceFields {
+    fn from(trace: &Trace) -> Self {
+        Self {
+            status: trace_status_to_str(trace.status),
+            metadata: serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into()),
+            completed_at: trace.completed_at.map(|time| time.to_rfc3339()),
+            input_tokens: i64::try_from(trace.total_input_tokens).unwrap_or(i64::MAX),
+            output_tokens: i64::try_from(trace.total_output_tokens).unwrap_or(i64::MAX),
+            llm_duration_ms: i64::try_from(trace.llm_duration_ms).unwrap_or(i64::MAX),
+            tool_duration_ms: i64::try_from(trace.tool_duration_ms).unwrap_or(i64::MAX),
+            tags: serde_json::to_string(&trace.tags).unwrap_or_else(|_| "[]".into()),
+            replay_context: trace
+                .replay_context
+                .as_ref()
+                .and_then(|value| serde_json::to_string(value).ok()),
+        }
     }
 }
 
@@ -328,20 +380,8 @@ impl TraceStore for SqliteTraceStore {
     async fn insert_trace(&self, trace: Trace) -> Result<(), TraceStoreError> {
         let id = trace.id.to_string();
         let session_id = trace.session_id.to_string();
-        let status = trace_status_to_str(trace.status);
-        let metadata = serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
+        let fields = TracePersistenceFields::from(&trace);
         let started_at = trace.started_at.to_rfc3339();
-        let completed_at = trace.completed_at.map(|t| t.to_rfc3339());
-        let input_toks = i64::try_from(trace.total_input_tokens).unwrap_or(i64::MAX);
-        let output_toks = i64::try_from(trace.total_output_tokens).unwrap_or(i64::MAX);
-        let llm_ms = i64::try_from(trace.llm_duration_ms).unwrap_or(i64::MAX);
-        let tool_ms = i64::try_from(trace.tool_duration_ms).unwrap_or(i64::MAX);
-
-        let tags = serde_json::to_string(&trace.tags).unwrap_or_else(|_| "[]".into());
-        let replay_context = trace
-            .replay_context
-            .as_ref()
-            .and_then(|v| serde_json::to_string(v).ok());
 
         sqlx::query(
             "INSERT INTO diag_traces \
@@ -354,18 +394,18 @@ impl TraceStore for SqliteTraceStore {
         .bind(&id)
         .bind(&session_id)
         .bind(&trace.name)
-        .bind(status)
+        .bind(fields.status)
         .bind(&trace.user_input)
-        .bind(&metadata)
+        .bind(&fields.metadata)
         .bind(&started_at)
-        .bind(&completed_at)
-        .bind(input_toks)
-        .bind(output_toks)
+        .bind(&fields.completed_at)
+        .bind(fields.input_tokens)
+        .bind(fields.output_tokens)
         .bind(trace.total_cost_usd)
-        .bind(llm_ms)
-        .bind(tool_ms)
-        .bind(&tags)
-        .bind(&replay_context)
+        .bind(fields.llm_duration_ms)
+        .bind(fields.tool_duration_ms)
+        .bind(&fields.tags)
+        .bind(&fields.replay_context)
         .execute(&self.pool)
         .await
         .map_err(|e| storage_err(format!("insert_trace: {e}")))?;
@@ -391,19 +431,7 @@ impl TraceStore for SqliteTraceStore {
 
     async fn update_trace(&self, trace: Trace) -> Result<(), TraceStoreError> {
         let id = trace.id.to_string();
-        let status = trace_status_to_str(trace.status);
-        let metadata = serde_json::to_string(&trace.metadata).unwrap_or_else(|_| "null".into());
-        let completed_at = trace.completed_at.map(|t| t.to_rfc3339());
-        let input_toks = i64::try_from(trace.total_input_tokens).unwrap_or(i64::MAX);
-        let output_toks = i64::try_from(trace.total_output_tokens).unwrap_or(i64::MAX);
-        let llm_ms = i64::try_from(trace.llm_duration_ms).unwrap_or(i64::MAX);
-        let tool_ms = i64::try_from(trace.tool_duration_ms).unwrap_or(i64::MAX);
-
-        let tags = serde_json::to_string(&trace.tags).unwrap_or_else(|_| "[]".into());
-        let replay_context = trace
-            .replay_context
-            .as_ref()
-            .and_then(|v| serde_json::to_string(v).ok());
+        let fields = TracePersistenceFields::from(&trace);
 
         let rows = sqlx::query(
             "UPDATE diag_traces SET \
@@ -412,16 +440,16 @@ impl TraceStore for SqliteTraceStore {
              llm_duration_ms = ?7, tool_duration_ms = ?8, tags = ?9, replay_context = ?10 \
              WHERE id = ?11",
         )
-        .bind(status)
-        .bind(&metadata)
-        .bind(&completed_at)
-        .bind(input_toks)
-        .bind(output_toks)
+        .bind(fields.status)
+        .bind(&fields.metadata)
+        .bind(&fields.completed_at)
+        .bind(fields.input_tokens)
+        .bind(fields.output_tokens)
         .bind(trace.total_cost_usd)
-        .bind(llm_ms)
-        .bind(tool_ms)
-        .bind(&tags)
-        .bind(&replay_context)
+        .bind(fields.llm_duration_ms)
+        .bind(fields.tool_duration_ms)
+        .bind(&fields.tags)
+        .bind(&fields.replay_context)
         .bind(&id)
         .execute(&self.pool)
         .await

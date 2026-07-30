@@ -814,6 +814,18 @@ impl Keymap {
     }
 }
 
+/// Re-label a rendered chord for the host platform.
+///
+/// On macOS the physical Alt key is Option, so hint text swaps the `Alt+`
+/// prefix for the ⌥ glyph; other platforms keep `Alt+`.
+pub fn platform_shortcut_label(shortcut: &str) -> String {
+    if cfg!(target_os = "macos") {
+        shortcut.replace("Alt+", "\u{2325}")
+    } else {
+        shortcut.to_string()
+    }
+}
+
 #[cfg(test)]
 static DEFAULT_KEYMAP: LazyLock<Keymap> = LazyLock::new(Keymap::default);
 
@@ -1236,6 +1248,21 @@ mod tests {
             kind: KeyEventKind::Press,
             state: KeyEventState::NONE,
         }
+    }
+
+    // T-KEYS-PLATFORM-01: Alt is relabeled for the host platform: `⌥` on
+    // macOS (the physical key is Option), `Alt+` elsewhere.
+    #[test]
+    fn test_platform_shortcut_label_alt() {
+        let label = platform_shortcut_label("Alt+Enter");
+        if cfg!(target_os = "macos") {
+            assert_eq!(label, "\u{2325}Enter");
+        } else {
+            assert_eq!(label, "Alt+Enter");
+        }
+        // Chords without Alt pass through unchanged on every platform.
+        assert_eq!(platform_shortcut_label("Ctrl+C"), "Ctrl+C");
+        assert_eq!(platform_shortcut_label("F2"), "F2");
     }
 
     // T-TUI-03-01: Ctrl+Q always quits regardless of mode.

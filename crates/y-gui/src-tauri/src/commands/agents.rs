@@ -3,105 +3,12 @@
 #[cfg(test)]
 use std::path::Path;
 
-use serde::Serialize;
 use tauri::State;
-use y_core::agent::ContextStrategyHint;
-use y_core::runtime::RuntimeBackend;
+use y_service::{
+    AgentDetail, AgentInfo, AgentManagementService, AgentSource, AgentToolInfo, PromptSectionInfo,
+};
 
 use crate::state::AppState;
-
-// ---------------------------------------------------------------------------
-// Response types
-// ---------------------------------------------------------------------------
-
-/// Agent summary info returned to the frontend.
-#[derive(Debug, Serialize, Clone)]
-pub struct AgentFeatureFlags {
-    pub toolcall: bool,
-    pub skills: bool,
-    pub knowledge: bool,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct AgentInfo {
-    pub id: String,
-    pub name: String,
-    pub icon: Option<String>,
-    pub description: String,
-    pub mode: String,
-    pub trust_tier: String,
-    pub capabilities: Vec<String>,
-    pub working_directory: Option<String>,
-    pub provider_id: Option<String>,
-    pub features: AgentFeatureFlags,
-    pub user_callable: bool,
-    pub is_overridden: bool,
-}
-
-/// Full agent detail returned to the frontend.
-#[derive(Debug, Serialize, Clone)]
-pub struct AgentDetail {
-    pub id: String,
-    pub name: String,
-    pub icon: Option<String>,
-    pub description: String,
-    pub mode: String,
-    pub trust_tier: String,
-    pub capabilities: Vec<String>,
-    pub working_directory: Option<String>,
-    pub allowed_tools: Vec<String>,
-    pub system_prompt: String,
-    pub skills: Vec<String>,
-    pub features: AgentFeatureFlags,
-    pub knowledge_collections: Vec<String>,
-    pub prompt_section_ids: Vec<String>,
-    pub provider_id: Option<String>,
-    pub preferred_models: Vec<String>,
-    pub fallback_models: Vec<String>,
-    pub provider_tags: Vec<String>,
-    pub temperature: Option<f64>,
-    pub top_p: Option<f64>,
-    pub plan_mode: Option<String>,
-    pub thinking_effort: Option<String>,
-    pub permission_mode: Option<String>,
-    pub max_iterations: usize,
-    pub max_tool_calls: usize,
-    pub timeout_secs: u64,
-    pub context_sharing: String,
-    pub max_context_tokens: usize,
-    pub max_completion_tokens: Option<usize>,
-    pub user_callable: bool,
-    pub is_overridden: bool,
-    pub mcp_mode: Option<String>,
-    pub mcp_servers: Vec<String>,
-}
-
-/// Tool info returned for agent tool-selection settings.
-#[derive(Debug, Serialize, Clone)]
-pub struct AgentToolInfo {
-    pub name: String,
-    pub description: String,
-    pub category: String,
-    pub is_dangerous: bool,
-}
-
-/// Built-in prompt section info for agent prompt-selection settings.
-#[derive(Debug, Serialize, Clone)]
-pub struct PromptSectionInfo {
-    pub id: String,
-    pub category: String,
-    pub priority: i32,
-    pub content: String,
-    pub condition: Option<String>,
-}
-
-/// Raw agent source content used by the frontend raw editor.
-#[derive(Debug, Serialize, Clone)]
-pub struct AgentSource {
-    pub path: String,
-    pub content: String,
-    pub is_user_file: bool,
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -111,51 +18,6 @@ pub struct AgentSource {
 #[cfg(test)]
 fn agents_dir(config_dir: &Path) -> std::path::PathBuf {
     config_dir.join("agents")
-}
-
-fn detail_from_definition(
-    def: &y_agent::agent::definition::AgentDefinition,
-    is_overridden: bool,
-) -> AgentDetail {
-    AgentDetail {
-        id: def.id.clone(),
-        name: def.name.clone(),
-        icon: def.icon.clone(),
-        description: def.description.clone(),
-        mode: format!("{:?}", def.mode).to_lowercase(),
-        trust_tier: format!("{:?}", def.trust_tier),
-        capabilities: def.capabilities.clone(),
-        working_directory: def.working_directory.clone(),
-        allowed_tools: def.allowed_tools.clone(),
-        system_prompt: def.system_prompt.clone(),
-        skills: def.skills.clone(),
-        features: AgentFeatureFlags {
-            toolcall: def.toolcall_enabled_resolved(),
-            skills: def.skills_enabled_resolved(),
-            knowledge: def.knowledge_enabled_resolved(),
-        },
-        knowledge_collections: def.knowledge_collections.clone(),
-        prompt_section_ids: def.prompt_section_ids.clone(),
-        provider_id: def.provider_id.clone(),
-        preferred_models: def.preferred_models.clone(),
-        fallback_models: def.fallback_models.clone(),
-        provider_tags: def.provider_tags.clone(),
-        temperature: def.temperature,
-        top_p: def.top_p,
-        plan_mode: def.plan_mode.clone(),
-        thinking_effort: def.thinking_effort.clone(),
-        permission_mode: def.permission_mode.map(|mode| mode.to_string()),
-        max_iterations: def.max_iterations,
-        max_tool_calls: def.max_tool_calls,
-        timeout_secs: def.timeout_secs,
-        context_sharing: format!("{:?}", def.context_sharing).to_lowercase(),
-        max_context_tokens: def.max_context_tokens,
-        max_completion_tokens: def.max_completion_tokens,
-        user_callable: def.user_callable,
-        is_overridden,
-        mcp_mode: def.mcp_mode.clone(),
-        mcp_servers: def.mcp_servers.clone(),
-    }
 }
 
 #[cfg(test)]
@@ -190,57 +52,13 @@ fn load_agent_source(
 /// List all registered agent definitions.
 #[tauri::command]
 pub async fn agent_list(state: State<'_, AppState>) -> Result<Vec<AgentInfo>, String> {
-    let registry = state.container.agent_registry.lock().await;
-
-    let mut agents: Vec<AgentInfo> = registry
-        .list()
-        .iter()
-        .map(|def| AgentInfo {
-            id: def.id.clone(),
-            name: def.name.clone(),
-            icon: def.icon.clone(),
-            description: def.description.clone(),
-            mode: format!("{:?}", def.mode).to_lowercase(),
-            trust_tier: format!("{:?}", def.trust_tier),
-            capabilities: def.capabilities.clone(),
-            working_directory: def.working_directory.clone(),
-            provider_id: def.provider_id.clone(),
-            features: AgentFeatureFlags {
-                toolcall: def.toolcall_enabled_resolved(),
-                skills: def.skills_enabled_resolved(),
-                knowledge: def.knowledge_enabled_resolved(),
-            },
-            user_callable: def.user_callable,
-            is_overridden: registry.is_overridden(&def.id),
-        })
-        .collect();
-
-    // Sort: built-in first, then user-defined, then dynamic; alphabetically within each tier.
-    agents.sort_by(|a, b| {
-        let tier_order = |t: &str| match t {
-            "BuiltIn" => 0,
-            "UserDefined" => 1,
-            "Dynamic" => 2,
-            _ => 3,
-        };
-        tier_order(&a.trust_tier)
-            .cmp(&tier_order(&b.trust_tier))
-            .then(a.name.cmp(&b.name))
-    });
-
-    Ok(agents)
+    Ok(AgentManagementService::list_agents(&state.container).await)
 }
 
 /// Get full detail for a single agent.
 #[tauri::command]
 pub async fn agent_get(state: State<'_, AppState>, id: String) -> Result<AgentDetail, String> {
-    let registry = state.container.agent_registry.lock().await;
-
-    let def = registry
-        .get(&id)
-        .ok_or_else(|| format!("Agent not found: {id}"))?;
-
-    Ok(detail_from_definition(def, registry.is_overridden(&def.id)))
+    AgentManagementService::get_agent(&state.container, &id).await
 }
 
 /// Get the raw TOML source for a single agent definition.
@@ -249,20 +67,13 @@ pub async fn agent_source_get(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<AgentSource, String> {
-    let (path, content, is_user_file) = state.container.get_agent_source(&id).await?;
-    Ok(AgentSource {
-        path,
-        content,
-        is_user_file,
-    })
+    AgentManagementService::get_agent_source_info(&state.container, &id).await
 }
 
 /// Parse raw agent TOML and return the normalized detail shape used by the GUI.
 #[tauri::command]
 pub async fn agent_toml_parse(toml_content: String) -> Result<AgentDetail, String> {
-    let def = y_agent::agent::definition::AgentDefinition::from_toml(&toml_content)
-        .map_err(|e| format!("Invalid agent TOML: {e}"))?;
-    Ok(detail_from_definition(&def, false))
+    AgentManagementService::parse_agent_toml(&toml_content)
 }
 
 /// Save (create or update) a user agent definition.
@@ -305,34 +116,13 @@ pub async fn agent_reload(state: State<'_, AppState>) -> Result<(), String> {
 /// `{{TRANSLATE_TARGET_LANGUAGE}}` template variable set in GUI settings.
 #[tauri::command]
 pub async fn translate_text(state: State<'_, AppState>, text: String) -> Result<String, String> {
-    let input = serde_json::json!({ "text": text });
-    let result = state
-        .container
-        .agent_delegator
-        .delegate("translator", input, ContextStrategyHint::None, None)
-        .await
-        .map_err(|e| format!("Translation failed: {e}"))?;
-    Ok(result.text)
+    AgentManagementService::translate_text(&state.container, text).await
 }
 
 /// List all registered tool definitions for agent tool configuration.
 #[tauri::command]
 pub async fn agent_tool_list(state: State<'_, AppState>) -> Result<Vec<AgentToolInfo>, String> {
-    let mut tools: Vec<AgentToolInfo> = state
-        .container
-        .tool_registry
-        .get_all_definitions()
-        .await
-        .into_iter()
-        .map(|definition| AgentToolInfo {
-            name: definition.name.0,
-            description: definition.description,
-            category: format!("{:?}", definition.category).to_lowercase(),
-            is_dangerous: definition.is_dangerous,
-        })
-        .collect();
-    tools.sort_by(|left, right| left.name.cmp(&right.name));
-    Ok(tools)
+    Ok(AgentManagementService::list_tools(&state.container).await)
 }
 
 /// List built-in prompt sections that can be selected for an agent preset.
@@ -340,34 +130,14 @@ pub async fn agent_tool_list(state: State<'_, AppState>) -> Result<Vec<AgentTool
 pub async fn agent_prompt_section_list(
     state: State<'_, AppState>,
 ) -> Result<Vec<PromptSectionInfo>, String> {
-    let prompts_dir = state.config_dir.join("prompts");
-    let store = y_prompt::builtin_section_store_with_overrides(
-        prompts_dir.is_dir().then_some(prompts_dir.as_path()),
-        &RuntimeBackend::Native,
-    );
-    let mut sections: Vec<PromptSectionInfo> = store
-        .section_ids()
-        .into_iter()
-        .filter_map(|id| {
-            store.get(id).map(|section| PromptSectionInfo {
-                id: id.to_string(),
-                category: format!("{:?}", section.category).to_lowercase(),
-                priority: section.priority,
-                content: store.load_content(id).unwrap_or_default(),
-                condition: section
-                    .condition
-                    .as_ref()
-                    .map(|condition| format!("{condition:?}")),
-            })
-        })
-        .collect();
-    sections.sort_by(|left, right| left.id.cmp(&right.id));
-    Ok(sections)
+    Ok(AgentManagementService::list_prompt_sections(
+        &state.config_dir,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{detail_from_definition, load_agent_source};
+    use super::{load_agent_source, AgentDetail};
     use tempfile::tempdir;
     use y_agent::agent::definition::{AgentDefinition, AgentMode, ContextStrategy};
     use y_agent::TrustTier;
@@ -419,7 +189,7 @@ mod tests {
 
     #[test]
     fn detail_from_definition_maps_user_facing_fields() {
-        let detail = detail_from_definition(&sample_definition(), true);
+        let detail = AgentDetail::from_definition(&sample_definition(), true);
         assert_eq!(detail.id, "reviewer");
         assert_eq!(detail.provider_id.as_deref(), Some("openai"));
         assert_eq!(detail.plan_mode.as_deref(), Some("plan"));

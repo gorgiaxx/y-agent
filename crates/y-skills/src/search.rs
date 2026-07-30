@@ -1,6 +1,7 @@
 //! Skill search: tag matching and trigger pattern matching.
 
 use y_core::skill::{SkillManifest, SkillSummary};
+use y_core::text_search::lexical_query_tokens;
 
 /// Searches through skills by tag and trigger pattern matching.
 #[derive(Debug, Default)]
@@ -78,7 +79,7 @@ impl SkillSearch {
         limit: usize,
         min_score: usize,
     ) -> Vec<ScoredSkillSummary> {
-        let query_tokens = query_tokens(query);
+        let query_tokens = lexical_query_tokens(query);
         let mut results: Vec<(usize, &SkillManifest)> = self
             .manifests
             .iter()
@@ -151,21 +152,6 @@ impl SkillSearch {
 
         score
     }
-}
-
-fn query_tokens(query: &str) -> Vec<String> {
-    const STOP_WORDS: &[&str] = &[
-        "and", "are", "for", "from", "into", "please", "that", "the", "this", "with",
-    ];
-
-    let mut tokens: Vec<_> = query
-        .split(|character: char| !character.is_alphanumeric())
-        .map(str::to_lowercase)
-        .filter(|token| token.len() >= 3 && !STOP_WORDS.contains(&token.as_str()))
-        .collect();
-    tokens.sort();
-    tokens.dedup();
-    tokens
 }
 
 #[cfg(test)]

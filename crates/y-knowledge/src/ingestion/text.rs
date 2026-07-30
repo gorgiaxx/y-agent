@@ -2,11 +2,10 @@
 //!
 //! Reads plain text files from the local filesystem.
 
-use super::{RawDocument, SourceConnector};
+use super::{file_document, file_stem_title, RawDocument, SourceConnector};
 use crate::error::KnowledgeError;
 use crate::models::SourceType;
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
 
 /// Connector for plain text files.
 #[derive(Debug, Default)]
@@ -31,40 +30,12 @@ impl SourceConnector for TextConnector {
             );
         }
 
-        let content_hash = hex_sha256(&content);
-
-        // Extract title from filename.
-        let title = std::path::Path::new(uri)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        Ok(RawDocument {
-            content,
-            uri: uri.to_string(),
-            title,
-            content_hash,
-            source_type: SourceType::File,
-        })
+        Ok(file_document(uri, content, file_stem_title(uri)))
     }
 
     fn source_type(&self) -> SourceType {
         SourceType::File
     }
-}
-
-/// Compute hex-encoded SHA-256 hash of a string.
-fn hex_sha256(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    let result = hasher.finalize();
-    result
-        .iter()
-        .fold(String::with_capacity(64), |mut acc, byte| {
-            use std::fmt::Write;
-            let _ = write!(acc, "{byte:02x}");
-            acc
-        })
 }
 
 #[cfg(test)]
@@ -101,16 +72,5 @@ mod tests {
         let connector = TextConnector::new();
         let result = connector.fetch("/nonexistent/file.txt").await;
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_hex_sha256_deterministic() {
-        let hash1 = hex_sha256("hello");
-        let hash2 = hex_sha256("hello");
-        assert_eq!(hash1, hash2);
-        assert_eq!(hash1.len(), 64); // SHA-256 = 32 bytes = 64 hex chars
-
-        let hash3 = hex_sha256("world");
-        assert_ne!(hash1, hash3);
     }
 }

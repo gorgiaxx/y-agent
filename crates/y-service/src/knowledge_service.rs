@@ -113,6 +113,231 @@ fn chunk_level_label(level: y_knowledge::chunking::ChunkLevel) -> &'static str {
     }
 }
 
+/// Knowledge collection summary shared by presentation clients.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CollectionInfo {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub entry_count: usize,
+    pub chunk_count: usize,
+    pub total_bytes: u64,
+    pub created_at: String,
+}
+
+impl From<&KnowledgeCollection> for CollectionInfo {
+    fn from(collection: &KnowledgeCollection) -> Self {
+        Self {
+            id: collection.id.to_string(),
+            name: collection.name.clone(),
+            description: collection.description.clone(),
+            entry_count: usize::try_from(collection.stats.entry_count).unwrap_or(usize::MAX),
+            chunk_count: usize::try_from(collection.stats.chunk_count).unwrap_or(usize::MAX),
+            total_bytes: collection.stats.total_bytes,
+            created_at: collection.created_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Knowledge entry summary shared by presentation clients.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EntryInfo {
+    pub id: String,
+    pub title: String,
+    pub source_uri: String,
+    pub source_type: String,
+    pub domains: Vec<String>,
+    pub quality_score: f32,
+    pub chunk_count: usize,
+    pub content_size: u64,
+    pub state: String,
+    pub hit_count: u64,
+    pub updated_at: String,
+    pub document_type: Option<String>,
+    pub industry: Option<String>,
+    pub subcategory: Option<String>,
+    pub interpreted_title: Option<String>,
+    pub tags: Vec<String>,
+}
+
+impl From<&KnowledgeEntry> for EntryInfo {
+    fn from(entry: &KnowledgeEntry) -> Self {
+        Self {
+            id: entry.id.to_string(),
+            title: entry.source.title.clone(),
+            source_uri: entry.source.uri.clone(),
+            source_type: entry.source.source_type.to_string(),
+            domains: entry.domains.clone(),
+            quality_score: entry.quality_score,
+            chunk_count: entry.chunks.len(),
+            content_size: if entry.content_size > 0 {
+                entry.content_size
+            } else {
+                entry
+                    .chunks
+                    .iter()
+                    .map(|chunk| u64::try_from(chunk.len()).unwrap_or(u64::MAX))
+                    .sum()
+            },
+            state: entry.state.to_string(),
+            hit_count: u64::from(entry.hit_num),
+            updated_at: entry.refreshed_at.to_rfc3339(),
+            document_type: entry.metadata.document_type.clone(),
+            industry: entry.metadata.industry.clone(),
+            subcategory: entry.metadata.subcategory.clone(),
+            interpreted_title: entry.metadata.interpreted_title.clone(),
+            tags: entry.tags.clone(),
+        }
+    }
+}
+
+/// L1 knowledge section shared by presentation clients.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SectionInfo {
+    pub index: usize,
+    pub title: String,
+    pub summary: String,
+}
+
+/// L2 knowledge chunk shared by presentation clients.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChunkInfo {
+    pub id: String,
+    pub content: String,
+    pub token_estimate: usize,
+    pub section_index: usize,
+}
+
+/// Full knowledge entry detail shared by presentation clients.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EntryDetail {
+    pub id: String,
+    pub title: String,
+    pub source_uri: String,
+    pub domains: Vec<String>,
+    pub quality_score: f32,
+    pub state: String,
+    pub hit_count: u64,
+    pub total_chunk_count: usize,
+    pub l0_summary: String,
+    pub l1_sections: Vec<SectionInfo>,
+    pub l2_chunks: Vec<ChunkInfo>,
+    pub document_type: Option<String>,
+    pub industry: Option<String>,
+    pub subcategory: Option<String>,
+    pub interpreted_title: Option<String>,
+    pub tags: Vec<String>,
+}
+
+impl From<&KnowledgeEntry> for EntryDetail {
+    fn from(entry: &KnowledgeEntry) -> Self {
+        const MAX_L2_CHUNKS: usize = 200;
+        Self {
+            id: entry.id.to_string(),
+            title: entry.source.title.clone(),
+            source_uri: entry.source.uri.clone(),
+            domains: entry.domains.clone(),
+            quality_score: entry.quality_score,
+            state: entry.state.to_string(),
+            hit_count: u64::from(entry.hit_num),
+            total_chunk_count: entry.chunks.len(),
+            l0_summary: entry.summary.clone().unwrap_or_default(),
+            l1_sections: entry
+                .l1_sections
+                .iter()
+                .map(|section| SectionInfo {
+                    index: section.index,
+                    title: section.title.clone(),
+                    summary: strip_section_title(&section.content, &section.title),
+                })
+                .collect(),
+            l2_chunks: entry
+                .chunks
+                .iter()
+                .enumerate()
+                .take(MAX_L2_CHUNKS)
+                .map(|(index, content)| ChunkInfo {
+                    id: format!("{}-{index}", entry.id),
+                    content: content.clone(),
+                    token_estimate: content.len() / 4,
+                    section_index: index,
+                })
+                .collect(),
+            document_type: entry.metadata.document_type.clone(),
+            industry: entry.metadata.industry.clone(),
+            subcategory: entry.metadata.subcategory.clone(),
+            interpreted_title: entry.metadata.interpreted_title.clone(),
+            tags: entry.tags.clone(),
+        }
+    }
+}
+
+/// Knowledge search item shared by presentation clients.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KnowledgeSearchItem {
+    pub chunk_id: String,
+    pub title: String,
+    pub content: String,
+    pub relevance: f64,
+    pub domains: Vec<String>,
+    pub source: String,
+    pub collection: String,
+    pub resolution: String,
+}
+
+impl From<&SearchResultItem> for KnowledgeSearchItem {
+    fn from(result: &SearchResultItem) -> Self {
+        Self {
+            chunk_id: result.chunk_id.clone(),
+            title: result.title.clone(),
+            content: result.content.clone(),
+            relevance: result.relevance,
+            domains: result.domains.clone(),
+            source: result.source.clone(),
+            collection: result.collection.clone(),
+            resolution: result.resolution.clone(),
+        }
+    }
+}
+
+/// Aggregate knowledge-base statistics shared by presentation clients.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct KnowledgeStats {
+    pub collections: usize,
+    pub entries: usize,
+    pub chunks: usize,
+    pub hits: u64,
+}
+
+/// Editable metadata fields for a knowledge entry.
+#[derive(Debug, Default)]
+pub struct KnowledgeMetadataUpdate {
+    pub document_type: Option<String>,
+    pub industry: Option<String>,
+    pub subcategory: Option<String>,
+    pub interpreted_title: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+fn strip_section_title(content: &str, title: &str) -> String {
+    let trimmed = content.trim_start();
+    for prefix in ["#### ", "### ", "## ", "# "] {
+        if let Some(rest) = trimmed.strip_prefix(&format!("{prefix}{title}")) {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix(title) {
+        let rest = rest.trim_start();
+        if !rest.is_empty() {
+            return rest.to_string();
+        }
+    }
+    content.to_string()
+}
+
 /// Knowledge service error.
 #[derive(Debug, thiserror::Error)]
 pub enum KnowledgeServiceError {
@@ -442,6 +667,19 @@ impl KnowledgeService {
     /// List all collections.
     pub fn list_collections(&self) -> Vec<&KnowledgeCollection> {
         self.collections.values().collect()
+    }
+
+    /// Create a collection and return its presentation summary.
+    pub fn create_collection_info(&mut self, name: &str, description: &str) -> CollectionInfo {
+        CollectionInfo::from(self.create_collection(name, description))
+    }
+
+    /// List collection summaries for presentation clients.
+    pub fn collection_infos(&self) -> Vec<CollectionInfo> {
+        self.list_collections()
+            .into_iter()
+            .map(CollectionInfo::from)
+            .collect()
     }
 
     /// Delete a collection and all its entries.
@@ -884,6 +1122,16 @@ impl KnowledgeService {
         }
     }
 
+    /// Search and map results to the shared presentation contract.
+    pub async fn search_items(&self, params: &KnowledgeSearchParams) -> Vec<KnowledgeSearchItem> {
+        self.search(params)
+            .await
+            .results
+            .iter()
+            .map(KnowledgeSearchItem::from)
+            .collect()
+    }
+
     // -------------------------------------------------------------------
     // Entry queries
     // -------------------------------------------------------------------
@@ -896,9 +1144,27 @@ impl KnowledgeService {
             .collect()
     }
 
+    /// List entry summaries for presentation clients.
+    pub fn entry_infos(&self, collection: &str) -> Vec<EntryInfo> {
+        self.list_entries(collection)
+            .into_iter()
+            .map(EntryInfo::from)
+            .collect()
+    }
+
     /// Get a single entry by ID.
     pub fn get_entry(&self, entry_id: &str) -> Option<&KnowledgeEntry> {
         self.entries.get(entry_id)
+    }
+
+    /// Get an entry summary for presentation clients.
+    pub fn entry_info(&self, entry_id: &str) -> Option<EntryInfo> {
+        self.get_entry(entry_id).map(EntryInfo::from)
+    }
+
+    /// Get full entry detail for presentation clients.
+    pub fn entry_detail_info(&self, entry_id: &str) -> Option<EntryDetail> {
+        self.get_entry(entry_id).map(EntryDetail::from)
     }
 
     /// Get mutable reference to a specific entry by ID.
@@ -911,6 +1177,110 @@ impl KnowledgeService {
     /// Used by GUI commands after editing entry metadata fields.
     pub fn save_entries_public(&self) {
         self.save_entries();
+    }
+
+    /// Update editable entry metadata and keep retrieval metadata in sync.
+    pub fn update_entry_metadata(
+        &mut self,
+        entry_id: &str,
+        update: KnowledgeMetadataUpdate,
+    ) -> bool {
+        let Some(entry) = self.entries.get_mut(entry_id) else {
+            return false;
+        };
+
+        if let Some(document_type) = update.document_type {
+            entry.metadata.document_type = Some(document_type);
+        }
+        if let Some(industry) = update.industry {
+            entry.metadata.industry = Some(industry);
+        }
+        if let Some(subcategory) = update.subcategory {
+            entry.metadata.subcategory = Some(subcategory);
+        }
+        if let Some(interpreted_title) = update.interpreted_title {
+            entry.metadata.interpreted_title = Some(interpreted_title);
+        }
+        if let Some(tags) = update.tags {
+            entry.tags.clone_from(&tags);
+            entry.metadata.topics = tags;
+        }
+
+        self.refresh_entry_metadata(entry_id);
+        self.save_entries();
+        true
+    }
+
+    /// Return aggregate statistics for the full knowledge base.
+    pub fn stats(&self) -> KnowledgeStats {
+        let collections = self.list_collections();
+        let total_entries: u64 = collections
+            .iter()
+            .map(|collection| collection.stats.entry_count)
+            .sum();
+        let total_chunks: u64 = collections
+            .iter()
+            .map(|collection| collection.stats.chunk_count)
+            .sum();
+
+        KnowledgeStats {
+            collections: collections.len(),
+            entries: usize::try_from(total_entries).unwrap_or(usize::MAX),
+            chunks: usize::try_from(total_chunks).unwrap_or(usize::MAX),
+            hits: 0,
+        }
+    }
+
+    /// Expand a file or directory into supported knowledge source paths.
+    pub fn expand_supported_sources(path: &str) -> Result<Vec<String>, KnowledgeServiceError> {
+        let root = PathBuf::from(path);
+        if !root.exists() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("path does not exist: {path}"),
+            )
+            .into());
+        }
+
+        if root.is_file() {
+            return Ok(y_knowledge::supported_formats::is_supported(&root)
+                .then(|| path.to_string())
+                .into_iter()
+                .collect());
+        }
+
+        Ok(y_knowledge::supported_formats::expand_directory(&root)?
+            .into_iter()
+            .filter_map(|source| source.to_str().map(String::from))
+            .collect())
+    }
+
+    fn refresh_entry_metadata(&self, entry_id: &str) {
+        let Some(entry) = self.entries.get(entry_id) else {
+            return;
+        };
+        let metadata = EntryMetadata {
+            title: entry.source.title.clone(),
+            summary: entry.summary.clone(),
+            section_titles: entry
+                .l1_sections
+                .iter()
+                .map(|section| section.title.clone())
+                .collect(),
+            section_summaries: entry
+                .l1_sections
+                .iter()
+                .map(|section| section.content.clone())
+                .collect(),
+            tags: entry.tags.clone(),
+            document_type: entry.metadata.document_type.clone(),
+            industry: entry.metadata.industry.clone(),
+            subcategory: entry.metadata.subcategory.clone(),
+        };
+        self.inject_knowledge
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .register_entry_metadata(entry_id, metadata);
     }
 
     /// Delete an entry by ID. Returns `true` if found and removed.
@@ -1806,37 +2176,7 @@ impl KnowledgeService {
             .filter(|t| !t.is_empty())
             .collect();
 
-        let new_tags = entry.tags.clone();
-
-        // Update in-memory metadata for context injection.
-        {
-            let mut knowledge = self
-                .inject_knowledge
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-            // Re-read existing metadata from the middleware to preserve
-            // other fields (summary, section_titles).
-            if let Some(entry) = self.entries.get(entry_id) {
-                knowledge.register_entry_metadata(
-                    entry_id,
-                    EntryMetadata {
-                        title: entry.source.title.clone(),
-                        summary: entry.summary.clone(),
-                        section_titles: entry.l1_sections.iter().map(|s| s.title.clone()).collect(),
-                        section_summaries: entry
-                            .l1_sections
-                            .iter()
-                            .map(|s| s.content.clone())
-                            .collect(),
-                        tags: new_tags,
-                        document_type: entry.metadata.document_type.clone(),
-                        industry: entry.metadata.industry.clone(),
-                        subcategory: entry.metadata.subcategory.clone(),
-                    },
-                );
-            }
-        }
+        self.refresh_entry_metadata(entry_id);
 
         self.save_entries();
         true
@@ -1905,6 +2245,14 @@ impl KnowledgeService {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presentation_section_summary_strips_repeated_heading() {
+        assert_eq!(
+            strip_section_title("## Introduction\nBody", "Introduction"),
+            "Body"
+        );
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use tempfile::TempDir;
@@ -1975,6 +2323,59 @@ mod tests {
         let path = dir.path().join(name);
         std::fs::write(&path, content).expect("write test doc");
         path
+    }
+
+    #[test]
+    fn expand_supported_sources_filters_unsupported_files() {
+        let dir = TempDir::new().expect("temp dir");
+        write_test_doc(&dir, "guide.md", "# Guide");
+        write_test_doc(&dir, "image.bmp", "unsupported");
+
+        let sources = KnowledgeService::expand_supported_sources(
+            dir.path().to_str().expect("UTF-8 temp path"),
+        )
+        .expect("expand sources");
+
+        assert_eq!(sources.len(), 1);
+        assert!(sources[0].ends_with("guide.md"));
+    }
+
+    #[tokio::test]
+    async fn metadata_update_changes_shared_entry_contract() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = write_test_doc(
+            &dir,
+            "guide.md",
+            "# Shared Service Guide\n\nKnowledge metadata is owned by the service layer so every presentation client observes the same contract.\n\nThe retrieval index is refreshed after edits, while durable storage preserves the updated fields across restarts.\n\nWeb and desktop clients delegate these operations rather than maintaining separate business rules.",
+        );
+        let mut service = KnowledgeService::new(KnowledgeConfig::default());
+        let result = service
+            .ingest(
+                &KnowledgeIngestParams {
+                    source: path.to_string_lossy().into_owned(),
+                    domain: None,
+                    collection: "default".to_string(),
+                    use_llm_summary: false,
+                    extract_metadata: false,
+                },
+                "default",
+            )
+            .await
+            .expect("ingest");
+        let entry_id = result.entry_id.expect("entry id");
+
+        assert!(service.update_entry_metadata(
+            &entry_id,
+            KnowledgeMetadataUpdate {
+                document_type: Some("guide".to_string()),
+                tags: Some(vec!["shared".to_string()]),
+                ..Default::default()
+            },
+        ));
+
+        let entry = service.entry_info(&entry_id).expect("entry info");
+        assert_eq!(entry.document_type.as_deref(), Some("guide"));
+        assert_eq!(entry.tags, ["shared"]);
     }
 
     #[test]

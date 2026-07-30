@@ -2,11 +2,10 @@
 //!
 //! Reads Markdown files and extracts heading structure for title detection.
 
-use super::{RawDocument, SourceConnector};
+use super::{file_document, file_stem_title, RawDocument, SourceConnector};
 use crate::error::KnowledgeError;
 use crate::models::SourceType;
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
 
 /// Connector for Markdown files.
 #[derive(Debug, Default)]
@@ -31,23 +30,10 @@ impl SourceConnector for MarkdownConnector {
             );
         }
 
-        let content_hash = hex_sha256(&content);
-
         // Extract title from first H1 heading, falling back to filename.
-        let title = extract_markdown_title(&content).unwrap_or_else(|| {
-            std::path::Path::new(uri)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default()
-        });
+        let title = extract_markdown_title(&content).unwrap_or_else(|| file_stem_title(uri));
 
-        Ok(RawDocument {
-            content,
-            uri: uri.to_string(),
-            title,
-            content_hash,
-            source_type: SourceType::File,
-        })
+        Ok(file_document(uri, content, title))
     }
 
     fn source_type(&self) -> SourceType {
@@ -69,20 +55,6 @@ fn extract_markdown_title(content: &str) -> Option<String> {
         }
     }
     None
-}
-
-/// Compute hex-encoded SHA-256 hash.
-fn hex_sha256(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    let result = hasher.finalize();
-    result
-        .iter()
-        .fold(String::with_capacity(64), |mut acc, byte| {
-            use std::fmt::Write;
-            let _ = write!(acc, "{byte:02x}");
-            acc
-        })
 }
 
 #[cfg(test)]

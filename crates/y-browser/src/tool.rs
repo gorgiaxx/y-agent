@@ -274,35 +274,7 @@ impl BrowserTool {
         url: &str,
         wait_ms: Option<u64>,
     ) -> Result<String, ToolError> {
-        if !self.session.config().enabled {
-            return Err(ToolError::PermissionDenied {
-                name: "WebFetch".into(),
-                reason: "browser tool is disabled in configuration".into(),
-            });
-        }
-
-        self.session
-            .security()
-            .validate_url(url)
-            .map_err(|e| ToolError::PermissionDenied {
-                name: "WebFetch".into(),
-                reason: e.to_string(),
-            })?;
-
-        self.session.ensure_connected().await?;
-
-        self.session
-            .actions()
-            .navigate(url)
-            .await
-            .map_err(cdp_to_tool_error)?;
-
-        if let Some(ms) = wait_ms {
-            let ms = ms.min(10_000);
-            if ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-            }
-        }
+        self.prepare_page_fetch(url, wait_ms).await?;
 
         let text = self
             .session
@@ -324,6 +296,19 @@ impl BrowserTool {
         url: &str,
         wait_ms: Option<u64>,
     ) -> Result<String, ToolError> {
+        self.prepare_page_fetch(url, wait_ms).await?;
+
+        let text = self
+            .session
+            .actions()
+            .get_readable_text()
+            .await
+            .map_err(cdp_to_tool_error)?;
+
+        Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
+    }
+
+    async fn prepare_page_fetch(&self, url: &str, wait_ms: Option<u64>) -> Result<(), ToolError> {
         if !self.session.config().enabled {
             return Err(ToolError::PermissionDenied {
                 name: "WebFetch".into(),
@@ -347,21 +332,11 @@ impl BrowserTool {
             .await
             .map_err(cdp_to_tool_error)?;
 
-        if let Some(ms) = wait_ms {
-            let ms = ms.min(10_000);
-            if ms > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
-            }
+        if let Some(ms) = bounded_page_wait_ms(wait_ms) {
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
         }
 
-        let text = self
-            .session
-            .actions()
-            .get_readable_text()
-            .await
-            .map_err(cdp_to_tool_error)?;
-
-        Ok(truncate_output(&text, MAX_OUTPUT_CHARS))
+        Ok(())
     }
 
     /// Fetch page metadata (title + favicon URL) for the currently loaded page.
@@ -837,9 +812,21 @@ fn cdp_to_tool_error(e: crate::cdp_client::CdpError) -> ToolError {
     }
 }
 
+fn bounded_page_wait_ms(wait_ms: Option<u64>) -> Option<u64> {
+    wait_ms.map(|ms| ms.min(10_000)).filter(|ms| *ms > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_bounded_page_wait_ms_caps_and_ignores_zero() {
+        assert_eq!(bounded_page_wait_ms(Some(50_000)), Some(10_000));
+        assert_eq!(bounded_page_wait_ms(Some(250)), Some(250));
+        assert_eq!(bounded_page_wait_ms(Some(0)), None);
+        assert_eq!(bounded_page_wait_ms(None), None);
+    }
 
     #[test]
     fn test_tool_definition_search_supports_wait_ms() {

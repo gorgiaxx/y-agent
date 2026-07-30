@@ -5,6 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use y_core::runtime::{
     BackgroundProcessInfo, BackgroundProcessSnapshot, CommandRunner, ProcessStatus, RuntimeBackend,
+    RuntimeError,
 };
 use y_core::types::SessionId;
 
@@ -173,23 +174,13 @@ impl BackgroundTaskService {
                 bounded_max_output_bytes(request.max_output_bytes),
             )
             .await;
-        let snapshot = match snapshot {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                container.background_wake_service.finish_observation(
-                    &session_id,
-                    &request.process_id,
-                    false,
-                );
-                return Err(error.into());
-            }
-        };
-        container.background_wake_service.finish_observation(
-            &session_id,
-            &request.process_id,
-            process_status_is_terminal(&snapshot.status),
-        );
-        Ok(snapshot.into())
+        complete_observation(snapshot, |consumed| {
+            container.background_wake_service.finish_observation(
+                &session_id,
+                &request.process_id,
+                consumed,
+            );
+        })
     }
 
     /// Write stdin to a running background task, then return the next snapshot.
@@ -211,23 +202,13 @@ impl BackgroundTaskService {
                 bounded_max_output_bytes(request.max_output_bytes),
             )
             .await;
-        let snapshot = match snapshot {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                container.background_wake_service.finish_observation(
-                    &session_id,
-                    &request.process_id,
-                    false,
-                );
-                return Err(error.into());
-            }
-        };
-        container.background_wake_service.finish_observation(
-            &session_id,
-            &request.process_id,
-            process_status_is_terminal(&snapshot.status),
-        );
-        Ok(snapshot.into())
+        complete_observation(snapshot, |consumed| {
+            container.background_wake_service.finish_observation(
+                &session_id,
+                &request.process_id,
+                consumed,
+            );
+        })
     }
 
     /// Terminate a background task and return the final output snapshot.
@@ -259,8 +240,25 @@ fn process_status_is_terminal(status: &ProcessStatus) -> bool {
     )
 }
 
+fn complete_observation(
+    snapshot: Result<BackgroundProcessSnapshot, RuntimeError>,
+    finish: impl FnOnce(bool),
+) -> anyhow::Result<BackgroundTaskSnapshot> {
+    match snapshot {
+        Ok(snapshot) => {
+            finish(process_status_is_terminal(&snapshot.status));
+            Ok(snapshot.into())
+        }
+        Err(error) => {
+            finish(false);
+            Err(error.into())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::time::Duration;
 
     use y_core::runtime::{
@@ -268,7 +266,7 @@ mod tests {
         RuntimeBackend,
     };
 
-    use super::{BackgroundTaskInfo, BackgroundTaskSnapshot};
+    use super::{complete_observation, BackgroundTaskInfo, BackgroundTaskSnapshot};
 
     #[test]
     fn maps_background_process_info_to_status_bar_dto() {
@@ -320,5 +318,27 @@ mod tests {
         assert_eq!(dto.stdout, "ready");
         assert_eq!(dto.stderr, "");
         assert_eq!(dto.duration_ms, 750);
+    }
+
+    #[test]
+    fn completing_observation_marks_terminal_snapshot_consumed() {
+        let consumed = Cell::new(None);
+        let snapshot = BackgroundProcessSnapshot {
+            handle: ProcessHandle {
+                id: "proc-3".into(),
+                backend: RuntimeBackend::Native,
+            },
+            status: ProcessStatus::Completed { exit_code: 0 },
+            owner_session_id: None,
+            stdout: vec![],
+            stderr: vec![],
+            duration: Duration::ZERO,
+        };
+
+        let result = complete_observation(Ok(snapshot), |value| consumed.set(Some(value)))
+            .expect("map observed snapshot");
+
+        assert_eq!(result.process_id, "proc-3");
+        assert_eq!(consumed.get(), Some(true));
     }
 }

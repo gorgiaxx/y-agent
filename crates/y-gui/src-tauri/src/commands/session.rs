@@ -1,62 +1,15 @@
 //! Session command handlers — list, create, get messages, delete, truncate.
 
-use serde::Serialize;
 use tauri::State;
 
-use y_core::session::{CreateSessionOptions, SessionFilter, SessionState, SessionType};
+use y_core::session::SessionState;
 use y_core::types::SessionId;
 use y_service::{
-    decode_session_prompt_config, encode_session_prompt_config, session_prompt_config_has_content,
-    SessionPromptConfig,
+    decode_session_prompt_config, encode_session_prompt_config, ChildSessionInfo, MessageInfo,
+    SessionInfo, SessionPromptConfig, SessionService,
 };
 
 use crate::state::AppState;
-
-// ---------------------------------------------------------------------------
-// Response types
-// ---------------------------------------------------------------------------
-
-/// Session info returned to the frontend.
-#[derive(Debug, Serialize, Clone)]
-pub struct SessionInfo {
-    pub id: String,
-    pub agent_id: Option<String>,
-    pub title: Option<String>,
-    pub manual_title: Option<String>,
-    pub workspace_path: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub message_count: usize,
-    pub has_custom_prompt: bool,
-}
-
-fn is_user_visible_session(session_type: SessionType, state: SessionState) -> bool {
-    session_type.is_user_facing() && state == SessionState::Active
-}
-
-/// A message in the session transcript.
-#[derive(Debug, Serialize, Clone)]
-pub struct MessageInfo {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-    pub timestamp: String,
-    pub tool_calls: Vec<ToolCallBrief>,
-    /// Arbitrary metadata (model info, tool results, usage, etc.).
-    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
-    pub metadata: serde_json::Value,
-    /// Skill names attached to this user message (if any).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skills: Option<Vec<String>>,
-}
-
-/// Brief tool call info for display.
-#[derive(Debug, Serialize, Clone)]
-pub struct ToolCallBrief {
-    pub id: String,
-    pub name: String,
-    pub arguments: String,
-}
 
 // ---------------------------------------------------------------------------
 // Commands
@@ -75,10 +28,10 @@ pub async fn session_list(
     )
     .await
     .map_err(|error| format!("Failed to migrate session workspaces: {error}"))?;
-    let filter = SessionFilter {
+    let filter = y_core::session::SessionFilter {
         agent_id: agent_id.map(y_core::types::AgentId::from_string),
         state: Some(SessionState::Active),
-        ..SessionFilter::default()
+        ..Default::default()
     };
     let sessions = state
         .container
@@ -87,45 +40,7 @@ pub async fn session_list(
         .await
         .map_err(|e| format!("Failed to list sessions: {e}"))?;
 
-    // Collect session IDs that have custom prompt composition.
-    let mut custom_prompt_ids = std::collections::HashSet::new();
-    for s in &sessions {
-        if let Ok(stored) = state
-            .container
-            .session_manager
-            .get_custom_system_prompt(&s.id)
-            .await
-        {
-            let config = decode_session_prompt_config(stored);
-            if session_prompt_config_has_content(&config) {
-                custom_prompt_ids.insert(s.id.0.clone());
-            }
-        }
-    }
-
-    let mut infos: Vec<SessionInfo> = sessions
-        .into_iter()
-        .filter(|session| is_user_visible_session(session.session_type, session.state))
-        .map(|s| {
-            let has_custom = custom_prompt_ids.contains(&s.id.0);
-            SessionInfo {
-                id: s.id.0.clone(),
-                agent_id: s.agent_id.as_ref().map(|id| id.0.clone()),
-                title: s.title.clone(),
-                manual_title: s.manual_title.clone(),
-                workspace_path: s.workspace_path.clone(),
-                created_at: s.created_at.to_rfc3339(),
-                updated_at: s.updated_at.to_rfc3339(),
-                message_count: s.message_count as usize,
-                has_custom_prompt: has_custom,
-            }
-        })
-        .collect();
-
-    // Sort by updated_at descending (newest first).
-    infos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
-    Ok(infos)
+    Ok(SessionService::session_infos(&state.container.session_manager, sessions).await)
 }
 
 /// List resumable sessions in exactly one workspace, sorted by last updated.
@@ -151,51 +66,7 @@ pub async fn session_list_resumable(
     .await
     .map_err(|error| format!("Failed to list resumable sessions: {error}"))?;
 
-    let mut custom_prompt_ids = std::collections::HashSet::new();
-    for session in &sessions {
-        if let Ok(stored) = state
-            .container
-            .session_manager
-            .get_custom_system_prompt(&session.id)
-            .await
-        {
-            let config = decode_session_prompt_config(stored);
-            if session_prompt_config_has_content(&config) {
-                custom_prompt_ids.insert(session.id.0.clone());
-            }
-        }
-    }
-
-    Ok(sessions
-        .into_iter()
-        .map(|session| SessionInfo {
-            id: session.id.0.clone(),
-            agent_id: session.agent_id.as_ref().map(|id| id.0.clone()),
-            title: session.title.clone(),
-            manual_title: session.manual_title.clone(),
-            workspace_path: session.workspace_path.clone(),
-            created_at: session.created_at.to_rfc3339(),
-            updated_at: session.updated_at.to_rfc3339(),
-            message_count: session.message_count as usize,
-            has_custom_prompt: custom_prompt_ids.contains(&session.id.0),
-        })
-        .collect())
-}
-
-/// Child (sub-agent) session summary for drill-in into plan phase / loop round
-/// / delegated-task transcripts.
-#[derive(Debug, Serialize, Clone)]
-pub struct ChildSessionInfo {
-    pub id: String,
-    pub title: Option<String>,
-    /// Snake-case session type (`sub_agent`, `child`, ...).
-    pub session_type: String,
-    pub agent_id: Option<String>,
-    pub message_count: usize,
-    pub created_at: String,
-    /// Last update time (RFC 3339). For a finished sub-agent this is the
-    /// completion time — set when the final transcript message is persisted.
-    pub updated_at: String,
+    Ok(SessionService::session_infos(&state.container.session_manager, sessions).await)
 }
 
 /// List a session's direct child sessions (sub-agents), oldest first.
@@ -208,69 +79,9 @@ pub async fn session_list_children(
     session_id: String,
 ) -> Result<Vec<ChildSessionInfo>, String> {
     let sid = SessionId(session_id);
-    let children = state
-        .container
-        .session_manager
-        .children(&sid)
+    SessionService::child_session_infos(&state.container.session_manager, &sid)
         .await
-        .map_err(|e| format!("Failed to list child sessions: {e}"))?;
-
-    Ok(children
-        .into_iter()
-        .filter(|c| c.state == SessionState::Active && c.session_type.is_sub_agent())
-        .map(|c| ChildSessionInfo {
-            id: c.id.0,
-            title: c.title,
-            session_type: session_type_slug(c.session_type),
-            agent_id: c.agent_id.map(|a| a.0),
-            message_count: c.message_count as usize,
-            created_at: c.created_at.to_rfc3339(),
-            updated_at: c.updated_at.to_rfc3339(),
-        })
-        .collect())
-}
-
-fn session_type_slug(t: SessionType) -> String {
-    match t {
-        SessionType::Main => "main",
-        SessionType::Child => "child",
-        SessionType::Branch => "branch",
-        SessionType::Ephemeral => "ephemeral",
-        SessionType::SubAgent => "sub_agent",
-        SessionType::Canonical => "canonical",
-    }
-    .to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::is_user_visible_session;
-    use y_core::session::{SessionState, SessionType};
-
-    #[test]
-    fn test_user_visible_session_requires_active_state() {
-        assert!(is_user_visible_session(
-            SessionType::Main,
-            SessionState::Active
-        ));
-        assert!(is_user_visible_session(
-            SessionType::Branch,
-            SessionState::Active
-        ));
-
-        assert!(!is_user_visible_session(
-            SessionType::Main,
-            SessionState::Archived
-        ));
-        assert!(!is_user_visible_session(
-            SessionType::Main,
-            SessionState::Tombstone
-        ));
-        assert!(!is_user_visible_session(
-            SessionType::SubAgent,
-            SessionState::Active
-        ));
-    }
+        .map_err(|error| format!("Failed to list child sessions: {error}"))
 }
 
 /// Create a new session.
@@ -281,40 +92,14 @@ pub async fn session_create(
     agent_id: Option<String>,
     workspace_path: Option<String>,
 ) -> Result<SessionInfo, String> {
-    let options = CreateSessionOptions {
-        parent_id: None,
-        session_type: SessionType::Main,
-        agent_id: agent_id.map(y_core::types::AgentId::from_string),
+    SessionService::create_main_session(
+        &state.container.session_manager,
         title,
-    };
-    let session = if let Some(workspace_path) = workspace_path {
-        y_service::SessionService::create_session(
-            &state.container.session_manager,
-            options,
-            std::path::Path::new(&workspace_path),
-        )
-        .await
-        .map_err(|error| format!("Failed to create session: {error}"))
-    } else {
-        state
-            .container
-            .session_manager
-            .create_session(options)
-            .await
-            .map_err(|error| format!("Failed to create session: {error}"))
-    }?;
-
-    Ok(SessionInfo {
-        id: session.id.0.clone(),
-        agent_id: session.agent_id.as_ref().map(|id| id.0.clone()),
-        title: session.title.clone(),
-        manual_title: session.manual_title.clone(),
-        workspace_path: session.workspace_path.clone(),
-        created_at: session.created_at.to_rfc3339(),
-        updated_at: session.updated_at.to_rfc3339(),
-        message_count: 0,
-        has_custom_prompt: false,
-    })
+        agent_id,
+        workspace_path.as_deref(),
+    )
+    .await
+    .map_err(|error| format!("Failed to create session: {error}"))
 }
 
 /// Get all messages in a session.
@@ -325,47 +110,9 @@ pub async fn session_get_messages(
 ) -> Result<Vec<MessageInfo>, String> {
     let sid = SessionId(session_id);
 
-    let messages = state
-        .container
-        .session_manager
-        .read_display_transcript(&sid)
+    SessionService::message_infos(&state.container.session_manager, &sid, None)
         .await
-        .map_err(|e| format!("Failed to read display transcript: {e}"))?;
-
-    Ok(messages
-        .iter()
-        .map(|m| {
-            // Extract skills from metadata if present.
-            let skills = m
-                .metadata
-                .get("skills")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect::<Vec<String>>()
-                })
-                .filter(|v| !v.is_empty());
-
-            MessageInfo {
-                id: m.message_id.clone(),
-                role: format!("{:?}", m.role).to_lowercase(),
-                content: m.content.clone(),
-                timestamp: m.timestamp.to_rfc3339(),
-                tool_calls: m
-                    .tool_calls
-                    .iter()
-                    .map(|tc| ToolCallBrief {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.to_string(),
-                    })
-                    .collect(),
-                metadata: m.metadata.clone(),
-                skills,
-            }
-        })
-        .collect())
+        .map_err(|error| format!("Failed to read display transcript: {error}"))
 }
 
 /// Delete a session from the GUI list.

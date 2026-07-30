@@ -8,6 +8,7 @@
 
 pub mod fallback_llm;
 pub mod llm_call;
+mod llm_support;
 pub mod sub_agent;
 pub mod tool_exec;
 

@@ -319,31 +319,13 @@ impl RewindService {
         // 4. Phase 2: Restore files from backups.
         //    Take the manager out of the map so we can move it into
         //    spawn_blocking (filesystem I/O should not block tokio).
-        let file_report = {
-            let mut mgr = container
-                .file_history_managers
-                .write()
-                .await
-                .remove(session_id)
-                .ok_or_else(|| RewindError::NoHistory(session_id.0.clone()))?;
-
-            let target = target_message_id.to_string();
-            let (mgr, result) = tokio::task::spawn_blocking(move || {
-                let report = mgr.rewind_to(&target);
-                (mgr, report)
-            })
-            .await
-            .map_err(|e| RewindError::FileError(format!("blocking task failed: {e}")))?;
-
-            // Put the manager back.
-            container
-                .file_history_managers
-                .write()
-                .await
-                .insert(session_id.clone(), mgr);
-
-            result.map_err(|e| RewindError::FileError(e.to_string()))?
-        };
+        let file_report = rewind_file_history_manager(
+            &container.file_history_managers,
+            session_id,
+            target_message_id,
+        )
+        .await?
+        .map_err(|error| RewindError::FileError(error.to_string()))?;
 
         info!(
             session = %session_id.0,
@@ -402,27 +384,12 @@ impl RewindService {
         );
 
         let file_report = {
-            let mut mgr = container
-                .file_history_managers
-                .write()
-                .await
-                .remove(session_id)
-                .ok_or_else(|| RewindError::NoHistory(session_id.0.clone()))?;
-
-            let target = target_message_id.to_string();
-            let (mgr, result) = tokio::task::spawn_blocking(move || {
-                let report = mgr.rewind_to(&target);
-                (mgr, report)
-            })
-            .await
-            .map_err(|e| RewindError::FileError(format!("blocking task failed: {e}")))?;
-
-            // Put the manager back.
-            container
-                .file_history_managers
-                .write()
-                .await
-                .insert(session_id.clone(), mgr);
+            let result = rewind_file_history_manager(
+                &container.file_history_managers,
+                session_id,
+                target_message_id,
+            )
+            .await?;
 
             match result {
                 Ok(report) => report,
@@ -555,6 +522,29 @@ impl RewindService {
     }
 }
 
+async fn rewind_file_history_manager(
+    managers: &FileHistoryManagers,
+    session_id: &SessionId,
+    target_message_id: &str,
+) -> Result<Result<RewindReport, y_journal::JournalError>, RewindError> {
+    let mut manager = managers
+        .write()
+        .await
+        .remove(session_id)
+        .ok_or_else(|| RewindError::NoHistory(session_id.0.clone()))?;
+    let target = target_message_id.to_string();
+    let (manager, result) = tokio::task::spawn_blocking(move || {
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| manager.rewind_to(&target)));
+        (manager, result)
+    })
+    .await
+    .map_err(|error| RewindError::FileError(format!("blocking task failed: {error}")))?;
+
+    managers.write().await.insert(session_id.clone(), manager);
+    result.map_err(|_| RewindError::FileError("file rewind panicked".to_string()))
+}
+
 // ---------------------------------------------------------------------------
 // Synthetic snapshot helpers
 // ---------------------------------------------------------------------------
@@ -575,5 +565,30 @@ fn format_synthetic_snapshot(snapshot_id: &str) -> (String, String) {
         (format!("Loop round {round_num}"), "loop_round".to_string())
     } else {
         (snapshot_id.to_string(), "turn".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_rewind_file_history_reinserts_manager_after_domain_error() {
+        let data_dir = tempfile::tempdir().expect("create temp data directory");
+        let session_id = SessionId::from_string("rewind-test-session");
+        let manager = FileHistoryManager::new(&session_id.0, data_dir.path())
+            .expect("create file history manager");
+        let managers = create_file_history_managers();
+        managers.write().await.insert(session_id.clone(), manager);
+
+        let result = rewind_file_history_manager(&managers, &session_id, "missing-snapshot")
+            .await
+            .expect("blocking rewind should complete");
+
+        assert!(matches!(
+            result,
+            Err(y_journal::JournalError::ScopeNotFound { .. })
+        ));
+        assert!(managers.read().await.contains_key(&session_id));
     }
 }

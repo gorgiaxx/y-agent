@@ -3,22 +3,14 @@
 //! Mirrors skill-related Tauri commands from the GUI (except `skill_open_folder`
 //! which is desktop-only).
 
-use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 
 use axum::extract::{Path as AxumPath, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use serde::{Deserialize, Serialize};
-
-use y_core::agent::ContextStrategyHint;
-use y_core::skill::SkillRegistry;
+use serde::Deserialize;
 use y_service::SkillService;
-use y_skills::{
-    FilesystemSkillStore, FormatDetector, IngestionFormat, ManifestParser, SkillConfig,
-    SkillRegistryImpl,
-};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -29,17 +21,6 @@ use crate::state::AppState;
 
 pub type SkillInfo = y_service::SkillInfo;
 pub type SkillDetail = y_service::SkillDetail;
-
-/// A file/directory entry within a skill directory.
-#[derive(Debug, Serialize)]
-pub struct SkillFileEntry {
-    pub path: String,
-    pub name: String,
-    pub is_dir: bool,
-    pub size: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub children: Option<Vec<SkillFileEntry>>,
-}
 
 // ---------------------------------------------------------------------------
 // Request types
@@ -62,41 +43,6 @@ pub struct ImportSkillRequest {
     pub sanitize: bool,
 }
 
-#[derive(Debug, Serialize)]
-pub struct SkillImportResult {
-    pub decision: String,
-    pub classification: String,
-    pub skill_id: Option<String>,
-    pub error: Option<String>,
-    pub security_issues: Vec<String>,
-    pub permissions_needed: Option<PermissionsNeeded>,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
-pub struct PermissionsNeeded {
-    #[serde(default)]
-    pub files_read: Vec<String>,
-    #[serde(default)]
-    pub files_write: Vec<String>,
-    #[serde(default)]
-    pub network: Vec<String>,
-    #[serde(default)]
-    pub commands: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct SecurityOutput {
-    verdict: String,
-    #[serde(default)]
-    issues: Vec<String>,
-    #[serde(default)]
-    risk_level: String,
-    #[serde(default)]
-    summary: String,
-    #[serde(default)]
-    permissions_needed: Option<PermissionsNeeded>,
-}
-
 fn default_import_sanitize() -> bool {
     true
 }
@@ -110,88 +56,12 @@ pub struct CreateSkillRequest {
     pub language: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct SkillCreateResult {
-    pub decision: String,
-    pub skill_id: Option<String>,
-    pub error: Option<String>,
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 fn skills_store_path(config_dir: &Path) -> PathBuf {
     config_dir.join("skills")
-}
-
-fn validate_skill_name(name: &str) -> Result<(), ApiError> {
-    let is_plain_name = !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains('/')
-        && !name.contains('\\')
-        && Path::new(name)
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)));
-
-    if is_plain_name {
-        Ok(())
-    } else {
-        Err(ApiError::BadRequest(format!("Invalid skill name: {name}")))
-    }
-}
-
-fn skill_dir_path(skills_dir: &Path, name: &str) -> Result<PathBuf, ApiError> {
-    validate_skill_name(name)?;
-    Ok(skills_dir.join(name))
-}
-
-fn build_file_tree(dir: &Path, relative_base: &Path) -> Vec<SkillFileEntry> {
-    let mut entries = Vec::new();
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return entries;
-    };
-
-    for entry in read_dir.flatten() {
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        let abs_path = entry.path();
-        let rel_path = abs_path
-            .strip_prefix(relative_base)
-            .unwrap_or(&abs_path)
-            .to_string_lossy()
-            .to_string();
-
-        if meta.is_dir() {
-            let children = build_file_tree(&abs_path, relative_base);
-            entries.push(SkillFileEntry {
-                path: rel_path,
-                name: file_name,
-                is_dir: true,
-                size: 0,
-                children: Some(children),
-            });
-        } else {
-            entries.push(SkillFileEntry {
-                path: rel_path,
-                name: file_name,
-                is_dir: false,
-                size: meta.len(),
-                children: None,
-            });
-        }
-    }
-
-    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-    });
-
-    entries
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +80,7 @@ async fn get_skill(
     State(state): State<AppState>,
     AxumPath(name): AxumPath<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    validate_skill_name(&name)?;
+    SkillService::validate_name(&name).map_err(ApiError::BadRequest)?;
     let svc = SkillService::new(&skills_store_path(&state.config_dir));
     let detail = svc.get(&name).await.map_err(ApiError::NotFound)?;
     Ok(Json(detail))
@@ -221,7 +91,7 @@ async fn uninstall_skill(
     State(state): State<AppState>,
     AxumPath(name): AxumPath<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    validate_skill_name(&name)?;
+    SkillService::validate_name(&name).map_err(ApiError::BadRequest)?;
     let svc = SkillService::new(&skills_store_path(&state.config_dir));
     svc.uninstall(&name).await.map_err(ApiError::Internal)?;
     Ok(Json(serde_json::json!({"message": "uninstalled"})))
@@ -233,7 +103,7 @@ async fn set_enabled(
     AxumPath(name): AxumPath<String>,
     Json(body): Json<SetEnabledRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    validate_skill_name(&name)?;
+    SkillService::validate_name(&name).map_err(ApiError::BadRequest)?;
     let svc = SkillService::new(&skills_store_path(&state.config_dir));
     svc.set_enabled(&name, body.enabled)
         .await
@@ -246,18 +116,9 @@ async fn get_files(
     State(state): State<AppState>,
     AxumPath(name): AxumPath<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let skill_dir = skill_dir_path(&skills_store_path(&state.config_dir), &name)?;
-    if !skill_dir.exists() {
-        return Err(ApiError::NotFound(format!(
-            "Skill directory not found: {}",
-            skill_dir.display()
-        )));
-    }
-
-    let tree = tokio::task::spawn_blocking(move || build_file_tree(&skill_dir, &skill_dir))
-        .await
-        .map_err(|e| ApiError::Internal(format!("Task join error: {e}")))?;
-
+    SkillService::validate_name(&name).map_err(ApiError::BadRequest)?;
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    let tree = svc.file_tree(&name).await.map_err(ApiError::NotFound)?;
     Ok(Json(tree))
 }
 
@@ -266,14 +127,11 @@ async fn read_file(
     State(state): State<AppState>,
     AxumPath((name, relative_path)): AxumPath<(String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let skill_dir = skill_dir_path(&skills_store_path(&state.config_dir), &name)?;
-    let canonical_target =
-        y_service::resolve_skill_read_path(&skill_dir, Path::new(&relative_path))
-            .map_err(ApiError::BadRequest)?;
-
-    let content = tokio::fs::read_to_string(&canonical_target)
+    SkillService::validate_name(&name).map_err(ApiError::BadRequest)?;
+    let content = SkillService::new(&skills_store_path(&state.config_dir))
+        .read_file(&name, Path::new(&relative_path))
         .await
-        .map_err(|e| ApiError::Internal(format!("Failed to read file: {e}")))?;
+        .map_err(ApiError::BadRequest)?;
 
     Ok(Json(serde_json::json!({ "content": content })))
 }
@@ -284,143 +142,13 @@ async fn save_file(
     AxumPath((name, relative_path)): AxumPath<(String, String)>,
     Json(body): Json<SaveFileRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let skill_dir = skill_dir_path(&skills_store_path(&state.config_dir), &name)?;
-    let target = y_service::resolve_skill_write_path(&skill_dir, Path::new(&relative_path))
+    SkillService::validate_name(&name).map_err(ApiError::BadRequest)?;
+    SkillService::new(&skills_store_path(&state.config_dir))
+        .write_file(&name, Path::new(&relative_path), &body.content)
+        .await
         .map_err(ApiError::BadRequest)?;
 
-    tokio::fs::write(&target, &body.content)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to write file: {e}")))?;
-
     Ok(Json(serde_json::json!({"message": "saved"})))
-}
-
-async fn import_toml_skill(
-    store_path: &Path,
-    source_path: &Path,
-) -> Result<SkillImportResult, ApiError> {
-    let config = SkillConfig::default();
-    let content = tokio::fs::read_to_string(source_path)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to read file: {e}")))?;
-    let parser = ManifestParser::new(config);
-    let manifest = parser
-        .parse(&content)
-        .map_err(|e| ApiError::BadRequest(format!("Failed to parse skill: {e}")))?;
-
-    validate_skill_name(&manifest.name)?;
-    let skill_name = manifest.name.clone();
-
-    let store = FilesystemSkillStore::new(store_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to open skill store: {e}")))?;
-    let registry = SkillRegistryImpl::with_store(store)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to create registry: {e}")))?;
-
-    registry
-        .register(manifest)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to register skill: {e}")))?;
-
-    Ok(SkillImportResult {
-        decision: "accepted".to_string(),
-        classification: "direct_import".to_string(),
-        skill_id: Some(skill_name),
-        error: None,
-        security_issues: vec![],
-        permissions_needed: None,
-    })
-}
-
-async fn security_rejection(
-    state: &AppState,
-    source_path: &Path,
-) -> Result<Option<SkillImportResult>, ApiError> {
-    if source_path.is_dir() {
-        return Ok(None);
-    }
-
-    let source_content = tokio::fs::read_to_string(source_path)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to read file: {e}")))?;
-    let format_str = match source_path.extension().and_then(|e| e.to_str()) {
-        Some("toml") => "toml",
-        Some("md" | "markdown") => "markdown",
-        Some("yaml" | "yml") => "yaml",
-        Some("json") => "json",
-        _ => "plaintext",
-    };
-
-    let security_input = serde_json::json!({
-        "source_content": source_content,
-        "source_format": format_str,
-    });
-
-    let security_result = state
-        .container
-        .agent_delegator
-        .delegate(
-            "skill-security-check",
-            security_input,
-            ContextStrategyHint::None,
-            None,
-        )
-        .await;
-
-    let output = match security_result {
-        Ok(output) => output,
-        Err(e) => {
-            tracing::warn!(error = %e, "Skill security check failed; proceeding with ingestion");
-            return Ok(None);
-        }
-    };
-
-    let Ok(security) = serde_json::from_str::<SecurityOutput>(&output.text) else {
-        tracing::warn!("Skill security check returned invalid JSON; proceeding with ingestion");
-        return Ok(None);
-    };
-
-    match security.verdict.as_str() {
-        "insecure" => Ok(Some(SkillImportResult {
-            decision: "rejected".to_string(),
-            classification: String::new(),
-            skill_id: None,
-            error: Some(format!(
-                "Security check failed ({}): {}",
-                security.risk_level, security.summary
-            )),
-            security_issues: security.issues,
-            permissions_needed: security.permissions_needed,
-        })),
-        "caution" => {
-            tracing::warn!(
-                risk_level = %security.risk_level,
-                summary = %security.summary,
-                issues = ?security.issues,
-                "Skill security check returned caution; proceeding with ingestion"
-            );
-            Ok(None)
-        }
-        _ => Ok(None),
-    }
-}
-
-fn import_result_from_service(result: y_service::ImportResult) -> SkillImportResult {
-    let decision = match result.decision {
-        y_service::ImportDecision::Accepted => "accepted",
-        y_service::ImportDecision::Optimized => "optimized",
-        y_service::ImportDecision::PartialAccept => "partial_accept",
-        y_service::ImportDecision::Rejected => "rejected",
-    };
-
-    SkillImportResult {
-        decision: decision.to_string(),
-        classification: result.classification,
-        skill_id: result.skill_id,
-        error: result.rejection_reason,
-        security_issues: result.security_issues,
-        permissions_needed: None,
-    }
 }
 
 /// `POST /api/v1/skills/import` -- import a skill from a local source path.
@@ -433,47 +161,12 @@ async fn import_skill(
     Json(body): Json<ImportSkillRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let skills_dir = skills_store_path(&state.config_dir);
-    tokio::fs::create_dir_all(&skills_dir)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to create skills dir: {e}")))?;
-
     let source_path = PathBuf::from(&body.path);
-    if !source_path.exists() {
-        return Err(ApiError::NotFound(format!("Path not found: {}", body.path)));
-    }
-
-    let format = FormatDetector::from_path(&source_path);
-    if !body.sanitize && format == IngestionFormat::Toml {
-        return import_toml_skill(&skills_dir, &source_path).await.map(Json);
-    }
-
-    if body.sanitize {
-        if let Some(rejection) = security_rejection(&state, &source_path).await? {
-            return Ok(Json(rejection));
-        }
-    }
-
-    let store = FilesystemSkillStore::new(&skills_dir)
-        .map_err(|e| ApiError::Internal(format!("Failed to open skill store: {e}")))?;
-    let registry = Arc::new(tokio::sync::RwLock::new(
-        SkillRegistryImpl::with_store(store)
-            .await
-            .map_err(|e| ApiError::Internal(format!("Failed to create registry: {e}")))?,
-    ));
-    let ingestion_service = state.container.skill_ingestion_service(registry);
-
-    let result = ingestion_service.import(&source_path).await.map_or_else(
-        |e| SkillImportResult {
-            decision: "rejected".to_string(),
-            classification: String::new(),
-            skill_id: None,
-            error: Some(e.to_string()),
-            security_issues: vec![],
-            permissions_needed: None,
-        },
-        import_result_from_service,
-    );
-
+    let result = state
+        .container
+        .import_skill_from_path(&skills_dir, &source_path, body.sanitize)
+        .await
+        .map_err(ApiError::Internal)?;
     Ok(Json(result))
 }
 
@@ -483,93 +176,24 @@ async fn create_skill(
     Json(body): Json<CreateSkillRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let skills_dir = skills_store_path(&state.config_dir);
-    tokio::fs::create_dir_all(&skills_dir)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to create skills dir: {e}")))?;
-
-    let store = FilesystemSkillStore::new(&skills_dir)
-        .map_err(|e| ApiError::Internal(format!("Failed to open skill store: {e}")))?;
-    let registry = Arc::new(tokio::sync::RwLock::new(
-        SkillRegistryImpl::with_store(store)
-            .await
-            .map_err(|e| ApiError::Internal(format!("Failed to create registry: {e}")))?,
-    ));
-    let creation_service = state.container.skill_creation_service(registry);
-
-    let result = creation_service
-        .create(
+    let result = state
+        .container
+        .create_skill(
+            &skills_dir,
             &body.request,
             body.domain_hints.as_deref(),
             body.language.as_deref(),
         )
         .await
-        .map_or_else(
-            |e| SkillCreateResult {
-                decision: "rejected".to_string(),
-                skill_id: None,
-                error: Some(e.to_string()),
-            },
-            |r| SkillCreateResult {
-                decision: match r.decision {
-                    y_service::CreationDecision::Created => "created".to_string(),
-                    y_service::CreationDecision::Rejected => "rejected".to_string(),
-                },
-                skill_id: r.skill_id,
-                error: r.rejection_reason,
-            },
-        );
-
+        .map_err(ApiError::Internal)?;
     Ok(Json(result))
-}
-
-/// Validation result for a single skill.
-#[derive(Debug, Serialize)]
-pub struct SkillValidationResult {
-    pub name: String,
-    pub valid: bool,
-    pub errors: Vec<String>,
 }
 
 /// `GET /api/v1/skills/validate` -- validate all installed skills.
 async fn validate_skills(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    let store_path = skills_store_path(&state.config_dir);
-    let store = FilesystemSkillStore::new(&store_path)
-        .map_err(|e| ApiError::Internal(format!("Failed to open skill store: {e}")))?;
-    let all = store
-        .load_all()
-        .map_err(|e| ApiError::Internal(format!("Failed to load skills: {e}")))?;
-
-    let config = SkillConfig::default();
-    let validator = y_skills::SkillValidator::new(config);
-
-    let existing_names: std::collections::HashSet<String> =
-        all.iter().map(|m| m.name.clone()).collect();
-    let empty_set: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    let mut results = Vec::with_capacity(all.len());
-    for manifest in &all {
-        let skill_dir = store_path.join(&manifest.name);
-        let dir_errors = validator.validate_directory(&skill_dir);
-        let manifest_errors = validator.validate_manifest(
-            manifest,
-            &existing_names,
-            &empty_set,
-            &empty_set,
-            &empty_set,
-        );
-        let errors: Vec<String> = dir_errors
-            .into_iter()
-            .chain(manifest_errors)
-            .map(|e| e.to_string())
-            .collect();
-        let valid = errors.is_empty();
-        results.push(SkillValidationResult {
-            name: manifest.name.clone(),
-            valid,
-            errors,
-        });
-    }
-
+    let results = SkillService::new(&skills_store_path(&state.config_dir))
+        .validate_all()
+        .map_err(ApiError::Internal)?;
     Ok(Json(results))
 }
 
@@ -599,12 +223,11 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_skill_dir_path_accepts_plain_skill_name() {
         let base = PathBuf::from("/tmp/y-agent/skills");
-        let path = skill_dir_path(&base, "writer").unwrap();
+        let path = SkillService::new(&base).skill_directory("writer").unwrap();
 
         assert_eq!(path, base.join("writer"));
     }
@@ -612,33 +235,8 @@ mod tests {
     #[test]
     fn test_skill_dir_path_rejects_parent_directory_name() {
         let base = PathBuf::from("/tmp/y-agent/skills");
-        let error = skill_dir_path(&base, "..").unwrap_err();
+        let error = SkillService::new(&base).skill_directory("..").unwrap_err();
 
-        assert!(error.to_string().contains("Invalid skill name"));
-    }
-
-    #[tokio::test]
-    async fn test_import_toml_skill_registers_with_filesystem_store() {
-        let dir = TempDir::new().unwrap();
-        let source = dir.path().join("writer.toml");
-        tokio::fs::write(
-            &source,
-            r#"
-name = "writer"
-description = "Writing helper"
-version = "1.0.0"
-root_content = "Use concise, concrete prose."
-"#,
-        )
-        .await
-        .unwrap();
-
-        let result = import_toml_skill(dir.path(), &source).await.unwrap();
-
-        assert_eq!(result.decision, "accepted");
-        assert_eq!(result.classification, "direct_import");
-        assert_eq!(result.skill_id.as_deref(), Some("writer"));
-        assert!(dir.path().join("writer").join("skill.toml").exists());
-        assert!(dir.path().join("writer").join("root.md").exists());
+        assert!(error.contains("Invalid skill name"));
     }
 }

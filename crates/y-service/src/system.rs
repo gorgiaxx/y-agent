@@ -106,6 +106,13 @@ enum ProviderProbeMode {
     ImageGeneration,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ProviderProbeAuth<'a> {
+    None,
+    Bearer(&'a str),
+    Header(&'static str, &'a str),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProbeSuccessKind {
     TextChat,
@@ -160,6 +167,33 @@ impl SystemService {
         headers: &reqwest::header::HeaderMap,
     ) -> reqwest::RequestBuilder {
         y_provider::http_headers::apply_custom_headers(request_builder, headers)
+    }
+
+    async fn send_provider_probe(
+        client: &reqwest::Client,
+        url: &str,
+        body: &serde_json::Value,
+        custom_headers: &reqwest::header::HeaderMap,
+        required_headers: &[(&str, &str)],
+        auth: ProviderProbeAuth<'_>,
+    ) -> Result<reqwest::Response, String> {
+        let mut request = Self::apply_provider_custom_headers(client.post(url), custom_headers)
+            .header(reqwest::header::CONTENT_TYPE, "application/json");
+        for &(name, value) in required_headers {
+            request = request.header(name, value);
+        }
+        request = match auth {
+            ProviderProbeAuth::Bearer(key) if !key.is_empty() => request.bearer_auth(key),
+            ProviderProbeAuth::Header(name, key) if !key.is_empty() => request.header(name, key),
+            ProviderProbeAuth::None
+            | ProviderProbeAuth::Bearer(_)
+            | ProviderProbeAuth::Header(_, _) => request,
+        };
+        request
+            .json(body)
+            .send()
+            .await
+            .map_err(|error| format!("Network error reaching {url}: {error}"))
     }
 
     /// Build a provider-facing HTTP client builder with the configured protocol.
@@ -432,17 +466,14 @@ impl SystemService {
                     "max_tokens": 1,
                     "messages": [{ "role": "user", "content": "ping" }]
                 });
-                let mut req = client.post(&url);
-                req = Self::apply_provider_custom_headers(req, &custom_headers)
-                    .header("Content-Type", "application/json");
-                if !effective_key.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {effective_key}"));
-                }
-                let response = req
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                let auth = if request.provider_type == "azure" {
+                    ProviderProbeAuth::Header("api-key", &effective_key)
+                } else {
+                    ProviderProbeAuth::Bearer(&effective_key)
+                };
+                let response =
+                    Self::send_provider_probe(&client, &url, &body, &custom_headers, &[], auth)
+                        .await?;
                 Self::interpret_response(response, &["model"], ProbeSuccessKind::TextChat).await
             }
             ("openai" | "openai-compat" | "deepseek", ProviderProbeMode::ImageGeneration) => {
@@ -460,17 +491,15 @@ impl SystemService {
                     "prompt": "ping",
                     "response_format": "b64_json"
                 });
-                let mut req = client.post(&url);
-                req = Self::apply_provider_custom_headers(req, &custom_headers)
-                    .header("Content-Type", "application/json");
-                if !effective_key.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {effective_key}"));
-                }
-                let response = req
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                let response = Self::send_provider_probe(
+                    &client,
+                    &url,
+                    &body,
+                    &custom_headers,
+                    &[],
+                    ProviderProbeAuth::Bearer(&effective_key),
+                )
+                .await?;
                 Self::interpret_response(response, &["model"], ProbeSuccessKind::ImageGeneration)
                     .await
             }
@@ -487,17 +516,15 @@ impl SystemService {
                     "prompt": "ping",
                     "response_format": "b64_json"
                 });
-                let mut req = client.post(&url);
-                req = Self::apply_provider_custom_headers(req, &custom_headers)
-                    .header("Content-Type", "application/json");
-                if !effective_key.is_empty() {
-                    req = req.header("api-key", effective_key.clone());
-                }
-                let response = req
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                let response = Self::send_provider_probe(
+                    &client,
+                    &url,
+                    &body,
+                    &custom_headers,
+                    &[],
+                    ProviderProbeAuth::Header("api-key", &effective_key),
+                )
+                .await?;
                 Self::interpret_response(response, &["model"], ProbeSuccessKind::ImageGeneration)
                     .await
             }
@@ -512,18 +539,15 @@ impl SystemService {
                     "max_tokens": 1,
                     "messages": [{ "role": "user", "content": "ping" }]
                 });
-                let mut req = client.post(&url);
-                req = Self::apply_provider_custom_headers(req, &custom_headers)
-                    .header("anthropic-version", "2023-06-01")
-                    .header("Content-Type", "application/json");
-                if !effective_key.is_empty() {
-                    req = req.header("Authorization", format!("Bearer {effective_key}"));
-                }
-                let response = req
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                let response = Self::send_provider_probe(
+                    &client,
+                    &url,
+                    &body,
+                    &custom_headers,
+                    &[("anthropic-version", "2023-06-01")],
+                    ProviderProbeAuth::Header("x-api-key", &effective_key),
+                )
+                .await?;
                 Self::interpret_response(response, &["model"], ProbeSuccessKind::TextChat).await
             }
             ("gemini", ProviderProbeMode::TextChat) => {
@@ -549,13 +573,15 @@ impl SystemService {
                     "contents": [{"parts": [{"text": "ping"}]}],
                     "generationConfig": {"maxOutputTokens": 1}
                 });
-                let req = client.post(&url);
-                let response = Self::apply_provider_custom_headers(req, &custom_headers)
-                    .header("Content-Type", "application/json")
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| format!("Network error reaching {url}: {e}"))?;
+                let response = Self::send_provider_probe(
+                    &client,
+                    &url,
+                    &body,
+                    &custom_headers,
+                    &[],
+                    ProviderProbeAuth::None,
+                )
+                .await?;
                 Self::interpret_response(
                     response,
                     &["modelVersion", "model"],
@@ -955,5 +981,65 @@ mod tests {
 
         let header_text = server.header_text_rx.await.expect("request headers");
         assert!(header_text.contains("X-Llm-Tenant: workspace-a"));
+    }
+
+    #[tokio::test]
+    async fn test_anthropic_provider_probe_uses_x_api_key_header() {
+        let Some(server) = spawn_single_response_server(r#"{"model":"claude-test"}"#).await else {
+            return;
+        };
+
+        SystemService::test_provider(ProviderTestRequest {
+            provider_type: "anthropic".into(),
+            model: "claude-test".into(),
+            api_key: "anthropic-secret".into(),
+            api_key_env: String::new(),
+            base_url: Some(server.base_url),
+            headers: std::collections::HashMap::new(),
+            http_protocol: HttpProtocol::Http1,
+            tags: vec![],
+            capabilities: vec![ProviderCapability::Text],
+            probe_mode: "text_chat".into(),
+        })
+        .await
+        .expect("Anthropic probe should succeed");
+
+        let headers = server
+            .header_text_rx
+            .await
+            .expect("request headers")
+            .to_ascii_lowercase();
+        assert!(headers.contains("x-api-key: anthropic-secret"));
+        assert!(!headers.contains("authorization: bearer anthropic-secret"));
+    }
+
+    #[tokio::test]
+    async fn test_azure_provider_probe_uses_api_key_header() {
+        let Some(server) = spawn_single_response_server(r#"{"model":"azure-test"}"#).await else {
+            return;
+        };
+
+        SystemService::test_provider(ProviderTestRequest {
+            provider_type: "azure".into(),
+            model: "azure-test".into(),
+            api_key: "azure-secret".into(),
+            api_key_env: String::new(),
+            base_url: Some(server.base_url),
+            headers: std::collections::HashMap::new(),
+            http_protocol: HttpProtocol::Http1,
+            tags: vec![],
+            capabilities: vec![ProviderCapability::Text],
+            probe_mode: "text_chat".into(),
+        })
+        .await
+        .expect("Azure probe should succeed");
+
+        let headers = server
+            .header_text_rx
+            .await
+            .expect("request headers")
+            .to_ascii_lowercase();
+        assert!(headers.contains("api-key: azure-secret"));
+        assert!(!headers.contains("authorization: bearer azure-secret"));
     }
 }

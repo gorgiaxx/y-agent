@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 
 use y_agent::TrustTier;
+use y_core::text_search::lexical_query_tokens;
 
 use crate::container::ServiceContainer;
 use crate::workflow_service::WorkflowService;
@@ -196,7 +197,7 @@ fn text_match_score(name: &str, description: &str, tags: &[String], query: &str)
     let name = normalize(name);
     let description = normalize(description);
     let tags: Vec<_> = tags.iter().map(|tag| normalize(tag)).collect();
-    query_tokens(query)
+    lexical_query_tokens(query)
         .into_iter()
         .map(|token| {
             let tag_score: usize = tags
@@ -216,20 +217,6 @@ fn text_match_score(name: &str, description: &str, tags: &[String], query: &str)
                 + usize::from(description.contains(&token)) * 2
         })
         .sum()
-}
-
-fn query_tokens(query: &str) -> Vec<String> {
-    const STOP_WORDS: &[&str] = &[
-        "and", "are", "for", "from", "into", "please", "that", "the", "these", "this", "with",
-    ];
-    let mut tokens: Vec<_> = query
-        .split(|character: char| !character.is_alphanumeric())
-        .map(str::to_lowercase)
-        .filter(|token| token.len() >= 3 && !STOP_WORDS.contains(&token.as_str()))
-        .collect();
-    tokens.sort();
-    tokens.dedup();
-    tokens
 }
 
 fn normalize(value: &str) -> String {

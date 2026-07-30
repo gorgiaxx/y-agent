@@ -167,6 +167,34 @@ impl InMemoryTraceStore {
     pub fn new() -> Self {
         Self::default()
     }
+
+    fn delete_matching_traces(&self, predicate: impl Fn(&Trace) -> bool) -> u64 {
+        let mut traces = self
+            .traces
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let ids_to_remove: Vec<Uuid> = traces
+            .values()
+            .filter(|trace| predicate(trace))
+            .map(|trace| trace.id)
+            .collect();
+
+        let mut observations = self
+            .observations
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut scores = self
+            .scores
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for id in &ids_to_remove {
+            traces.remove(id);
+            observations.remove(id);
+            scores.remove(id);
+        }
+
+        ids_to_remove.len() as u64
+    }
 }
 
 #[async_trait]
@@ -278,62 +306,14 @@ impl TraceStore for InMemoryTraceStore {
     }
 
     async fn delete_before(&self, before: DateTime<Utc>) -> Result<u64, TraceStoreError> {
-        let mut traces = self
-            .traces
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let ids_to_remove: Vec<Uuid> = traces
-            .values()
-            .filter(|t| t.started_at < before)
-            .map(|t| t.id)
-            .collect();
-        let count = ids_to_remove.len() as u64;
-
-        let mut obs_map = self
-            .observations
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut score_map = self
-            .scores
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for id in &ids_to_remove {
-            traces.remove(id);
-            obs_map.remove(id);
-            score_map.remove(id);
-        }
-
-        Ok(count)
+        Ok(self.delete_matching_traces(|trace| trace.started_at < before))
     }
 
     async fn delete_traces_by_session(&self, session_id: &str) -> Result<u64, TraceStoreError> {
-        let target = Uuid::parse_str(session_id).unwrap_or_default();
-        let mut traces = self
-            .traces
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let ids_to_remove: Vec<Uuid> = traces
-            .values()
-            .filter(|t| t.session_id == target)
-            .map(|t| t.id)
-            .collect();
-        let count = ids_to_remove.len() as u64;
-
-        let mut obs_map = self
-            .observations
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut score_map = self
-            .scores
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for id in &ids_to_remove {
-            traces.remove(id);
-            obs_map.remove(id);
-            score_map.remove(id);
-        }
-
-        Ok(count)
+        let Ok(target) = Uuid::parse_str(session_id) else {
+            return Ok(0);
+        };
+        Ok(self.delete_matching_traces(|trace| trace.session_id == target))
     }
 
     async fn delete_all_traces(&self) -> Result<u64, TraceStoreError> {
@@ -359,11 +339,13 @@ impl TraceStore for InMemoryTraceStore {
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<Trace>, TraceStoreError> {
+        let Ok(target) = Uuid::parse_str(session_id) else {
+            return Ok(Vec::new());
+        };
         let map = self
             .traces
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let target = Uuid::parse_str(session_id).unwrap_or_default();
         let mut results: Vec<Trace> = map
             .values()
             .filter(|t| t.session_id == target)
@@ -522,6 +504,23 @@ mod tests {
             store.get_observations(other_trace.id).await.unwrap().len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn test_invalid_session_id_does_not_match_nil_session() {
+        let store = InMemoryTraceStore::new();
+        let trace = Trace::new(Uuid::nil(), "nil-session");
+        store.insert_trace(trace.clone()).await.unwrap();
+
+        let listed = store
+            .list_traces_by_session("not-a-uuid", 10)
+            .await
+            .unwrap();
+        let deleted = store.delete_traces_by_session("not-a-uuid").await.unwrap();
+
+        assert!(listed.is_empty());
+        assert_eq!(deleted, 0);
+        assert!(store.get_trace(trace.id).await.is_ok());
     }
 
     #[tokio::test]

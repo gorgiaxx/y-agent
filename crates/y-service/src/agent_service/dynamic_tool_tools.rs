@@ -5,6 +5,8 @@ use y_core::types::ToolCallRequest;
 use crate::container::ServiceContainer;
 use crate::dynamic_tool_service::{DynamicToolCreateRequest, DynamicToolUpdateRequest};
 
+use super::tool_handling::parse_tool_arguments;
+
 #[derive(serde::Deserialize)]
 struct ToolDeleteParams {
     name: String,
@@ -29,7 +31,7 @@ pub(super) async fn handle(
     let actor = config.agent_name.as_str();
     let content = match tc.name.as_str() {
         "ToolCreate" => {
-            let request: DynamicToolCreateRequest = parse_arguments(tc)?;
+            let request: DynamicToolCreateRequest = parse_tool_arguments(tc)?;
             let tool = container
                 .dynamic_tool_service
                 .create(&container.tool_registry, request, actor)
@@ -38,7 +40,7 @@ pub(super) async fn handle(
             serde_json::json!({"tool": tool, "activated": true})
         }
         "ToolUpdate" => {
-            let request: DynamicToolUpdateRequest = parse_arguments(tc)?;
+            let request: DynamicToolUpdateRequest = parse_tool_arguments(tc)?;
             let tool = container
                 .dynamic_tool_service
                 .update(&container.tool_registry, request, actor)
@@ -47,7 +49,7 @@ pub(super) async fn handle(
             serde_json::json!({"tool": tool, "activated": true})
         }
         "ToolDelete" => {
-            let params: ToolDeleteParams = parse_arguments(tc)?;
+            let params: ToolDeleteParams = parse_tool_arguments(tc)?;
             if params.reason.trim().is_empty() {
                 return Err(y_core::tool::ToolError::ValidationError {
                     message: "'reason' must not be blank".to_string(),
@@ -66,7 +68,7 @@ pub(super) async fn handle(
             serde_json::json!({"tool": tool, "deleted": true})
         }
         "ToolGet" => {
-            let params: ToolGetParams = parse_arguments(tc)?;
+            let params: ToolGetParams = parse_tool_arguments(tc)?;
             let tool = container
                 .dynamic_tool_service
                 .get(&params.name)
@@ -77,7 +79,7 @@ pub(super) async fn handle(
             serde_json::json!({"tool": tool})
         }
         "ToolList" => {
-            let params: ToolListParams = parse_arguments(tc)?;
+            let params: ToolListParams = parse_tool_arguments(tc)?;
             let tools = container
                 .dynamic_tool_service
                 .list(params.query.as_deref())
@@ -116,16 +118,6 @@ pub(super) async fn handle(
         content,
         warnings: vec![],
         metadata: serde_json::json!({"action": tc.name}),
-    })
-}
-
-fn parse_arguments<T: serde::de::DeserializeOwned>(
-    tc: &ToolCallRequest,
-) -> Result<T, y_core::tool::ToolError> {
-    serde_json::from_value(tc.arguments.clone()).map_err(|error| {
-        y_core::tool::ToolError::ValidationError {
-            message: format!("invalid {} arguments: {error}", tc.name),
-        }
     })
 }
 

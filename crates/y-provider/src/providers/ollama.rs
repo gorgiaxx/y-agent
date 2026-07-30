@@ -216,6 +216,31 @@ impl OllamaProvider {
         }
     }
 
+    async fn send_chat_request(
+        &self,
+        body: &OllamaRequest,
+    ) -> Result<reqwest::Response, ProviderError> {
+        let request = self.client.post(self.api_url("api/chat"));
+        let response = crate::http_headers::apply_custom_headers(request, &self.custom_headers)
+            .header("Content-Type", "application/json")
+            .json(body)
+            .send()
+            .await
+            .map_err(|error| ProviderError::NetworkError {
+                status: error.status().map(|status| status.as_u16()),
+                message: format!(
+                    "Ollama connection error (is Ollama running?): {}",
+                    crate::net_error::describe_reqwest_error(&error)
+                ),
+            })?;
+
+        if response.status().is_success() {
+            Ok(response)
+        } else {
+            Err(self.response_error(response).await)
+        }
+    }
+
     async fn response_error(&self, response: reqwest::Response) -> ProviderError {
         let status = response.status();
         let retry_after_secs = response
@@ -265,27 +290,7 @@ impl LlmProvider for OllamaProvider {
 
         let body = self.build_request_body(request, false);
         let raw_request = serde_json::to_value(&body).ok();
-
-        let request_builder = self.client.post(self.api_url("api/chat"));
-        let response =
-            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    status: e.status().map(|s| s.as_u16()),
-                    message: format!(
-                        "Ollama connection error (is Ollama running?): {}",
-                        crate::net_error::describe_reqwest_error(&e)
-                    ),
-                })?;
-
-        let status = response.status();
-
-        if !status.is_success() {
-            return Err(self.response_error(response).await);
-        }
+        let response = self.send_chat_request(&body).await?;
 
         let response_text = response.text().await.map_err(|e| ProviderError::Other {
             message: format!("read response body: {e}"),
@@ -370,26 +375,8 @@ impl LlmProvider for OllamaProvider {
 
         let body = self.build_request_body(request, true);
         let raw_request = serde_json::to_value(&body).ok();
-
-        let request_builder = self.client.post(self.api_url("api/chat"));
-        let response =
-            crate::http_headers::apply_custom_headers(request_builder, &self.custom_headers)
-                .header("Content-Type", "application/json")
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkError {
-                    status: e.status().map(|s| s.as_u16()),
-                    message: format!(
-                        "Ollama connection error (is Ollama running?): {}",
-                        crate::net_error::describe_reqwest_error(&e)
-                    ),
-                })?;
-
+        let response = self.send_chat_request(&body).await?;
         let status = response.status();
-        if !status.is_success() {
-            return Err(self.response_error(response).await);
-        }
 
         let byte_stream = response.bytes_stream();
         let inter_stream = futures::stream::unfold(
@@ -570,6 +557,7 @@ struct OllamaStreamMessage {
 mod tests {
     use super::*;
     use crate::sse::extract_json_line;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use y_core::provider::ToolCallingMode;
 
     #[test]
@@ -638,6 +626,62 @@ mod tests {
             provider.api_url("api/chat"),
             "http://192.168.1.100:11434/api/chat"
         );
+    }
+
+    #[tokio::test]
+    async fn test_send_chat_request_applies_custom_headers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind fake Ollama server");
+        let address = listener.local_addr().expect("fake Ollama server address");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept Ollama request");
+            let mut request = vec![0; 16 * 1024];
+            let read = socket
+                .read(&mut request)
+                .await
+                .expect("read Ollama request");
+            request.truncate(read);
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+                .await
+                .expect("write Ollama response");
+            String::from_utf8(request).expect("Ollama request is UTF-8")
+        });
+
+        let headers = std::collections::HashMap::from([("x-tenant".into(), "test".into())]);
+        let provider = OllamaProvider::with_headers(
+            "test",
+            "llama3",
+            String::new(),
+            Some(format!("http://{address}")),
+            None,
+            vec![],
+            vec![],
+            3,
+            32_768,
+            ToolCallingMode::default(),
+            y_core::provider::ToolDialect::default(),
+            &headers,
+            HttpProtocol::Http1,
+        );
+        let body = OllamaRequest {
+            model: "llama3".into(),
+            messages: vec![],
+            stream: false,
+            tools: None,
+            options: None,
+        };
+
+        let response = provider
+            .send_chat_request(&body)
+            .await
+            .expect("send Ollama request");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+
+        let request = server.await.expect("join fake Ollama server");
+        assert!(request.starts_with("POST /api/chat HTTP/1.1"));
+        assert!(request.to_ascii_lowercase().contains("x-tenant: test"));
     }
 
     #[test]

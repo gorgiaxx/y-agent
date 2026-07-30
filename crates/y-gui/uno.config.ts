@@ -8,6 +8,15 @@ export default defineConfig({
   transformers: [
     transformerVariantGroup(),
   ],
+  // UnoCSS scans all source text for utility candidates, so plain English
+  // words in comments and strings (e.g. "table") generate global utilities.
+  // `table` collides with the Prism token class react-syntax-highlighter
+  // emits for TOML table headers (<span class="token table">), and the
+  // resulting .table{display:table} breaks `[table.header]` lines apart.
+  // No component uses `table` as a utility class, so blocklist it.
+  blocklist: [
+    'table',
+  ],
   theme: {
     colors: {
       surface: {

@@ -36,6 +36,7 @@ pub mod session;
 pub mod session_event;
 pub mod skill;
 pub mod template;
+pub mod text_search;
 pub mod tool;
 pub mod trust;
 pub mod types;

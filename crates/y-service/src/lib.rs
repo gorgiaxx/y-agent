@@ -87,7 +87,10 @@ pub mod workspace;
 pub mod workspace_isolation;
 
 // Re-export primary types for convenience.
-pub use agent_management::AgentManagementService;
+pub use agent_management::{
+    AgentDetail, AgentFeatureFlags, AgentInfo, AgentManagementService, AgentSource, AgentToolInfo,
+    PromptSectionInfo,
+};
 pub use agent_service::{
     AgentExecutionConfig, AgentExecutionError, AgentExecutionResult, AgentService,
     ServiceAgentRunner,
@@ -130,6 +133,10 @@ pub use instance_coordination::{
     CoordinationPolicy, InstanceCoordinationError, InstanceCoordinator, LeaseManagedService,
     SingletonLeaseHandle,
 };
+pub use knowledge_service::{
+    ChunkInfo, CollectionInfo, EntryDetail, EntryInfo, KnowledgeMetadataUpdate,
+    KnowledgeSearchItem, KnowledgeStats, SectionInfo,
+};
 pub use mcp_service::McpService;
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
@@ -150,7 +157,9 @@ pub use scheduler_service::{
     SchedulerServiceError, UpdateScheduleRequest,
 };
 pub use session_events::SessionEventService;
-pub use session_service::SessionService;
+pub use session_service::{
+    ChildSessionInfo, MessageInfo, SessionInfo, SessionService, ToolCallBrief,
+};
 pub use skill_creation::{
     create_skill_from_request, CreationDecision, CreationError, CreationResult, SkillCreateOutcome,
     SkillCreationService,
@@ -163,7 +172,9 @@ pub use skill_ingestion::{
     import_skill_from_path, ImportDecision, ImportError, ImportResult, PermissionsNeeded,
     SkillImportOutcome, SkillIngestionService,
 };
-pub use skill_service::{SkillDetail, SkillInfo, SkillService};
+pub use skill_service::{
+    SkillDetail, SkillFileEntry, SkillInfo, SkillService, SkillValidationResult,
+};
 pub use system::{
     HealthReport, HttpProtocol, MemoryStats, ProviderInfo, ProviderTestRequest,
     RuntimeCapabilities, RuntimeFeatureAvailability, StatusReport, SystemService,

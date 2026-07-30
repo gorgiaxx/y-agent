@@ -76,7 +76,6 @@ struct ResolvedAgentConfig {
     trust_tier: Option<TrustTier>,
     allowed_tools: Vec<String>,
     prune_tool_history: bool,
-    #[allow(dead_code)]
     response_format: Option<ResponseFormat>,
 }
 
@@ -365,39 +364,15 @@ impl LoopOrchestrator {
         let tool_defs =
             Self::load_tool_schemas_for_allowed_tools(container, &settings.allowed_tools).await;
 
-        let exec_config = AgentExecutionConfig {
-            agent_name: LOOP_EXECUTOR_AGENT_ID.to_string(),
-            system_prompt: settings.system_prompt.clone(),
-            max_iterations: settings.max_iterations,
-            max_tool_calls: settings.max_tool_calls,
-            tool_definitions: tool_defs,
-            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
-            tool_dialect: y_core::provider::ToolDialect::default(),
+        let exec_config = build_loop_execution_config(
+            &settings,
+            tool_defs,
             messages,
-            provider_id: None,
-            preferred_models: settings.preferred_models.clone(),
-            provider_tags: settings.provider_tags.clone(),
-            fallback_provider_tags: vec![],
-            request_mode: y_core::provider::RequestMode::TextChat,
-            working_directory: None,
-            additional_read_dirs: vec![progress_path.display().to_string()],
-            temperature: settings.temperature,
-            max_tokens: settings.max_tokens,
-            thinking: None,
-            session_id: Some(child_session.id.clone()),
-            session_uuid: child_uuid,
-            knowledge_collections: vec![],
-            use_context_pipeline: false,
-            user_query: request.to_string(),
-            external_trace_id: None,
-            trust_tier: settings.trust_tier,
-            agent_allowed_tools: settings.allowed_tools.clone(),
-            prune_tool_history: settings.prune_tool_history,
-            response_format: None,
-            image_generation_options: None,
-            inherited_constraints: None,
-            trace_metadata: serde_json::Value::Null,
-        };
+            progress_path,
+            request,
+            child_session.id.clone(),
+            child_uuid,
+        );
 
         // Create a per-round snapshot under the parent session's file history
         // so that rewind can restore to individual round boundaries.
@@ -496,39 +471,15 @@ impl LoopOrchestrator {
         let tool_defs =
             Self::load_tool_schemas_for_allowed_tools(container, &settings.allowed_tools).await;
 
-        let exec_config = AgentExecutionConfig {
-            agent_name: LOOP_EXECUTOR_AGENT_ID.to_string(),
-            system_prompt: settings.system_prompt.clone(),
-            max_iterations: settings.max_iterations,
-            max_tool_calls: settings.max_tool_calls,
-            tool_definitions: tool_defs,
-            tool_calling_mode: y_core::provider::ToolCallingMode::Native,
-            tool_dialect: y_core::provider::ToolDialect::default(),
+        let exec_config = build_loop_execution_config(
+            &settings,
+            tool_defs,
             messages,
-            provider_id: None,
-            preferred_models: settings.preferred_models.clone(),
-            provider_tags: settings.provider_tags.clone(),
-            fallback_provider_tags: vec![],
-            request_mode: y_core::provider::RequestMode::TextChat,
-            working_directory: None,
-            additional_read_dirs: vec![progress_path.display().to_string()],
-            temperature: settings.temperature,
-            max_tokens: settings.max_tokens,
-            thinking: None,
-            session_id: Some(child_session.id.clone()),
-            session_uuid: child_uuid,
-            knowledge_collections: vec![],
-            use_context_pipeline: false,
-            user_query: request.to_string(),
-            external_trace_id: None,
-            trust_tier: settings.trust_tier,
-            agent_allowed_tools: settings.allowed_tools.clone(),
-            prune_tool_history: settings.prune_tool_history,
-            response_format: None,
-            image_generation_options: None,
-            inherited_constraints: None,
-            trace_metadata: serde_json::Value::Null,
-        };
+            progress_path,
+            request,
+            child_session.id.clone(),
+            child_uuid,
+        );
 
         AgentService::execute(container, &exec_config, progress.cloned(), cancel.cloned())
             .await
@@ -728,6 +679,50 @@ async fn read_progress_file(path: &Path) -> Result<String, ToolError> {
         })
 }
 
+fn build_loop_execution_config(
+    settings: &ResolvedAgentConfig,
+    tool_definitions: Vec<serde_json::Value>,
+    messages: Vec<Message>,
+    progress_path: &Path,
+    request: &str,
+    session_id: SessionId,
+    session_uuid: Uuid,
+) -> AgentExecutionConfig {
+    AgentExecutionConfig {
+        agent_name: LOOP_EXECUTOR_AGENT_ID.to_string(),
+        system_prompt: settings.system_prompt.clone(),
+        max_iterations: settings.max_iterations,
+        max_tool_calls: settings.max_tool_calls,
+        tool_definitions,
+        tool_calling_mode: y_core::provider::ToolCallingMode::Native,
+        tool_dialect: y_core::provider::ToolDialect::default(),
+        messages,
+        provider_id: None,
+        preferred_models: settings.preferred_models.clone(),
+        provider_tags: settings.provider_tags.clone(),
+        fallback_provider_tags: vec![],
+        request_mode: y_core::provider::RequestMode::TextChat,
+        working_directory: None,
+        additional_read_dirs: vec![progress_path.display().to_string()],
+        temperature: settings.temperature,
+        max_tokens: settings.max_tokens,
+        thinking: None,
+        session_id: Some(session_id),
+        session_uuid,
+        knowledge_collections: vec![],
+        use_context_pipeline: false,
+        user_query: request.to_string(),
+        external_trace_id: None,
+        trust_tier: settings.trust_tier,
+        agent_allowed_tools: settings.allowed_tools.clone(),
+        prune_tool_history: settings.prune_tool_history,
+        response_format: settings.response_format.clone(),
+        image_generation_options: None,
+        inherited_constraints: None,
+        trace_metadata: serde_json::Value::Null,
+    }
+}
+
 fn build_subagent_messages(system_prompt: &str, user_content: String) -> Vec<Message> {
     let mut messages = Vec::with_capacity(if system_prompt.is_empty() { 1 } else { 2 });
     if !system_prompt.is_empty() {
@@ -837,6 +832,34 @@ fn map_loop_agent_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loop_execution_config_preserves_resolved_agent_contract() {
+        let mut settings = default_executor_config();
+        settings.response_format = Some(ResponseFormat::JsonObject);
+        settings.allowed_tools = vec!["FileRead".to_string()];
+        let session_id = SessionId::new();
+        let session_uuid = Uuid::new_v4();
+        let messages = build_subagent_messages("system", "user".to_string());
+
+        let config = build_loop_execution_config(
+            &settings,
+            vec![serde_json::json!({"type": "function"})],
+            messages,
+            Path::new("/tmp/PROGRESS.md"),
+            "finish the task",
+            session_id.clone(),
+            session_uuid,
+        );
+
+        assert_eq!(config.session_id, Some(session_id));
+        assert_eq!(config.session_uuid, session_uuid);
+        assert_eq!(config.agent_allowed_tools, ["FileRead"]);
+        assert!(matches!(
+            config.response_format,
+            Some(ResponseFormat::JsonObject)
+        ));
+    }
 
     #[tokio::test]
     async fn test_loop_progress_reuses_owner_tool_call_id() {

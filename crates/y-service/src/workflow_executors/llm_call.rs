@@ -9,26 +9,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tracing::debug;
 
 use y_agent::orchestrator::channel::WorkflowContext;
 use y_agent::orchestrator::checkpoint::TaskOutput;
 use y_agent::orchestrator::dag::{TaskNode, TaskType};
 use y_agent::orchestrator::task_executor::{TaskExecuteError, TaskExecutor};
-use y_core::provider::{ChatRequest, ProviderPool, RouteRequest, ToolCallingMode};
-use y_core::types::{Message, Role};
+use y_core::types::Role;
 
 use crate::ServiceContainer;
 
+use super::llm_support::{
+    execute_workflow_llm, make_message, serialize_inputs, ServiceWorkflowLlmClient,
+    WorkflowLlmClient,
+};
+
 /// Executes `TaskType::LlmCall` tasks via the provider pool.
 pub struct LlmCallExecutor {
-    container: Arc<ServiceContainer>,
+    client: Arc<dyn WorkflowLlmClient>,
 }
 
 impl LlmCallExecutor {
     /// Create a new executor wired to the service container.
     pub fn new(container: Arc<ServiceContainer>) -> Self {
-        Self { container }
+        Self {
+            client: Arc::new(ServiceWorkflowLlmClient::new(container)),
+        }
     }
 }
 
@@ -52,7 +57,7 @@ impl TaskExecutor for LlmCallExecutor {
         let user_content = if inputs.is_empty() {
             format!("Execute task: {}", task.name)
         } else {
-            serde_json::to_string_pretty(&inputs).unwrap_or_else(|_| format!("{inputs:?}"))
+            serialize_inputs(&inputs)
         };
 
         let mut messages = Vec::new();
@@ -61,56 +66,15 @@ impl TaskExecutor for LlmCallExecutor {
         }
         messages.push(make_message(Role::User, &user_content));
 
-        let request = ChatRequest {
+        execute_workflow_llm(
+            self.client.as_ref(),
+            &task.id,
             messages,
-            model: None,
-            request_mode: y_core::provider::RequestMode::TextChat,
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            tools: vec![],
-            tool_calling_mode: ToolCallingMode::Native,
-            tool_dialect: y_core::provider::ToolDialect::default(),
-            stop: vec![],
-            extra: serde_json::Value::Null,
-            thinking: None,
-            response_format: None,
-            image_generation_options: None,
-        };
-
-        // Route to provider by tag or use default.
-        let route = RouteRequest {
-            required_tags: provider_tag.map(|t| vec![t]).unwrap_or_default(),
-            ..RouteRequest::default()
-        };
-
-        let pool = self.container.provider_pool().await;
-        let response = pool.chat_completion(&request, &route).await.map_err(|e| {
-            TaskExecuteError::Transient {
-                message: format!("LLM call failed: {e}"),
-            }
-        })?;
-
-        let content = response.content.unwrap_or_default();
-
-        debug!(
-            task_id = %task.id,
-            content_len = content.len(),
-            "LlmCallExecutor completed"
-        );
-
-        Ok(TaskOutput {
-            task_id: task.id.clone(),
-            output: serde_json::json!({
-                "content": content,
-                "model": response.model,
-                "usage": {
-                    "input_tokens": response.usage.input_tokens,
-                    "output_tokens": response.usage.output_tokens,
-                },
-            }),
-            completed_at: chrono::Utc::now(),
-        })
+            provider_tag,
+            "LLM call failed",
+            "LlmCallExecutor",
+        )
+        .await
     }
 
     fn supports(&self, task_type: &TaskType) -> bool {
@@ -118,22 +82,10 @@ impl TaskExecutor for LlmCallExecutor {
     }
 }
 
-/// Build a simple message with the given role and content.
-fn make_message(role: Role, content: &str) -> Message {
-    Message {
-        message_id: y_core::types::generate_message_id(),
-        role,
-        content: content.to_string(),
-        tool_call_id: None,
-        tool_calls: vec![],
-        timestamp: chrono::Utc::now(),
-        metadata: serde_json::Value::Null,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workflow_executors::llm_support::serialize_inputs;
 
     #[test]
     fn test_supports_llm_call() {
@@ -142,5 +94,19 @@ mod tests {
             system_prompt: None,
         };
         assert!(matches!(task_type, TaskType::LlmCall { .. }));
+    }
+
+    #[test]
+    fn test_workflow_llm_inputs_are_serialized_in_key_order() {
+        let inputs = HashMap::from([
+            ("zeta".to_string(), serde_json::json!(3)),
+            ("alpha".to_string(), serde_json::json!(1)),
+            ("middle".to_string(), serde_json::json!(2)),
+        ]);
+
+        assert_eq!(
+            serialize_inputs(&inputs),
+            "{\n  \"alpha\": 1,\n  \"middle\": 2,\n  \"zeta\": 3\n}"
+        );
     }
 }

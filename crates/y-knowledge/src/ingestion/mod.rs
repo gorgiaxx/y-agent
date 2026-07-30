@@ -17,6 +17,7 @@ use crate::quality::QualityFilter;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
 // Raw Document
@@ -35,6 +36,32 @@ pub struct RawDocument {
     pub content_hash: String,
     /// Source type.
     pub source_type: SourceType,
+}
+
+fn file_document(uri: &str, content: String, title: String) -> RawDocument {
+    let content_hash = Sha256::digest(content.as_bytes()).iter().fold(
+        String::with_capacity(64),
+        |mut hash, byte| {
+            use std::fmt::Write as _;
+            let _ = write!(hash, "{byte:02x}");
+            hash
+        },
+    );
+
+    RawDocument {
+        content,
+        uri: uri.to_string(),
+        title,
+        content_hash,
+        source_type: SourceType::File,
+    }
+}
+
+fn file_stem_title(uri: &str) -> String {
+    std::path::Path::new(uri)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +245,19 @@ mod tests {
             content_hash: "abc123".to_string(),
             source_type: SourceType::File,
         }
+    }
+
+    #[test]
+    fn file_document_builds_consistent_metadata_and_hash() {
+        let document = file_document("/tmp/example.txt", "hello".into(), "Example".into());
+
+        assert_eq!(document.uri, "/tmp/example.txt");
+        assert_eq!(document.title, "Example");
+        assert_eq!(
+            document.content_hash,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        assert_eq!(document.source_type, SourceType::File);
     }
 
     #[test]

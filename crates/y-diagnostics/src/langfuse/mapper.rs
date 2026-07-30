@@ -61,36 +61,7 @@ impl LangfuseIngestionMapper {
     }
 
     pub fn map_trace_update(&self, trace: &Trace) -> IngestionEvent {
-        let body = TraceBody {
-            id: Some(trace.id.to_string()),
-            timestamp: Some(to_iso8601(trace.started_at)),
-            name: Some(trace.name.clone()),
-            user_id: None,
-            session_id: Some(trace.session_id.to_string()),
-            input: None,
-            output: trace.metadata.get("output").cloned(),
-            metadata: if trace.metadata.is_null() {
-                None
-            } else {
-                Some(trace.metadata.clone())
-            },
-            tags: if trace.tags.is_empty() {
-                None
-            } else {
-                Some(trace.tags.clone())
-            },
-            release: Some(env!("CARGO_PKG_VERSION").to_string()),
-            version: None,
-            environment: None,
-            is_public: None,
-        };
-
-        IngestionEvent {
-            id: Uuid::new_v4().to_string(),
-            event_type: "trace-create".to_string(),
-            timestamp: to_iso8601(Utc::now()),
-            body: serde_json::to_value(body).unwrap_or_default(),
-        }
+        Self::trace_event(Self::build_trace_body(trace, None))
     }
 
     pub fn map_observation(&self, trace: &Trace, obs: &Observation) -> IngestionEvent {
@@ -106,17 +77,18 @@ impl LangfuseIngestionMapper {
             .user_input
             .as_ref()
             .map(|s| serde_json::Value::String(s.clone()));
+        Self::trace_event(Self::build_trace_body(trace, input))
+    }
 
-        let output = trace.metadata.get("output").cloned();
-
-        let body = TraceBody {
+    fn build_trace_body(trace: &Trace, input: Option<serde_json::Value>) -> TraceBody {
+        TraceBody {
             id: Some(trace.id.to_string()),
             timestamp: Some(to_iso8601(trace.started_at)),
             name: Some(trace.name.clone()),
             user_id: None,
             session_id: Some(trace.session_id.to_string()),
             input,
-            output,
+            output: trace.metadata.get("output").cloned(),
             metadata: if trace.metadata.is_null() {
                 None
             } else {
@@ -131,8 +103,10 @@ impl LangfuseIngestionMapper {
             version: None,
             environment: None,
             is_public: None,
-        };
+        }
+    }
 
+    fn trace_event(body: TraceBody) -> IngestionEvent {
         IngestionEvent {
             id: Uuid::new_v4().to_string(),
             event_type: "trace-create".to_string(),
@@ -384,6 +358,18 @@ mod tests {
         let result = mapper.map_trace(&trace, &[], &[]);
         assert_eq!(result.batch.len(), 1);
         assert_eq!(result.batch[0].event_type, "trace-create");
+    }
+
+    #[test]
+    fn test_trace_body_omits_null_metadata_and_empty_tags() {
+        let trace = Trace::new(Uuid::new_v4(), "test");
+
+        let body = LangfuseIngestionMapper::build_trace_body(&trace, None);
+
+        assert_eq!(body.id.as_deref(), Some(trace.id.to_string().as_str()));
+        assert!(body.input.is_none());
+        assert!(body.metadata.is_none());
+        assert!(body.tags.is_none());
     }
 
     #[test]

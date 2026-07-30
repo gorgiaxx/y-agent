@@ -9,11 +9,10 @@ use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use y_core::session::{CreateSessionOptions, SessionFilter, SessionState, SessionType};
+use y_core::session::{SessionFilter, SessionState};
 use y_core::types::SessionId;
 use y_service::{
-    decode_session_prompt_config, encode_session_prompt_config, session_prompt_config_has_content,
-    SessionPromptConfig,
+    decode_session_prompt_config, encode_session_prompt_config, SessionPromptConfig, SessionService,
 };
 
 use crate::error::ApiError;
@@ -40,56 +39,6 @@ pub struct CreateSessionRequest {
     pub title: Option<String>,
     pub agent_id: Option<String>,
     pub workspace_path: Option<String>,
-}
-
-/// Session info returned to clients.
-#[derive(Debug, Serialize)]
-pub struct SessionInfo {
-    pub id: String,
-    pub agent_id: Option<String>,
-    pub title: Option<String>,
-    pub manual_title: Option<String>,
-    pub workspace_path: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub message_count: usize,
-    pub has_custom_prompt: bool,
-}
-
-/// Child (sub-agent) session summary for drill-in.
-#[derive(Debug, Serialize)]
-pub struct ChildSessionInfo {
-    pub id: String,
-    pub title: Option<String>,
-    pub session_type: String,
-    pub agent_id: Option<String>,
-    pub message_count: usize,
-    pub created_at: String,
-    /// Last update time (RFC 3339). For a finished sub-agent this is the
-    /// completion time — set when the final transcript message is persisted.
-    pub updated_at: String,
-}
-
-/// A message in the session transcript.
-#[derive(Debug, Serialize)]
-pub struct MessageInfo {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-    pub timestamp: String,
-    pub tool_calls: Vec<ToolCallBrief>,
-    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
-    pub metadata: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub skills: Option<Vec<String>>,
-}
-
-/// Brief tool call info for display.
-#[derive(Debug, Serialize)]
-pub struct ToolCallBrief {
-    pub id: String,
-    pub name: String,
-    pub arguments: String,
 }
 
 /// Request body for `POST /api/v1/sessions/:id/fork`.
@@ -142,28 +91,6 @@ pub struct ListMessagesQuery {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn is_user_visible_session(session_type: SessionType, state: SessionState) -> bool {
-    session_type.is_user_facing() && state == SessionState::Active
-}
-
-fn session_to_info(s: &y_core::session::SessionNode, has_custom_prompt: bool) -> SessionInfo {
-    SessionInfo {
-        id: s.id.0.clone(),
-        agent_id: s.agent_id.as_ref().map(|id| id.0.clone()),
-        title: s.title.clone(),
-        manual_title: s.manual_title.clone(),
-        workspace_path: s.workspace_path.clone(),
-        created_at: s.created_at.to_rfc3339(),
-        updated_at: s.updated_at.to_rfc3339(),
-        message_count: s.message_count as usize,
-        has_custom_prompt,
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
@@ -206,34 +133,7 @@ async fn list_sessions(
             .map_err(|e| ApiError::Internal(format!("{e}")))?
     };
 
-    // Check which sessions have custom prompt composition.
-    let mut custom_prompt_ids = std::collections::HashSet::new();
-    for s in &sessions {
-        if let Ok(stored) = state
-            .container
-            .session_manager
-            .get_custom_system_prompt(&s.id)
-            .await
-        {
-            let config = decode_session_prompt_config(stored);
-            if session_prompt_config_has_content(&config) {
-                custom_prompt_ids.insert(s.id.0.clone());
-            }
-        }
-    }
-
-    let mut infos: Vec<SessionInfo> = sessions
-        .into_iter()
-        .filter(|s| is_user_visible_session(s.session_type, s.state))
-        .map(|s| {
-            let has_custom = custom_prompt_ids.contains(&s.id.0);
-            session_to_info(&s, has_custom)
-        })
-        .collect();
-
-    // Sort by updated_at descending (newest first).
-    infos.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-
+    let infos = SessionService::session_infos(&state.container.session_manager, sessions).await;
     Ok(Json(infos))
 }
 
@@ -246,30 +146,14 @@ async fn create_session(
         Some(b) => (b.title, b.agent_id, b.workspace_path),
         None => (None, None, None),
     };
-    let options = CreateSessionOptions {
-        parent_id: None,
-        session_type: SessionType::Main,
-        agent_id: agent_id.map(y_core::types::AgentId::from_string),
+    let info = SessionService::create_main_session(
+        &state.container.session_manager,
         title,
-    };
-    let session = if let Some(workspace_path) = workspace_path {
-        y_service::SessionService::create_session(
-            &state.container.session_manager,
-            options,
-            std::path::Path::new(&workspace_path),
-        )
-        .await
-        .map_err(|error| ApiError::Internal(format!("{error}")))
-    } else {
-        state
-            .container
-            .session_manager
-            .create_session(options)
-            .await
-            .map_err(|error| ApiError::Internal(format!("{error}")))
-    }?;
-
-    let info = session_to_info(&session, false);
+        agent_id,
+        workspace_path.as_deref(),
+    )
+    .await
+    .map_err(|error| ApiError::Internal(format!("{error}")))?;
     Ok((StatusCode::CREATED, Json(info)))
 }
 
@@ -286,16 +170,9 @@ async fn get_session(
         .await
         .map_err(|_| ApiError::NotFound(format!("session {session_id} not found")))?;
 
-    let has_custom = state
-        .container
-        .session_manager
-        .get_custom_system_prompt(&id)
-        .await
-        .ok()
-        .map(decode_session_prompt_config)
-        .is_some_and(|config| session_prompt_config_has_content(&config));
-
-    Ok(Json(session_to_info(&session, has_custom)))
+    Ok(Json(
+        SessionService::session_info(&state.container.session_manager, session).await,
+    ))
 }
 
 /// `GET /api/v1/sessions/:id/children`
@@ -307,40 +184,11 @@ async fn list_child_sessions(
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let sid = SessionId(session_id.clone());
-    let children = state
-        .container
-        .session_manager
-        .children(&sid)
+    let mapped = SessionService::child_session_infos(&state.container.session_manager, &sid)
         .await
         .map_err(|_| ApiError::NotFound(format!("session {session_id} not found")))?;
 
-    let mapped: Vec<ChildSessionInfo> = children
-        .into_iter()
-        .filter(|c| c.state == SessionState::Active && c.session_type.is_sub_agent())
-        .map(|c| ChildSessionInfo {
-            id: c.id.0,
-            title: c.title,
-            session_type: session_type_slug(c.session_type),
-            agent_id: c.agent_id.map(|a| a.0),
-            message_count: c.message_count as usize,
-            created_at: c.created_at.to_rfc3339(),
-            updated_at: c.updated_at.to_rfc3339(),
-        })
-        .collect();
-
     Ok(Json(mapped))
-}
-
-fn session_type_slug(t: SessionType) -> String {
-    match t {
-        SessionType::Main => "main",
-        SessionType::Child => "child",
-        SessionType::Branch => "branch",
-        SessionType::Ephemeral => "ephemeral",
-        SessionType::SubAgent => "sub_agent",
-        SessionType::Canonical => "canonical",
-    }
-    .to_string()
 }
 
 /// `GET /api/v1/sessions/:id/messages`
@@ -350,59 +198,10 @@ async fn list_messages(
     Query(params): Query<ListMessagesQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let id = SessionId(session_id.clone());
-    let messages = state
-        .container
-        .session_manager
-        .read_display_transcript(&id)
-        .await
-        .map_err(|_| ApiError::NotFound(format!("session {session_id} not found")))?;
-
-    let mapped: Vec<MessageInfo> = messages
-        .iter()
-        .map(|m| {
-            let skills = m
-                .metadata
-                .get("skills")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect::<Vec<String>>()
-                })
-                .filter(|v| !v.is_empty());
-
-            MessageInfo {
-                id: m.message_id.clone(),
-                role: format!("{:?}", m.role).to_lowercase(),
-                content: m.content.clone(),
-                timestamp: m.timestamp.to_rfc3339(),
-                tool_calls: m
-                    .tool_calls
-                    .iter()
-                    .map(|tc| ToolCallBrief {
-                        id: tc.id.clone(),
-                        name: tc.name.clone(),
-                        arguments: tc.arguments.to_string(),
-                    })
-                    .collect(),
-                metadata: m.metadata.clone(),
-                skills,
-            }
-        })
-        .collect();
-
-    let selected: Vec<_> = if let Some(n) = params.last {
-        mapped
-            .into_iter()
-            .rev()
-            .take(n)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect()
-    } else {
-        mapped
-    };
+    let selected =
+        SessionService::message_infos(&state.container.session_manager, &id, params.last)
+            .await
+            .map_err(|_| ApiError::NotFound(format!("session {session_id} not found")))?;
 
     Ok(Json(selected))
 }
@@ -598,7 +397,8 @@ async fn fork_session(
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to fork session: {e}")))?;
 
-    Ok((StatusCode::CREATED, Json(session_to_info(&fork, false))))
+    let info = SessionService::session_info(&state.container.session_manager, fork).await;
+    Ok((StatusCode::CREATED, Json(info)))
 }
 
 /// `PUT /api/v1/sessions/:id/rename`

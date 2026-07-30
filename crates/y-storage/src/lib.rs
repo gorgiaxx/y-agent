@@ -18,6 +18,7 @@ pub mod config;
 #[cfg(feature = "instance_coordination")]
 pub mod coordination;
 pub mod error;
+mod jsonl_message_store;
 pub mod migration;
 pub mod plan_run_store;
 pub mod pool;

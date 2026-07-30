@@ -8,6 +8,8 @@ use y_skills::evolution::{EvolutionProposal, ProposalStatus};
 use crate::container::ServiceContainer;
 use crate::skill_evolution_service::{PromotionResources, SkillProposalDecision};
 
+use super::tool_handling::parse_tool_arguments;
+
 #[derive(serde::Deserialize)]
 #[serde(default)]
 struct SkillProposalListParams {
@@ -46,7 +48,7 @@ pub(super) async fn handle(
 ) -> Result<y_core::tool::ToolOutput, y_core::tool::ToolError> {
     let content = match tc.name.as_str() {
         "SkillProposalList" => {
-            let params: SkillProposalListParams = parse_arguments(tc)?;
+            let params: SkillProposalListParams = parse_tool_arguments(tc)?;
             let mut proposals = container
                 .skill_evolution_service
                 .load_proposals()
@@ -66,7 +68,7 @@ pub(super) async fn handle(
             })
         }
         "SkillProposalRefine" => {
-            let params: SkillProposalRefineParams = parse_arguments(tc)?;
+            let params: SkillProposalRefineParams = parse_tool_arguments(tc)?;
             if params
                 .instructions
                 .as_deref()
@@ -99,7 +101,7 @@ pub(super) async fn handle(
             })
         }
         "SkillProposalDecide" => {
-            let params: SkillProposalDecideParams = parse_arguments(tc)?;
+            let params: SkillProposalDecideParams = parse_tool_arguments(tc)?;
             let proposal = container
                 .skill_evolution_service
                 .decide_proposal(
@@ -171,16 +173,6 @@ fn proposal_summary(proposal: &EvolutionProposal) -> serde_json::Value {
 
 fn normalized(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn parse_arguments<T: serde::de::DeserializeOwned>(
-    tc: &ToolCallRequest,
-) -> Result<T, y_core::tool::ToolError> {
-    serde_json::from_value(tc.arguments.clone()).map_err(|error| {
-        y_core::tool::ToolError::ValidationError {
-            message: format!("invalid {} arguments: {error}", tc.name),
-        }
-    })
 }
 
 fn tool_error(name: &str, error: &y_skills::SkillModuleError) -> y_core::tool::ToolError {

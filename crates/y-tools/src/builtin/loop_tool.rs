@@ -16,6 +16,8 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
+use super::lifecycle_signal::signal_output;
+
 const DEFAULT_MAX_ROUNDS: usize = 10;
 const MIN_MAX_ROUNDS: usize = 2;
 const MAX_ROUNDS_CEILING: usize = 25;
@@ -111,18 +113,13 @@ impl Tool for LoopTool {
                 (v as usize).clamp(MIN_MAX_ROUNDS, MAX_ROUNDS_CEILING)
             });
 
-        Ok(ToolOutput {
-            success: true,
-            content: serde_json::json!({
-                "action": "loop",
-                "request": request,
-                "context": context,
-                "max_rounds": max_rounds,
-                "status": "pending"
-            }),
-            warnings: vec![],
-            metadata: serde_json::json!({}),
-        })
+        Ok(signal_output(serde_json::json!({
+            "action": "loop",
+            "request": request,
+            "context": context,
+            "max_rounds": max_rounds,
+            "status": "pending"
+        })))
     }
 
     fn definition(&self) -> &ToolDefinition {

@@ -10,6 +10,32 @@ use super::result;
 use super::tool_dispatch;
 use super::{pruning, AgentExecutionConfig, LlmIterationData, ToolExecContext, TurnEventSender};
 
+pub(super) fn parse_tool_arguments<T: serde::de::DeserializeOwned>(
+    request: &ToolCallRequest,
+) -> Result<T, y_core::tool::ToolError> {
+    serde_json::from_value(request.arguments.clone()).map_err(|error| {
+        y_core::tool::ToolError::ValidationError {
+            message: format!("invalid {} arguments: {error}", request.name),
+        }
+    })
+}
+
+fn build_native_tool_result(
+    request: &ToolCallRequest,
+    content: String,
+    metadata: serde_json::Value,
+) -> Message {
+    Message {
+        message_id: y_core::types::generate_message_id(),
+        role: Role::Tool,
+        content,
+        tool_call_id: Some(request.id.clone()),
+        tool_calls: vec![],
+        timestamp: y_core::types::now(),
+        metadata,
+    }
+}
+
 /// Handle native (function-calling) tool calls from an LLM response.
 pub(crate) async fn handle_native_tool_calls(
     container: &ServiceContainer,
@@ -77,15 +103,7 @@ pub(crate) async fn handle_native_tool_calls(
         let (_success, result_content, tool_meta) =
             tool_dispatch::execute_and_record_tool(container, config, tc, progress, ctx).await;
 
-        let tool_msg = Message {
-            message_id: y_core::types::generate_message_id(),
-            role: Role::Tool,
-            content: result_content,
-            tool_call_id: Some(tc.id.clone()),
-            tool_calls: vec![],
-            timestamp: y_core::types::now(),
-            metadata: tool_meta,
-        };
+        let tool_msg = build_native_tool_result(tc, result_content, tool_meta);
         ctx.working_history.push(tool_msg.clone());
         ctx.new_messages.push(tool_msg);
     }
@@ -200,15 +218,7 @@ pub(crate) async fn handle_prompt_based_tool_calls(
             let (_success, result_content, tool_meta) =
                 tool_dispatch::execute_and_record_tool(container, config, tc, progress, ctx).await;
 
-            let tool_msg = Message {
-                message_id: y_core::types::generate_message_id(),
-                role: Role::Tool,
-                content: result_content,
-                tool_call_id: Some(tc.id.clone()),
-                tool_calls: vec![],
-                timestamp: y_core::types::now(),
-                metadata: tool_meta,
-            };
+            let tool_msg = build_native_tool_result(tc, result_content, tool_meta);
             ctx.working_history.push(tool_msg.clone());
             ctx.new_messages.push(tool_msg);
         }
@@ -311,4 +321,52 @@ pub(crate) async fn sync_dynamic_tool_defs(
         dynamic_count = ctx.dynamic_tool_defs.len(),
         "synced dynamic tool definitions from activation set"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_tool_arguments_names_the_invalid_tool_call() {
+        #[derive(Debug, serde::Deserialize)]
+        struct RequiredName {
+            name: String,
+        }
+        let request = ToolCallRequest {
+            id: "call-1".into(),
+            name: "AgentCreate".into(),
+            arguments: serde_json::json!({}),
+        };
+
+        let error = parse_tool_arguments::<RequiredName>(&request).unwrap_err();
+
+        assert!(error.to_string().contains("AgentCreate"));
+
+        let valid = ToolCallRequest {
+            id: "call-2".into(),
+            name: "AgentCreate".into(),
+            arguments: serde_json::json!({"name": "demo"}),
+        };
+        let parsed = parse_tool_arguments::<RequiredName>(&valid).unwrap();
+
+        assert_eq!(parsed.name, "demo");
+    }
+
+    #[test]
+    fn test_build_native_tool_result_preserves_call_identity_and_metadata() {
+        let request = ToolCallRequest {
+            id: "call-42".into(),
+            name: "lookup".into(),
+            arguments: serde_json::json!({}),
+        };
+        let metadata = serde_json::json!({"duration_ms": 12});
+
+        let message = build_native_tool_result(&request, "done".into(), metadata.clone());
+
+        assert_eq!(message.role, Role::Tool);
+        assert_eq!(message.tool_call_id.as_deref(), Some("call-42"));
+        assert_eq!(message.content, "done");
+        assert_eq!(message.metadata, metadata);
+    }
 }

@@ -61,19 +61,7 @@ impl RuntimeManager {
     /// Create a runtime manager with the given configuration.
     pub fn new(config: RuntimeConfig, audit_trail: Option<Arc<AuditTrail>>) -> Self {
         let native = NativeRuntime::new(config.clone(), audit_trail.clone());
-        let docker = DockerRuntime::with_audit(config.clone(), audit_trail.clone());
-        let ssh = SshRuntime::new(config.ssh.clone());
-        let security_policy = SecurityPolicy::from_config(&config);
-        Self {
-            config: RwLock::new(config),
-            native,
-            docker,
-            ssh,
-            audit_trail,
-            concurrency_semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
-            resource_monitor: Arc::new(ResourceMonitor::with_defaults()),
-            security_policy: RwLock::new(security_policy),
-        }
+        Self::from_native(config, audit_trail, native)
     }
 
     /// Create a runtime manager with a non-blocking runtime event sink.
@@ -84,6 +72,14 @@ impl RuntimeManager {
     ) -> Self {
         let native =
             NativeRuntime::with_event_sink(config.clone(), audit_trail.clone(), event_sink);
+        Self::from_native(config, audit_trail, native)
+    }
+
+    fn from_native(
+        config: RuntimeConfig,
+        audit_trail: Option<Arc<AuditTrail>>,
+        native: NativeRuntime,
+    ) -> Self {
         let docker = DockerRuntime::with_audit(config.clone(), audit_trail.clone());
         let ssh = SshRuntime::new(config.ssh.clone());
         let security_policy = SecurityPolicy::from_config(&config);
@@ -558,6 +554,24 @@ mod tests {
             capabilities: caps,
             image: image.map(std::string::ToString::to_string),
         }
+    }
+
+    #[test]
+    fn common_manager_initialization_sets_shared_runtime_state() {
+        let config = RuntimeConfig {
+            default_backend: RuntimeBackend::Ssh,
+            ..Default::default()
+        };
+        let native = NativeRuntime::new(config.clone(), None);
+
+        let manager = RuntimeManager::from_native(config, None, native);
+
+        assert_eq!(manager.available_permits(), DEFAULT_MAX_CONCURRENT);
+        assert_eq!(manager.read_config().default_backend, RuntimeBackend::Ssh);
+        assert_eq!(
+            *manager.read_security_policy().profile(),
+            crate::security_policy::SecurityProfile::Standard
+        );
     }
 
     // T-RT-004-01

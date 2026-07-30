@@ -100,29 +100,7 @@ impl<T: Tokenizer> Bm25Index<T> {
         self.doc_lengths.reserve(documents.len());
 
         for &(chunk_id, content) in documents {
-            // Upsert: remove stale data before re-inserting.
-            if self.doc_lengths.contains_key(chunk_id) {
-                self.remove(chunk_id);
-            }
-
-            let tokens = self.tokenizer.tokenize(content);
-            let doc_len = u32::try_from(tokens.len()).unwrap_or(u32::MAX);
-
-            self.doc_lengths.insert(chunk_id.to_string(), doc_len);
-            self.doc_count += 1;
-            self.total_length += f64::from(doc_len);
-
-            let mut term_freqs: HashMap<String, u32> = HashMap::new();
-            for token in tokens {
-                *term_freqs.entry(token).or_insert(0) += 1;
-            }
-
-            for (term, tf) in term_freqs {
-                self.index.entry(term).or_default().push(Posting {
-                    chunk_id: chunk_id.to_string(),
-                    tf,
-                });
-            }
+            self.add(chunk_id, content);
         }
     }
 

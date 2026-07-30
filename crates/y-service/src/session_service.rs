@@ -4,8 +4,10 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use y_core::session::{CreateSessionOptions, SessionFilter, SessionNode, SessionState};
-use y_core::types::{AgentId, SessionId};
+use y_core::session::{
+    CreateSessionOptions, SessionFilter, SessionNode, SessionState, SessionType,
+};
+use y_core::types::{AgentId, Message, SessionId};
 use y_session::SessionManager;
 
 use crate::workspace::{canonical_workspace_path, WorkspaceService};
@@ -18,6 +20,114 @@ pub struct SessionHubItem {
     pub session: SessionNode,
     pub pinned: bool,
     pub quick_slot: Option<u8>,
+}
+
+/// Session summary shared by presentation clients.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionInfo {
+    pub id: String,
+    pub agent_id: Option<String>,
+    pub title: Option<String>,
+    pub manual_title: Option<String>,
+    pub workspace_path: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: usize,
+    pub has_custom_prompt: bool,
+}
+
+impl SessionInfo {
+    fn from_node(session: SessionNode, has_custom_prompt: bool) -> Self {
+        Self {
+            id: session.id.0,
+            agent_id: session.agent_id.map(|id| id.0),
+            title: session.title,
+            manual_title: session.manual_title,
+            workspace_path: session.workspace_path,
+            created_at: session.created_at.to_rfc3339(),
+            updated_at: session.updated_at.to_rfc3339(),
+            message_count: usize::try_from(session.message_count).unwrap_or(usize::MAX),
+            has_custom_prompt,
+        }
+    }
+}
+
+/// Direct child session summary shared by presentation clients.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChildSessionInfo {
+    pub id: String,
+    pub title: Option<String>,
+    pub session_type: String,
+    pub agent_id: Option<String>,
+    pub message_count: usize,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Brief tool call metadata for transcript rendering.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolCallBrief {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// Display transcript message shared by presentation clients.
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageInfo {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub timestamp: String,
+    pub tool_calls: Vec<ToolCallBrief>,
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub metadata: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<String>>,
+}
+
+impl MessageInfo {
+    fn from_message(message: &Message) -> Self {
+        let skills = message
+            .metadata
+            .get("skills")
+            .and_then(serde_json::Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|skills| !skills.is_empty());
+
+        Self {
+            id: message.message_id.clone(),
+            role: format!("{:?}", message.role).to_lowercase(),
+            content: message.content.clone(),
+            timestamp: message.timestamp.to_rfc3339(),
+            tool_calls: message
+                .tool_calls
+                .iter()
+                .map(|tool_call| ToolCallBrief {
+                    id: tool_call.id.clone(),
+                    name: tool_call.name.clone(),
+                    arguments: tool_call.arguments.to_string(),
+                })
+                .collect(),
+            metadata: message.metadata.clone(),
+            skills,
+        }
+    }
+}
+
+fn main_session_options(title: Option<String>, agent_id: Option<String>) -> CreateSessionOptions {
+    CreateSessionOptions {
+        parent_id: None,
+        session_type: SessionType::Main,
+        agent_id: agent_id.map(AgentId::from_string),
+        title,
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -41,6 +151,87 @@ impl SessionService {
         target
             .strip_prefix(Self::PUBLIC_SESSION_PREFIX)
             .unwrap_or(target)
+    }
+
+    /// Map domain sessions into the shared presentation contract.
+    pub async fn session_infos(
+        manager: &SessionManager,
+        sessions: Vec<SessionNode>,
+    ) -> Vec<SessionInfo> {
+        let mut infos = Vec::with_capacity(sessions.len());
+        for session in sessions
+            .into_iter()
+            .filter(|session| is_presentable_session(session.session_type, session.state))
+        {
+            let has_custom_prompt = has_custom_prompt(manager, &session.id).await;
+            infos.push(SessionInfo::from_node(session, has_custom_prompt));
+        }
+        infos.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        infos
+    }
+
+    /// Map one domain session into the shared presentation contract.
+    pub async fn session_info(manager: &SessionManager, session: SessionNode) -> SessionInfo {
+        let has_custom_prompt = has_custom_prompt(manager, &session.id).await;
+        SessionInfo::from_node(session, has_custom_prompt)
+    }
+
+    /// Create a main session from presentation inputs and return its shared summary.
+    pub async fn create_main_session(
+        manager: &SessionManager,
+        title: Option<String>,
+        agent_id: Option<String>,
+        workspace_path: Option<&str>,
+    ) -> anyhow::Result<SessionInfo> {
+        let options = main_session_options(title, agent_id);
+        let session = if let Some(workspace_path) = workspace_path {
+            Self::create_session(manager, options, Path::new(workspace_path)).await?
+        } else {
+            manager.create_session(options).await?
+        };
+        Ok(Self::session_info(manager, session).await)
+    }
+
+    /// List direct active sub-agent children using the shared presentation contract.
+    pub async fn child_session_infos(
+        manager: &SessionManager,
+        session_id: &SessionId,
+    ) -> anyhow::Result<Vec<ChildSessionInfo>> {
+        Ok(manager
+            .children(session_id)
+            .await?
+            .into_iter()
+            .filter(|child| {
+                child.state == SessionState::Active && child.session_type.is_sub_agent()
+            })
+            .map(|child| ChildSessionInfo {
+                id: child.id.0,
+                title: child.title,
+                session_type: session_type_slug(child.session_type),
+                agent_id: child.agent_id.map(|id| id.0),
+                message_count: usize::try_from(child.message_count).unwrap_or(usize::MAX),
+                created_at: child.created_at.to_rfc3339(),
+                updated_at: child.updated_at.to_rfc3339(),
+            })
+            .collect())
+    }
+
+    /// Read display transcript messages using the shared presentation contract.
+    pub async fn message_infos(
+        manager: &SessionManager,
+        session_id: &SessionId,
+        last: Option<usize>,
+    ) -> anyhow::Result<Vec<MessageInfo>> {
+        let messages = manager.read_display_transcript(session_id).await?;
+        let mut infos = messages
+            .iter()
+            .map(MessageInfo::from_message)
+            .collect::<Vec<_>>();
+        if let Some(count) = last {
+            let start = infos.len().saturating_sub(count);
+            infos.drain(..start);
+        }
+        Ok(infos)
     }
 
     /// Create an interactive session bound to one canonical workspace.
@@ -315,6 +506,31 @@ impl SessionService {
     }
 }
 
+fn is_presentable_session(session_type: SessionType, state: SessionState) -> bool {
+    session_type.is_user_facing() && matches!(state, SessionState::Active | SessionState::Archived)
+}
+
+async fn has_custom_prompt(manager: &SessionManager, session_id: &SessionId) -> bool {
+    manager
+        .get_custom_system_prompt(session_id)
+        .await
+        .ok()
+        .map(crate::decode_session_prompt_config)
+        .is_some_and(|config| crate::session_prompt_config_has_content(&config))
+}
+
+fn session_type_slug(session_type: SessionType) -> String {
+    match session_type {
+        SessionType::Main => "main",
+        SessionType::Child => "child",
+        SessionType::Branch => "branch",
+        SessionType::Ephemeral => "ephemeral",
+        SessionType::SubAgent => "sub_agent",
+        SessionType::Canonical => "canonical",
+    }
+    .to_string()
+}
+
 async fn load_hub_preferences(path: &Path) -> anyhow::Result<SessionHubPreferences> {
     match tokio::fs::read(path).await {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(Into::into),
@@ -353,6 +569,36 @@ mod tests {
     use y_session::SessionConfig;
 
     use super::*;
+
+    #[test]
+    fn main_session_options_map_presentation_inputs() {
+        let options =
+            main_session_options(Some("Title".to_string()), Some("researcher".to_string()));
+
+        assert_eq!(options.parent_id, None);
+        assert_eq!(options.session_type, SessionType::Main);
+        assert_eq!(
+            options.agent_id.as_ref().map(|id| id.0.as_str()),
+            Some("researcher")
+        );
+        assert_eq!(options.title.as_deref(), Some("Title"));
+    }
+
+    #[test]
+    fn archived_user_session_is_presentable_but_tombstone_is_not() {
+        assert!(is_presentable_session(
+            SessionType::Main,
+            SessionState::Archived
+        ));
+        assert!(!is_presentable_session(
+            SessionType::Main,
+            SessionState::Tombstone
+        ));
+        assert!(!is_presentable_session(
+            SessionType::SubAgent,
+            SessionState::Active
+        ));
+    }
 
     async fn setup_manager() -> (SessionManager, tempfile::TempDir) {
         let config = y_storage::StorageConfig::in_memory();

@@ -7,6 +7,7 @@
 //! Without the feature flag, it remains a skeleton returning `RuntimeNotAvailable`.
 
 use std::sync::Arc;
+#[cfg(not(feature = "runtime_docker"))]
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -17,7 +18,7 @@ use y_core::runtime::{
     RuntimeBackend, RuntimeError, RuntimeHealth,
 };
 
-use crate::audit::AuditTrail;
+use crate::audit::{AuditOutcome, AuditTrail};
 use crate::config::RuntimeConfig;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +54,7 @@ mod docker_impl {
         pub client: Docker,
         pub config: RuntimeConfig,
         pub audit_trail: Option<Arc<AuditTrail>>,
-        /// Spawned (long-running) containers keyed by ProcessHandle ID.
+        /// Spawned (long-running) containers keyed by `ProcessHandle` ID.
         pub spawned: Mutex<HashMap<String, String>>, // handle_id -> container_id
     }
 
@@ -87,14 +88,14 @@ mod docker_impl {
             }
         }
 
-        /// Build the HostConfig with security hardening.
-        fn build_host_config(&self, request: &ExecutionRequest) -> HostConfig {
+        /// Build the `HostConfig` with security hardening.
+        fn host_config(request: &ExecutionRequest) -> HostConfig {
             let memory_limit = request
                 .capabilities
                 .container
                 .resources
                 .memory_bytes
-                .map(|b| b as i64);
+                .map(|bytes| i64::try_from(bytes).unwrap_or(i64::MAX));
 
             let cpu_quota = request
                 .capabilities
@@ -118,8 +119,8 @@ mod docker_impl {
                 .map(|m| {
                     let mode = match m.mode {
                         y_core::runtime::MountMode::ReadOnly => "ro",
-                        y_core::runtime::MountMode::ReadWrite => "rw",
-                        y_core::runtime::MountMode::WriteOnly => "rw",
+                        y_core::runtime::MountMode::ReadWrite
+                        | y_core::runtime::MountMode::WriteOnly => "rw",
                     };
                     format!("{}:{}:{}", m.host_path, m.container_path, mode)
                 })
@@ -145,72 +146,50 @@ mod docker_impl {
             }
         }
 
-        /// Execute a command inside a new container.
-        pub async fn execute(
-            &self,
+        fn container_config(
             request: &ExecutionRequest,
-        ) -> Result<ExecutionResult, RuntimeError> {
-            let image = request
-                .image
-                .as_deref()
-                .ok_or_else(|| RuntimeError::Other {
-                    message: "Docker runtime requires an image specification".into(),
-                })?;
+            image: &str,
+            host_config: HostConfig,
+        ) -> Config<String> {
+            let mut command = vec![request.command.clone()];
+            command.extend(request.args.clone());
 
-            // Verify image is whitelisted.
-            if !self.config.image_whitelist.contains(image) {
-                self.log_audit(
-                    &request.command,
-                    AuditOutcome::Denied {
-                        reason: format!("image not whitelisted: {image}"),
-                    },
-                    None,
-                )
-                .await;
-                return Err(RuntimeError::ImageNotAllowed {
-                    image: image.to_string(),
-                });
-            }
-
-            // Pull image if needed and allowed.
-            self.ensure_image(image).await?;
-
-            let timeout = self.effective_timeout(request);
-            let host_config = self.build_host_config(request);
-
-            // Build command: [command, args...]
-            let mut cmd = vec![request.command.clone()];
-            cmd.extend(request.args.clone());
-
-            // Environment variables.
-            let env: Vec<String> = request
+            let environment: Vec<String> = request
                 .env
                 .iter()
-                .map(|(k, v)| format!("{k}={v}"))
+                .map(|(key, value)| format!("{key}={value}"))
                 .collect();
+            let labels = HashMap::from([("y-agent.managed".to_string(), "true".to_string())]);
 
-            // Container labels for management.
-            let mut labels = std::collections::HashMap::new();
-            labels.insert("y-agent.managed".to_string(), "true".to_string());
-
-            let config = Config {
+            Config {
                 image: Some(image.to_string()),
-                cmd: Some(cmd),
-                env: if env.is_empty() { None } else { Some(env) },
+                cmd: Some(command),
+                env: (!environment.is_empty()).then_some(environment),
                 working_dir: request.working_dir.clone(),
                 host_config: Some(host_config),
                 labels: Some(labels),
                 ..Default::default()
-            };
+            }
+        }
 
-            let container_name = format!(
-                "y-agent-{}",
-                uuid::Uuid::new_v4()
-                    .to_string()
-                    .split('-')
-                    .next()
-                    .unwrap_or("x")
-            );
+        fn container_name() -> String {
+            let id = uuid::Uuid::new_v4().to_string();
+            format!("y-agent-{}", id.split('-').next().unwrap_or("x"))
+        }
+
+        /// Execute a command inside a new container.
+        pub async fn execute(
+            &self,
+            request: &ExecutionRequest,
+            image: &str,
+        ) -> Result<ExecutionResult, RuntimeError> {
+            // Pull image if needed and allowed.
+            self.ensure_image(image).await?;
+
+            let timeout = self.effective_timeout(request);
+            let host_config = Self::host_config(request);
+            let config = Self::container_config(request, image, host_config);
+            let container_name = Self::container_name();
 
             let start = std::time::Instant::now();
 
@@ -232,15 +211,16 @@ mod docker_impl {
             let container_id = create_result.id.clone();
 
             // Start container.
-            self.client
+            if let Err(error) = self
+                .client
                 .start_container(&container_id, None::<StartContainerOptions<String>>)
                 .await
-                .map_err(|e| {
-                    let _ = self.remove_container_sync(&container_id);
-                    RuntimeError::ContainerError {
-                        message: format!("failed to start container: {e}"),
-                    }
-                })?;
+            {
+                let _ = self.remove_container(&container_id).await;
+                return Err(RuntimeError::ContainerError {
+                    message: format!("failed to start container: {error}"),
+                });
+            }
 
             // Wait for completion with timeout.
             let wait_result = tokio::time::timeout(timeout, self.wait_container(&container_id))
@@ -377,22 +357,15 @@ mod docker_impl {
             });
 
             let mut stream = self.client.wait_container(container_id, options);
-            while let Some(result) = stream.next().await {
-                match result {
-                    Ok(response) => {
-                        return Ok(i32::try_from(response.status_code).unwrap_or(-1));
-                    }
-                    Err(e) => {
-                        return Err(RuntimeError::ContainerError {
-                            message: format!("error waiting for container: {e}"),
-                        });
-                    }
-                }
+            match stream.next().await {
+                Some(Ok(response)) => Ok(i32::try_from(response.status_code).unwrap_or(-1)),
+                Some(Err(error)) => Err(RuntimeError::ContainerError {
+                    message: format!("error waiting for container: {error}"),
+                }),
+                None => Err(RuntimeError::ContainerError {
+                    message: "container wait stream ended without result".into(),
+                }),
             }
-
-            Err(RuntimeError::ContainerError {
-                message: "container wait stream ended without result".into(),
-            })
         }
 
         /// Collect stdout and stderr from container logs.
@@ -452,63 +425,17 @@ mod docker_impl {
                 })
         }
 
-        /// Synchronous container removal attempt (best-effort, used in error paths).
-        fn remove_container_sync(&self, _container_id: &str) -> Result<(), RuntimeError> {
-            // Best-effort; actual removal happens in cleanup().
-            Ok(())
-        }
-
         /// Spawn a long-running container.
         pub async fn spawn(
             &self,
             request: &ExecutionRequest,
+            image: &str,
         ) -> Result<ProcessHandle, RuntimeError> {
-            let image = request
-                .image
-                .as_deref()
-                .ok_or_else(|| RuntimeError::Other {
-                    message: "Docker runtime requires an image specification".into(),
-                })?;
-
-            if !self.config.image_whitelist.contains(image) {
-                return Err(RuntimeError::ImageNotAllowed {
-                    image: image.to_string(),
-                });
-            }
-
             self.ensure_image(image).await?;
 
-            let host_config = self.build_host_config(request);
-            let mut cmd = vec![request.command.clone()];
-            cmd.extend(request.args.clone());
-
-            let env: Vec<String> = request
-                .env
-                .iter()
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect();
-
-            let mut labels = std::collections::HashMap::new();
-            labels.insert("y-agent.managed".to_string(), "true".to_string());
-
-            let config = Config {
-                image: Some(image.to_string()),
-                cmd: Some(cmd),
-                env: if env.is_empty() { None } else { Some(env) },
-                working_dir: request.working_dir.clone(),
-                host_config: Some(host_config),
-                labels: Some(labels),
-                ..Default::default()
-            };
-
-            let container_name = format!(
-                "y-agent-{}",
-                uuid::Uuid::new_v4()
-                    .to_string()
-                    .split('-')
-                    .next()
-                    .unwrap_or("x")
-            );
+            let host_config = Self::host_config(request);
+            let config = Self::container_config(request, image, host_config);
+            let container_name = Self::container_name();
 
             let create_result = self
                 .client
@@ -641,6 +568,55 @@ mod docker_impl {
             }
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn request() -> ExecutionRequest {
+            ExecutionRequest {
+                command: "echo".into(),
+                args: vec!["hello".into()],
+                working_dir: Some("/workspace".into()),
+                env: HashMap::from([("MODE".into(), "test".into())]),
+                stdin: None,
+                owner_session_id: None,
+                event_tool_name: None,
+                capabilities: y_core::runtime::RuntimeCapability::default(),
+                image: Some("python:3.11".into()),
+            }
+        }
+
+        #[test]
+        fn container_config_builds_managed_command_environment() {
+            let request = request();
+
+            let config =
+                DockerInner::container_config(&request, "python:3.11", HostConfig::default());
+
+            assert_eq!(config.image.as_deref(), Some("python:3.11"));
+            assert_eq!(config.cmd, Some(vec!["echo".into(), "hello".into()]));
+            assert_eq!(config.env, Some(vec!["MODE=test".into()]));
+            assert_eq!(config.working_dir.as_deref(), Some("/workspace"));
+            assert_eq!(
+                config
+                    .labels
+                    .as_ref()
+                    .and_then(|labels| labels.get("y-agent.managed")),
+                Some(&"true".to_string())
+            );
+        }
+
+        #[test]
+        fn host_config_clamps_memory_to_docker_signed_limit() {
+            let mut request = request();
+            request.capabilities.container.resources.memory_bytes = Some(u64::MAX);
+
+            let config = DockerInner::host_config(&request);
+
+            assert_eq!(config.memory, Some(i64::MAX));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +673,40 @@ impl DockerRuntime {
         }
     }
 
+    async fn validate_image<'a>(
+        &self,
+        request: &'a ExecutionRequest,
+    ) -> Result<&'a str, RuntimeError> {
+        let image = request
+            .image
+            .as_deref()
+            .ok_or_else(|| RuntimeError::Other {
+                message: "Docker runtime requires an image specification".into(),
+            })?;
+
+        if self.config.image_whitelist.contains(image) {
+            return Ok(image);
+        }
+
+        if let Some(audit) = &self.audit_trail {
+            audit
+                .log_tool_execution(
+                    "docker-runtime",
+                    &request.command,
+                    AuditOutcome::Denied {
+                        reason: format!("image not whitelisted: {image}"),
+                    },
+                    None,
+                )
+                .await;
+        }
+        Err(RuntimeError::ImageNotAllowed {
+            image: image.to_string(),
+        })
+    }
+
     /// Get the effective timeout for a request.
+    #[cfg(not(feature = "runtime_docker"))]
     fn effective_timeout(&self, request: &ExecutionRequest) -> Duration {
         request
             .capabilities
@@ -716,10 +725,12 @@ impl RuntimeAdapter for DockerRuntime {
 
     #[instrument(skip(self, request), fields(command = %request.command, backend = "docker"))]
     async fn execute(&self, request: ExecutionRequest) -> Result<ExecutionResult, RuntimeError> {
+        let image = self.validate_image(&request).await?;
+
         #[cfg(feature = "runtime_docker")]
         {
             if let Some(ref inner) = self.inner {
-                return inner.execute(&request).await;
+                return inner.execute(&request, image).await;
             }
             return Err(RuntimeError::RuntimeNotAvailable {
                 backend: RuntimeBackend::Docker,
@@ -728,20 +739,7 @@ impl RuntimeAdapter for DockerRuntime {
 
         #[cfg(not(feature = "runtime_docker"))]
         {
-            let image = request
-                .image
-                .as_deref()
-                .ok_or_else(|| RuntimeError::Other {
-                    message: "Docker runtime requires an image specification".into(),
-                })?;
-
-            // Verify image is whitelisted even in skeleton mode.
-            if !self.config.image_whitelist.contains(image) {
-                return Err(RuntimeError::ImageNotAllowed {
-                    image: image.to_string(),
-                });
-            }
-
+            let _ = image;
             let _timeout = self.effective_timeout(&request);
 
             Err(RuntimeError::RuntimeNotAvailable {
@@ -781,14 +779,16 @@ impl RuntimeAdapter for DockerRuntime {
     }
 
     async fn spawn(&self, request: ExecutionRequest) -> Result<ProcessHandle, RuntimeError> {
+        let image = self.validate_image(&request).await?;
+
         #[cfg(feature = "runtime_docker")]
         {
             if let Some(ref inner) = self.inner {
-                return inner.spawn(&request).await;
+                return inner.spawn(&request, image).await;
             }
         }
 
-        let _ = request;
+        let _ = image;
         Err(RuntimeError::RuntimeNotAvailable {
             backend: RuntimeBackend::Docker,
         })

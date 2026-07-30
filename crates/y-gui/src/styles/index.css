@@ -213,3 +213,12 @@ input[type='number'] {
   background: var(--accent-subtle);
   color: var(--text-primary);
 }
+
+/* ---- Prism token spans -- must stay inline ----
+   UnoCSS scans all source text for utility candidates, so stray words can
+   generate global utilities whose names collide with Prism token classes
+   (e.g. `.block{display:block}`, which Switch.tsx legitimately uses).
+   A block-level token span would break highlighted code lines apart. */
+code[class*="language-"] .token {
+  display: inline;
+}

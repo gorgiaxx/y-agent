@@ -1,15 +1,14 @@
 //! JSONL-based `TranscriptStore` implementation.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::sync::Mutex;
 use tracing::instrument;
 
 use y_core::session::{SessionError, TranscriptStore};
 use y_core::types::{Message, SessionId};
+
+use crate::jsonl_message_store::{JsonlMessageStore, TranscriptKind};
 
 /// JSONL file-based transcript store.
 ///
@@ -17,37 +16,21 @@ use y_core::types::{Message, SessionId};
 /// where each line is a JSON-serialized `Message`.
 #[derive(Debug, Clone)]
 pub struct JsonlTranscriptStore {
-    /// Base directory for transcript files.
-    base_dir: PathBuf,
-    /// Write lock to serialise concurrent appends.
-    ///
-    /// `O_APPEND` guarantees atomic positioning but NOT atomic writes for
-    /// buffers exceeding `PIPE_BUF` (~4KB). Serialising through this mutex
-    /// prevents interleaved bytes when long messages are written concurrently.
-    write_lock: Arc<Mutex<()>>,
+    inner: JsonlMessageStore,
 }
 
 impl JsonlTranscriptStore {
     /// Create a new transcript store with the given base directory.
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
-            base_dir: base_dir.into(),
-            write_lock: Arc::new(Mutex::new(())),
+            inner: JsonlMessageStore::new(base_dir, TranscriptKind::Context),
         }
     }
 
     /// Get the file path for a session's transcript.
+    #[cfg(test)]
     fn transcript_path(&self, session_id: &SessionId) -> PathBuf {
-        self.base_dir.join(format!("{}.jsonl", session_id.as_str()))
-    }
-
-    /// Ensure the base directory exists.
-    async fn ensure_dir(&self) -> Result<(), SessionError> {
-        tokio::fs::create_dir_all(&self.base_dir)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("create transcript dir: {e}"),
-            })
+        self.inner.path(session_id)
     }
 }
 
@@ -55,51 +38,12 @@ impl JsonlTranscriptStore {
 impl TranscriptStore for JsonlTranscriptStore {
     #[instrument(skip(self, message), fields(session_id = %session_id))]
     async fn append(&self, session_id: &SessionId, message: &Message) -> Result<(), SessionError> {
-        self.ensure_dir().await?;
-
-        let path = self.transcript_path(session_id);
-        let mut line =
-            serde_json::to_string(message).map_err(|e| SessionError::TranscriptError {
-                message: format!("serialize message: {e}"),
-            })?;
-        line.push('\n');
-
-        // Serialise writes so concurrent appends cannot interleave bytes.
-        let _guard = self.write_lock.lock().await;
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("open transcript file {}: {e}", path.display()),
-            })?;
-
-        file.write_all(line.as_bytes())
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("write to transcript: {e}"),
-            })?;
-
-        file.flush()
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("flush transcript: {e}"),
-            })?;
-
-        Ok(())
+        self.inner.append(session_id, message).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn read_all(&self, session_id: &SessionId) -> Result<Vec<Message>, SessionError> {
-        let path = self.transcript_path(session_id);
-
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-
-        read_messages_from_file(&path).await
+        self.inner.read_all(session_id).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id, count = count))]
@@ -108,46 +52,12 @@ impl TranscriptStore for JsonlTranscriptStore {
         session_id: &SessionId,
         count: usize,
     ) -> Result<Vec<Message>, SessionError> {
-        let path = self.transcript_path(session_id);
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-        read_last_messages_from_file(&path, count).await
+        self.inner.read_last(session_id, count).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn message_count(&self, session_id: &SessionId) -> Result<usize, SessionError> {
-        let path = self.transcript_path(session_id);
-
-        if !path.exists() {
-            return Ok(0);
-        }
-
-        let file =
-            tokio::fs::File::open(&path)
-                .await
-                .map_err(|e| SessionError::TranscriptError {
-                    message: format!("open transcript: {e}"),
-                })?;
-
-        let reader = tokio::io::BufReader::new(file);
-        let mut lines = reader.lines();
-        let mut count = 0;
-
-        while let Some(line) =
-            lines
-                .next_line()
-                .await
-                .map_err(|e| SessionError::TranscriptError {
-                    message: format!("read line: {e}"),
-                })?
-        {
-            if !line.trim().is_empty() {
-                count += 1;
-            }
-        }
-
-        Ok(count)
+        self.inner.message_count(session_id).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id, keep_count = keep_count))]
@@ -156,40 +66,7 @@ impl TranscriptStore for JsonlTranscriptStore {
         session_id: &SessionId,
         keep_count: usize,
     ) -> Result<usize, SessionError> {
-        let all = self.read_all(session_id).await?;
-        if keep_count >= all.len() {
-            return Ok(0);
-        }
-
-        let removed = all.len() - keep_count;
-        let kept = &all[..keep_count];
-
-        // Atomic rewrite: write to temp file, then rename.
-        let path = self.transcript_path(session_id);
-        let tmp_path = path.with_extension("jsonl.tmp");
-
-        let mut content = String::new();
-        for msg in kept {
-            let line = serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
-                message: format!("serialize message: {e}"),
-            })?;
-            content.push_str(&line);
-            content.push('\n');
-        }
-
-        tokio::fs::write(&tmp_path, content.as_bytes())
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("write temp transcript: {e}"),
-            })?;
-
-        tokio::fs::rename(&tmp_path, &path)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("rename temp transcript: {e}"),
-            })?;
-
-        Ok(removed)
+        self.inner.truncate(session_id, keep_count).await
     }
 
     #[instrument(skip(self, updated), fields(session_id = %session_id, message_id = %message_id))]
@@ -199,167 +76,10 @@ impl TranscriptStore for JsonlTranscriptStore {
         message_id: &str,
         updated: &Message,
     ) -> Result<bool, SessionError> {
-        let all = self.read_all(session_id).await?;
-
-        let mut found = false;
-        let mut content = String::new();
-        for msg in &all {
-            if msg.message_id == message_id {
-                let line =
-                    serde_json::to_string(updated).map_err(|e| SessionError::TranscriptError {
-                        message: format!("serialize updated message: {e}"),
-                    })?;
-                content.push_str(&line);
-                found = true;
-            } else {
-                let line =
-                    serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
-                        message: format!("serialize message: {e}"),
-                    })?;
-                content.push_str(&line);
-            }
-            content.push('\n');
-        }
-
-        if !found {
-            return Ok(false);
-        }
-
-        // Atomic rewrite: write to temp file, then rename.
-        let path = self.transcript_path(session_id);
-        let tmp_path = path.with_extension("jsonl.tmp");
-
-        tokio::fs::write(&tmp_path, content.as_bytes())
+        self.inner
+            .update_message(session_id, message_id, updated)
             .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("write temp transcript: {e}"),
-            })?;
-
-        tokio::fs::rename(&tmp_path, &path)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("rename temp transcript: {e}"),
-            })?;
-
-        Ok(true)
     }
-}
-
-/// Read all messages from a JSONL file.
-///
-/// Malformed lines (e.g. a truncated final line left by a crash mid-append)
-/// are skipped with a warning rather than aborting the whole read. Aborting
-/// would make a single bad line hide the entire session, which the GUI then
-/// renders as an empty chat.
-pub(crate) async fn read_messages_from_file(path: &Path) -> Result<Vec<Message>, SessionError> {
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| SessionError::TranscriptError {
-            message: format!("open transcript {}: {e}", path.display()),
-        })?;
-
-    let reader = tokio::io::BufReader::new(file);
-    let mut lines = reader.lines();
-    let mut messages = Vec::new();
-    let mut skipped = 0usize;
-
-    while let Some(line) = lines
-        .next_line()
-        .await
-        .map_err(|e| SessionError::TranscriptError {
-            message: format!("read line: {e}"),
-        })?
-    {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<Message>(trimmed) {
-            Ok(msg) => messages.push(msg),
-            Err(e) => {
-                skipped += 1;
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "skipping unparseable transcript line",
-                );
-            }
-        }
-    }
-
-    if skipped > 0 {
-        tracing::warn!(
-            path = %path.display(),
-            skipped,
-            recovered = messages.len(),
-            "recovered transcript with skipped malformed lines",
-        );
-    }
-
-    Ok(messages)
-}
-
-/// Read only the last `count` messages from a JSONL file.
-///
-/// Collects all non-empty lines first, then deserializes only the tail.
-async fn read_last_messages_from_file(
-    path: &Path,
-    count: usize,
-) -> Result<Vec<Message>, SessionError> {
-    use std::collections::VecDeque;
-
-    let file = tokio::fs::File::open(path)
-        .await
-        .map_err(|e| SessionError::TranscriptError {
-            message: format!("open transcript {}: {e}", path.display()),
-        })?;
-
-    let reader = tokio::io::BufReader::new(file);
-    let mut lines = reader.lines();
-    let mut ring: VecDeque<String> = VecDeque::with_capacity(count + 1);
-
-    while let Some(line) = lines
-        .next_line()
-        .await
-        .map_err(|e| SessionError::TranscriptError {
-            message: format!("read line: {e}"),
-        })?
-    {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if ring.len() == count {
-            ring.pop_front();
-        }
-        ring.push_back(line);
-    }
-
-    let mut messages = Vec::with_capacity(ring.len());
-    let mut skipped = 0usize;
-    for line in ring {
-        match serde_json::from_str::<Message>(line.trim()) {
-            Ok(msg) => messages.push(msg),
-            Err(e) => {
-                skipped += 1;
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "skipping unparseable transcript line (tail read)",
-                );
-            }
-        }
-    }
-
-    if skipped > 0 {
-        tracing::warn!(
-            path = %path.display(),
-            skipped,
-            recovered = messages.len(),
-            "recovered tail transcript with skipped malformed lines",
-        );
-    }
-
-    Ok(messages)
 }
 
 #[cfg(test)]

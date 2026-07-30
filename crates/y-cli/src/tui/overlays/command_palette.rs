@@ -1,16 +1,20 @@
 //! Command palette overlay: floating popup showing filtered command list.
 //!
 //! Activated when the user types `/` or `:` (enters Command mode). Shows a
-//! fuzzy-filtered list projected from the primary composer's text.
+//! fuzzy-filtered list projected from the primary composer's text. The popup
+//! is anchored to the composer's left edge; each row is a three-column
+//! layout — command (left), description (middle), shortcut (right-aligned,
+//! relabeled for the host platform).
 
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::tui::commands::registry::CommandRegistry;
-use crate::tui::keys::{KeyAction, KeyContext, Keymap};
+use crate::tui::keys::{platform_shortcut_label, KeyAction, KeyContext, Keymap};
 use crate::tui::theme::Theme;
 
 use super::picker::visible_range;
@@ -226,7 +230,8 @@ pub fn render(
         return;
     }
     let popup_height = palette_height(item_count, area.height).min(available_height);
-    let x = composer_area.x + composer_area.width.saturating_sub(popup_width) / 2;
+    // Anchored to the composer's left edge, floating above it.
+    let x = composer_area.x;
     let y = composer_area.y.saturating_sub(popup_height);
 
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -313,6 +318,11 @@ fn render_command_list(
         palette.selected,
         list_area.height as usize,
     );
+    // Column geometry spans ALL filtered rows (not just the visible window)
+    // so columns do not jump while scrolling.
+    let columns = palette_columns(palette, keymap);
+    let row_width = list_area.width as usize;
+
     // All metadata comes from the palette's cached vectors: no registry
     // lookups or command searches during rendering.
     let items: Vec<ListItem> = range
@@ -328,9 +338,10 @@ fn render_command_list(
                 .get(i)
                 .copied()
                 .flatten()
-                .and_then(|action| keymap.primary_shortcut(action));
+                .and_then(|action| keymap.primary_shortcut(action))
+                .map(|label| platform_shortcut_label(&label));
 
-            let style = if i == palette.selected {
+            let command_style = if i == palette.selected {
                 Style::default()
                     .fg(t.panel_bg())
                     .bg(t.input_border_focused())
@@ -339,7 +350,7 @@ fn render_command_list(
                 Style::default().fg(t.text())
             };
 
-            let desc_style = if i == palette.selected {
+            let detail_style = if i == palette.selected {
                 Style::default()
                     .fg(t.panel_bg())
                     .bg(t.input_border_focused())
@@ -347,16 +358,144 @@ fn render_command_list(
                 Style::default().fg(t.muted())
             };
 
-            let mut spans = vec![Span::styled(format!(" /{name} {args}"), style)];
-            if let Some(shortcut) = shortcut {
-                spans.push(Span::styled(format!("  [{shortcut}]"), desc_style));
-            }
-            spans.push(Span::styled(format!("  {desc}"), desc_style));
-            ListItem::new(Line::from(spans))
+            ListItem::new(palette_row(
+                &command_label(name, args),
+                desc,
+                shortcut.as_deref(),
+                &columns,
+                row_width,
+                command_style,
+                detail_style,
+            ))
         })
         .collect();
 
     frame.render_widget(List::new(items), list_area);
+}
+
+/// Column geometry shared by all palette rows.
+struct PaletteColumns {
+    /// Display width of the widest `/{name} {args}` label.
+    command_width: usize,
+    /// Display width of the widest shortcut label.
+    shortcut_width: usize,
+}
+
+/// Compute the column widths across all filtered rows.
+fn palette_columns(palette: &CommandPaletteState, keymap: &Keymap) -> PaletteColumns {
+    let command_width = palette
+        .filtered_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let args = palette.filtered_synopses.get(i).copied().unwrap_or("");
+            UnicodeWidthStr::width(command_label(name, args).as_str())
+        })
+        .max()
+        .unwrap_or(0);
+    let shortcut_width = palette
+        .filtered_shortcuts
+        .iter()
+        .filter_map(|action| action.and_then(|a| keymap.primary_shortcut(a)))
+        .map(|label| UnicodeWidthStr::width(platform_shortcut_label(&label).as_str()))
+        .max()
+        .unwrap_or(0);
+    PaletteColumns {
+        command_width,
+        shortcut_width,
+    }
+}
+
+/// Command column label: `/name args`, without a dangling space when the
+/// command takes no arguments.
+fn command_label(name: &str, args: &str) -> String {
+    if args.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("/{name} {args}")
+    }
+}
+
+/// Build one palette row: command left, description middle, shortcut
+/// right-aligned at the row's right edge (one-cell margin).
+///
+/// Padding spans carry the detail style so the selected-row highlight band
+/// stays uniform across the whole row.
+fn palette_row(
+    command: &str,
+    description: &str,
+    shortcut: Option<&str>,
+    columns: &PaletteColumns,
+    row_width: usize,
+    command_style: Style,
+    detail_style: Style,
+) -> Line<'static> {
+    let command_width = UnicodeWidthStr::width(command);
+    let command_pad = columns.command_width.saturating_sub(command_width);
+
+    // Layout budget: " " + command column + "  " + description + gap
+    // + shortcut column + " " (right margin).
+    let desc_start = 1 + columns.command_width + 2;
+    let shortcut_cell = if columns.shortcut_width == 0 {
+        0
+    } else {
+        columns.shortcut_width + 1
+    };
+    let desc_budget = row_width.saturating_sub(desc_start + 1 + shortcut_cell);
+    let description = truncate_to_width(description, desc_budget);
+    let desc_width = UnicodeWidthStr::width(description.as_str());
+
+    let shortcut = shortcut.unwrap_or("");
+    let used = desc_start + desc_width;
+    let gap = row_width.saturating_sub(used + shortcut_cell + 1);
+    let shortcut_pad = columns
+        .shortcut_width
+        .saturating_sub(UnicodeWidthStr::width(shortcut));
+
+    let mut spans = vec![
+        Span::styled(
+            format!(" {command}{}", " ".repeat(command_pad)),
+            command_style,
+        ),
+        Span::styled("  ", detail_style),
+        Span::styled(description, detail_style),
+    ];
+    if gap > 0 {
+        spans.push(Span::styled(" ".repeat(gap), detail_style));
+    }
+    if columns.shortcut_width > 0 {
+        spans.push(Span::styled(
+            format!("{}{shortcut} ", " ".repeat(shortcut_pad)),
+            detail_style,
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Truncate text to `max_width` display columns, ending with an ellipsis
+/// when truncation occurs.
+fn truncate_to_width(text: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(text) <= max_width {
+        return text.to_string();
+    }
+    if max_width == 0 {
+        return String::new();
+    }
+    if max_width == 1 {
+        return "\u{2026}".to_string();
+    }
+    let mut out = String::new();
+    let mut width = 0usize;
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + ch_width + 1 > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out.push('\u{2026}');
+    out
 }
 
 fn render_arg_list(frame: &mut Frame, list_area: Rect, palette: &CommandPaletteState, t: &Theme) {
@@ -625,6 +764,115 @@ mod tests {
         assert_eq!(
             palette.filtered_shortcuts[queue],
             Some(KeyAction::OpenQueue)
+        );
+    }
+
+    /// Display column where `needle` starts within a rendered line.
+    fn column_of(line: &Line, needle: &str) -> Option<usize> {
+        let mut x = 0usize;
+        for span in &line.spans {
+            if let Some(offset) = span.content.find(needle) {
+                return Some(x + offset);
+            }
+            x += Span::width(span);
+        }
+        None
+    }
+
+    // T-PALETTE-COLUMNS-01: rows lay out as three aligned columns — command
+    // left, description middle, shortcut right-aligned at the row end.
+    #[test]
+    fn test_rows_align_command_description_shortcut_columns() {
+        let columns = PaletteColumns {
+            command_width: 12,
+            shortcut_width: 7,
+        };
+        let style = Style::default();
+        let width = 50;
+        let short_cmd = palette_row(
+            "/new",
+            "New session",
+            Some("Ctrl+Q"),
+            &columns,
+            width,
+            style,
+            style,
+        );
+        let long_cmd = palette_row(
+            "/backtrack",
+            "Jump back",
+            Some("F2"),
+            &columns,
+            width,
+            style,
+            style,
+        );
+
+        // Description column starts right after the padded command column.
+        let desc_col = 1 + 12 + 2;
+        assert_eq!(column_of(&short_cmd, "New session"), Some(desc_col));
+        assert_eq!(column_of(&long_cmd, "Jump back"), Some(desc_col));
+
+        // Shortcut column is right-aligned: both shortcuts END one cell
+        // before the row edge (the right margin).
+        let end_a = column_of(&short_cmd, "Ctrl+Q").unwrap() + "Ctrl+Q".len();
+        let end_b = column_of(&long_cmd, "F2").unwrap() + "F2".len();
+        assert_eq!(end_a, width - 2, "Ctrl+Q must end at the right edge");
+        assert_eq!(end_b, width - 2, "F2 must end at the right edge");
+
+        // Total row width stays within the budget.
+        let row_width: usize = short_cmd.spans.iter().map(Span::width).sum();
+        assert!(row_width <= width, "row overflows: {row_width} > {width}");
+    }
+
+    // T-PALETTE-COLUMNS-02: over-long descriptions truncate with an ellipsis
+    // instead of pushing the shortcut column off the row.
+    #[test]
+    fn test_long_description_truncates_with_ellipsis() {
+        let columns = PaletteColumns {
+            command_width: 10,
+            shortcut_width: 5,
+        };
+        let style = Style::default();
+        let row = palette_row(
+            "/cmd",
+            "a very long description that cannot possibly fit the row",
+            Some("F3"),
+            &columns,
+            30,
+            style,
+            style,
+        );
+        let row_width: usize = row.spans.iter().map(Span::width).sum();
+        assert!(row_width <= 30, "row overflows: {row_width}");
+        let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains('\u{2026}'), "expected ellipsis: {text:?}");
+        assert!(text.contains("F3"), "shortcut must survive: {text:?}");
+    }
+
+    // T-PALETTE-ALIGN-01: the popup is anchored to the composer's left edge.
+    #[test]
+    fn test_popup_left_aligned_with_composer() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let palette = CommandPaletteState::new();
+        let keymap = Keymap::default();
+        let theme = Theme::default();
+        let composer = Rect::new(10, 20, 60, 3);
+        terminal
+            .draw(|frame| render(frame, frame.area(), composer, &palette, &keymap, &theme))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        // The popup's top-left corner sits at the composer's left edge.
+        let corner_row = (0..composer.y).find(|&y| {
+            buffer
+                .cell((composer.x, y))
+                .is_some_and(|cell| cell.symbol() == "\u{250C}")
+        });
+        assert!(
+            corner_row.is_some(),
+            "popup must be left-aligned with the composer"
         );
     }
 }

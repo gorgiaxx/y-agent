@@ -15,6 +15,7 @@ pub mod file_write;
 pub mod glob;
 pub mod grep;
 pub mod knowledge_search;
+mod lifecycle_signal;
 pub mod loop_tool;
 #[cfg(feature = "lsp")]
 pub mod lsp;

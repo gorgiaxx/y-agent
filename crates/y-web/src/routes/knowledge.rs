@@ -11,7 +11,7 @@ use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use y_service::knowledge_service::KnowledgeService;
+use y_service::knowledge_service::{KnowledgeMetadataUpdate, KnowledgeService};
 
 use crate::error::ApiError;
 use crate::routes::events::SseEvent;
@@ -20,84 +20,6 @@ use crate::state::AppState;
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize)]
-pub struct CollectionInfo {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub entry_count: usize,
-    pub chunk_count: usize,
-    pub total_bytes: u64,
-    pub created_at: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct EntryInfo {
-    pub id: String,
-    pub title: String,
-    pub source_uri: String,
-    pub source_type: String,
-    pub domains: Vec<String>,
-    pub quality_score: f32,
-    pub chunk_count: usize,
-    pub content_size: u64,
-    pub state: String,
-    pub hit_count: u64,
-    pub updated_at: String,
-    pub document_type: Option<String>,
-    pub industry: Option<String>,
-    pub subcategory: Option<String>,
-    pub interpreted_title: Option<String>,
-    pub tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct EntryDetail {
-    pub id: String,
-    pub title: String,
-    pub source_uri: String,
-    pub domains: Vec<String>,
-    pub quality_score: f32,
-    pub state: String,
-    pub hit_count: u64,
-    pub total_chunk_count: usize,
-    pub l0_summary: String,
-    pub l1_sections: Vec<SectionInfo>,
-    pub l2_chunks: Vec<ChunkInfo>,
-    pub document_type: Option<String>,
-    pub industry: Option<String>,
-    pub subcategory: Option<String>,
-    pub interpreted_title: Option<String>,
-    pub tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SectionInfo {
-    pub index: usize,
-    pub title: String,
-    pub summary: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChunkInfo {
-    pub id: String,
-    pub content: String,
-    pub token_estimate: usize,
-    pub section_index: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SearchResultItem {
-    pub chunk_id: String,
-    pub title: String,
-    pub content: String,
-    pub relevance: f64,
-    pub domains: Vec<String>,
-    pub source: String,
-    pub collection: String,
-    pub resolution: String,
-}
 
 #[derive(Debug, Serialize)]
 pub struct IngestResult {
@@ -114,14 +36,6 @@ pub struct BatchIngestResult {
     pub succeeded: usize,
     pub failed: usize,
     pub errors: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct KbStats {
-    pub collections: usize,
-    pub entries: usize,
-    pub chunks: usize,
-    pub hits: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -193,31 +107,6 @@ fn knowledge_service(state: &AppState) -> &Arc<Mutex<KnowledgeService>> {
     &state.container.knowledge_service
 }
 
-fn entry_to_info(e: &y_knowledge::KnowledgeEntry) -> EntryInfo {
-    EntryInfo {
-        id: e.id.to_string(),
-        title: e.source.title.clone(),
-        source_uri: e.source.uri.clone(),
-        source_type: e.source.source_type.to_string(),
-        domains: e.domains.clone(),
-        quality_score: e.quality_score,
-        chunk_count: e.chunks.len(),
-        content_size: if e.content_size > 0 {
-            e.content_size
-        } else {
-            e.chunks.iter().map(|c| c.len() as u64).sum()
-        },
-        state: e.state.to_string(),
-        hit_count: u64::from(e.hit_num),
-        updated_at: e.refreshed_at.to_rfc3339(),
-        document_type: e.metadata.document_type.clone(),
-        industry: e.metadata.industry.clone(),
-        subcategory: e.metadata.subcategory.clone(),
-        interpreted_title: e.metadata.interpreted_title.clone(),
-        tags: e.tags.clone(),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -225,20 +114,7 @@ fn entry_to_info(e: &y_knowledge::KnowledgeEntry) -> EntryInfo {
 /// `GET /api/v1/knowledge/collections`
 async fn collection_list(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let service = knowledge_service(&state).lock().await;
-    let collections: Vec<CollectionInfo> = service
-        .list_collections()
-        .iter()
-        .map(|c| CollectionInfo {
-            id: c.id.to_string(),
-            name: c.name.clone(),
-            description: c.description.clone(),
-            entry_count: usize::try_from(c.stats.entry_count).unwrap_or(usize::MAX),
-            chunk_count: usize::try_from(c.stats.chunk_count).unwrap_or(usize::MAX),
-            total_bytes: c.stats.total_bytes,
-            created_at: c.created_at.to_rfc3339(),
-        })
-        .collect();
-    Ok(Json(collections))
+    Ok(Json(service.collection_infos()))
 }
 
 /// `POST /api/v1/knowledge/collections`
@@ -248,23 +124,7 @@ async fn collection_create(
 ) -> Result<impl IntoResponse, ApiError> {
     let ks = knowledge_service(&state);
     let mut service = ks.lock().await;
-    service.create_collection(&body.name, &body.description);
-
-    let collections = service.list_collections();
-    let c = collections
-        .iter()
-        .find(|c| c.name == body.name)
-        .ok_or_else(|| ApiError::Internal("Failed to find created collection".into()))?;
-
-    let info = CollectionInfo {
-        id: c.id.to_string(),
-        name: c.name.clone(),
-        description: c.description.clone(),
-        entry_count: usize::try_from(c.stats.entry_count).unwrap_or(usize::MAX),
-        chunk_count: usize::try_from(c.stats.chunk_count).unwrap_or(usize::MAX),
-        total_bytes: c.stats.total_bytes,
-        created_at: c.created_at.to_rfc3339(),
-    };
+    let info = service.create_collection_info(&body.name, &body.description);
 
     Ok((StatusCode::CREATED, Json(info)))
 }
@@ -309,12 +169,7 @@ async fn entry_list(
     Path(collection): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let service = knowledge_service(&state).lock().await;
-    let entries: Vec<EntryInfo> = service
-        .list_entries(&collection)
-        .iter()
-        .map(|e| entry_to_info(e))
-        .collect();
-    Ok(Json(entries))
+    Ok(Json(service.entry_infos(&collection)))
 }
 
 /// `GET /api/v1/knowledge/entries/:id`
@@ -323,56 +178,11 @@ async fn entry_detail(
     Path(entry_id): Path<String>,
     Query(_query): Query<EntryDetailQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    const MAX_L2_CHUNKS: usize = 200;
-
     let service = knowledge_service(&state).lock().await;
-    let entry = service
-        .get_entry(&entry_id)
+    let detail = service
+        .entry_detail_info(&entry_id)
         .ok_or_else(|| ApiError::NotFound(format!("Entry '{entry_id}' not found")))?;
-
-    let l0_summary = entry.summary.clone().unwrap_or_default();
-    let l1_sections: Vec<SectionInfo> = entry
-        .l1_sections
-        .iter()
-        .map(|s| SectionInfo {
-            index: s.index,
-            title: s.title.clone(),
-            summary: s.content.clone(),
-        })
-        .collect();
-
-    let total_chunk_count = entry.chunks.len();
-    let l2_chunks: Vec<ChunkInfo> = entry
-        .chunks
-        .iter()
-        .enumerate()
-        .take(MAX_L2_CHUNKS)
-        .map(|(i, content)| ChunkInfo {
-            id: format!("{}-{}", entry.id, i),
-            content: content.clone(),
-            token_estimate: content.len() / 4,
-            section_index: i,
-        })
-        .collect();
-
-    Ok(Json(EntryDetail {
-        id: entry.id.to_string(),
-        title: entry.source.title.clone(),
-        source_uri: entry.source.uri.clone(),
-        domains: entry.domains.clone(),
-        quality_score: entry.quality_score,
-        state: entry.state.to_string(),
-        hit_count: u64::from(entry.hit_num),
-        total_chunk_count,
-        l0_summary,
-        l1_sections,
-        l2_chunks,
-        document_type: entry.metadata.document_type.clone(),
-        industry: entry.metadata.industry.clone(),
-        subcategory: entry.metadata.subcategory.clone(),
-        interpreted_title: entry.metadata.interpreted_title.clone(),
-        tags: entry.tags.clone(),
-    }))
+    Ok(Json(detail))
 }
 
 /// `DELETE /api/v1/knowledge/entries/:id`
@@ -400,29 +210,19 @@ async fn entry_update_metadata(
     Json(body): Json<UpdateMetadataRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let mut service = knowledge_service(&state).lock().await;
-    let entry = service
-        .get_entry_mut(&entry_id)
-        .ok_or_else(|| ApiError::NotFound(format!("Entry '{entry_id}' not found")))?;
-
-    if let Some(dt) = body.document_type {
-        entry.metadata.document_type = Some(dt);
-    }
-    if let Some(ind) = body.industry {
-        entry.metadata.industry = Some(ind);
-    }
-    if let Some(sub) = body.subcategory {
-        entry.metadata.subcategory = Some(sub);
-    }
-    if let Some(title) = body.interpreted_title {
-        entry.metadata.interpreted_title = Some(title);
-    }
-    if let Some(new_tags) = body.tags {
-        entry.tags.clone_from(&new_tags);
-        entry.metadata.topics = new_tags;
-    }
-
-    service.save_entries_public();
-    Ok(Json(serde_json::json!({"message": "updated"})))
+    service
+        .update_entry_metadata(
+            &entry_id,
+            KnowledgeMetadataUpdate {
+                document_type: body.document_type,
+                industry: body.industry,
+                subcategory: body.subcategory,
+                interpreted_title: body.interpreted_title,
+                tags: body.tags,
+            },
+        )
+        .then(|| Json(serde_json::json!({"message": "updated"})))
+        .ok_or_else(|| ApiError::NotFound(format!("Entry '{entry_id}' not found")))
 }
 
 /// `POST /api/v1/knowledge/search`
@@ -438,24 +238,7 @@ async fn kb_search(
         limit: body.limit.unwrap_or(10),
         collection: body.collection,
     };
-    let result = service.search(&params).await;
-
-    let items: Vec<SearchResultItem> = result
-        .results
-        .iter()
-        .map(|r| SearchResultItem {
-            chunk_id: r.chunk_id.clone(),
-            title: r.title.clone(),
-            content: r.content.clone(),
-            relevance: r.relevance,
-            domains: r.domains.clone(),
-            source: r.source.clone(),
-            collection: r.collection.clone(),
-            resolution: r.resolution.clone(),
-        })
-        .collect();
-
-    Ok(Json(items))
+    Ok(Json(service.search_items(&params).await))
 }
 
 /// `POST /api/v1/knowledge/ingest`
@@ -529,9 +312,7 @@ async fn kb_ingest_batch(
             let mut guard = service_handle.lock().await;
             let r = guard.ingest(&params, "default").await;
             let info = if let Ok(ref res) = r {
-                res.entry_id
-                    .as_ref()
-                    .and_then(|eid| guard.get_entry(eid).map(entry_to_info))
+                res.entry_id.as_ref().and_then(|eid| guard.entry_info(eid))
             } else {
                 None
             };
@@ -573,46 +354,15 @@ async fn kb_ingest_batch(
 async fn kb_expand_folder(
     Json(body): Json<ExpandFolderRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let root = std::path::PathBuf::from(&body.path);
-    if !root.exists() {
-        return Err(ApiError::NotFound(format!(
-            "Path does not exist: {}",
-            body.path
-        )));
-    }
-
-    if root.is_file() {
-        if y_knowledge::supported_formats::is_supported(&root) {
-            return Ok(Json(vec![body.path]));
-        }
-        return Ok(Json(Vec::<String>::new()));
-    }
-
-    let files = y_knowledge::supported_formats::expand_directory(&root)
-        .map_err(|e| ApiError::Internal(format!("Failed to scan folder: {e}")))?;
-
-    Ok(Json(
-        files
-            .into_iter()
-            .filter_map(|p| p.to_str().map(String::from))
-            .collect::<Vec<String>>(),
-    ))
+    KnowledgeService::expand_supported_sources(&body.path)
+        .map(Json)
+        .map_err(|error| ApiError::BadRequest(error.to_string()))
 }
 
 /// `GET /api/v1/knowledge/stats`
 async fn kb_stats(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     let service = knowledge_service(&state).lock().await;
-    let collections = service.list_collections();
-
-    let total_entries: u64 = collections.iter().map(|c| c.stats.entry_count).sum();
-    let total_chunks: u64 = collections.iter().map(|c| c.stats.chunk_count).sum();
-
-    Ok(Json(KbStats {
-        collections: collections.len(),
-        entries: usize::try_from(total_entries).unwrap_or(usize::MAX),
-        chunks: usize::try_from(total_chunks).unwrap_or(usize::MAX),
-        hits: 0,
-    }))
+    Ok(Json(service.stats()))
 }
 
 // ---------------------------------------------------------------------------

@@ -17,6 +17,8 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
+use super::lifecycle_signal::signal_output;
+
 /// The `Plan` tool for plan-mode orchestration.
 ///
 /// When invoked by the LLM, it triggers a multi-stage planning workflow:
@@ -121,17 +123,12 @@ impl Tool for PlanTool {
 
         // The actual orchestration is performed by PlanOrchestrator in
         // y-service. This tool validates input and returns a descriptor.
-        Ok(ToolOutput {
-            success: true,
-            content: serde_json::json!({
-                "action": "plan",
-                "request": request,
-                "context": context,
-                "status": "pending"
-            }),
-            warnings: vec![],
-            metadata: serde_json::json!({}),
-        })
+        Ok(signal_output(serde_json::json!({
+            "action": "plan",
+            "request": request,
+            "context": context,
+            "status": "pending"
+        })))
     }
 
     fn definition(&self) -> &ToolDefinition {

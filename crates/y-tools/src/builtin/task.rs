@@ -17,6 +17,8 @@ use y_core::tool::{
 };
 use y_core::types::ToolName;
 
+use super::lifecycle_signal::signal_output;
+
 /// The `Task` tool for agent delegation.
 ///
 /// When invoked by the LLM, it delegates a Task to a named sub-agent.
@@ -150,22 +152,17 @@ impl Tool for TaskTool {
 
         // The actual delegation is performed by TaskDelegationOrchestrator
         // in y-service. This tool validates input and returns a descriptor.
-        Ok(ToolOutput {
-            success: true,
-            content: serde_json::json!({
-                "action": "delegate",
-                "agent_name": agent_name,
-                "prompt": prompt,
-                "mode": mode,
-                "context_strategy": context_strategy,
-                "result_schema": result_schema,
-                "workspace_isolation": workspace_isolation,
-                "workspace_snapshot_id": workspace_snapshot_id,
-                "status": "pending"
-            }),
-            warnings: vec![],
-            metadata: serde_json::json!({}),
-        })
+        Ok(signal_output(serde_json::json!({
+            "action": "delegate",
+            "agent_name": agent_name,
+            "prompt": prompt,
+            "mode": mode,
+            "context_strategy": context_strategy,
+            "result_schema": result_schema,
+            "workspace_isolation": workspace_isolation,
+            "workspace_snapshot_id": workspace_snapshot_id,
+            "status": "pending"
+        })))
     }
 
     fn definition(&self) -> &ToolDefinition {

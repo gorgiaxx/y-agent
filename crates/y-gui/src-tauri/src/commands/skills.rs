@@ -7,10 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use y_service::SkillService;
+use y_service::{SkillFileEntry, SkillService, SkillValidationResult};
 
 use crate::state::AppState;
 
@@ -30,72 +29,9 @@ pub type SkillImportResult = y_service::SkillImportOutcome;
 /// Result of a skill creation operation.
 pub type SkillCreateResult = y_service::SkillCreateOutcome;
 
-/// A file/directory entry within a skill directory.
-#[derive(Debug, Serialize, Clone)]
-pub struct SkillFileEntry {
-    pub path: String,
-    pub name: String,
-    pub is_dir: bool,
-    pub size: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub children: Option<Vec<SkillFileEntry>>,
-}
-
 /// Resolve the base path of the skill store.
 fn skills_store_path(config_dir: &Path) -> PathBuf {
     config_dir.join("skills")
-}
-
-// ---------------------------------------------------------------------------
-// Helper: build file tree recursively
-// ---------------------------------------------------------------------------
-
-fn build_file_tree(dir: &Path, relative_base: &Path) -> Vec<SkillFileEntry> {
-    let mut entries = Vec::new();
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return entries;
-    };
-
-    for entry in read_dir.flatten() {
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        let abs_path = entry.path();
-        let rel_path = abs_path
-            .strip_prefix(relative_base)
-            .unwrap_or(&abs_path)
-            .to_string_lossy()
-            .to_string();
-
-        if meta.is_dir() {
-            let children = build_file_tree(&abs_path, relative_base);
-            entries.push(SkillFileEntry {
-                path: rel_path,
-                name: file_name,
-                is_dir: true,
-                size: 0,
-                children: Some(children),
-            });
-        } else {
-            entries.push(SkillFileEntry {
-                path: rel_path,
-                name: file_name,
-                is_dir: false,
-                size: meta.len(),
-                children: None,
-            });
-        }
-    }
-
-    // Sort: directories first, then files, alphabetically.
-    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-        (true, false) => std::cmp::Ordering::Less,
-        (false, true) => std::cmp::Ordering::Greater,
-        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-    });
-
-    entries
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +73,8 @@ pub async fn skill_set_enabled(
 /// Open a skill's directory in the system file manager.
 #[tauri::command]
 pub async fn skill_open_folder(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let dir = skills_store_path(&state.config_dir).join(&name);
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    let dir = svc.skill_directory(&name)?;
     if !dir.exists() {
         return Err(format!("Skill directory not found: {}", dir.display()));
     }
@@ -216,15 +153,8 @@ pub async fn skill_get_files(
     state: State<'_, AppState>,
     name: String,
 ) -> Result<Vec<SkillFileEntry>, String> {
-    let skill_dir = skills_store_path(&state.config_dir).join(&name);
-    if !skill_dir.exists() {
-        return Err(format!(
-            "Skill directory not found: {}",
-            skill_dir.display()
-        ));
-    }
-
-    Ok(build_file_tree(&skill_dir, &skill_dir))
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    svc.file_tree(&name).await
 }
 
 /// Read a file within a skill directory.
@@ -234,11 +164,8 @@ pub async fn skill_read_file(
     name: String,
     relative_path: String,
 ) -> Result<String, String> {
-    let skill_dir = skills_store_path(&state.config_dir).join(&name);
-    let canonical_target =
-        y_service::resolve_skill_read_path(&skill_dir, Path::new(&relative_path))?;
-
-    std::fs::read_to_string(&canonical_target).map_err(|e| format!("Failed to read file: {e}"))
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    svc.read_file(&name, Path::new(&relative_path)).await
 }
 
 /// Save edits to a file within a skill directory.
@@ -249,18 +176,9 @@ pub async fn skill_save_file(
     relative_path: String,
     content: String,
 ) -> Result<(), String> {
-    let skill_dir = skills_store_path(&state.config_dir).join(&name);
-    let target = y_service::resolve_skill_write_path(&skill_dir, Path::new(&relative_path))?;
-
-    std::fs::write(&target, content).map_err(|e| format!("Failed to write file: {e}"))
-}
-
-/// Validation result for a single skill.
-#[derive(Debug, Serialize, Clone)]
-pub struct SkillValidationResult {
-    pub name: String,
-    pub valid: bool,
-    pub errors: Vec<String>,
+    let svc = SkillService::new(&skills_store_path(&state.config_dir));
+    svc.write_file(&name, Path::new(&relative_path), &content)
+        .await
 }
 
 /// Validate all installed skills.
@@ -271,43 +189,5 @@ pub struct SkillValidationResult {
 pub async fn skill_validate(
     state: State<'_, AppState>,
 ) -> Result<Vec<SkillValidationResult>, String> {
-    let store_path = skills_store_path(&state.config_dir);
-    let store = y_skills::FilesystemSkillStore::new(&store_path)
-        .map_err(|e| format!("Failed to open skill store: {e}"))?;
-    let all = store
-        .load_all()
-        .map_err(|e| format!("Failed to load skills: {e}"))?;
-
-    let config = y_skills::SkillConfig::default();
-    let validator = y_skills::SkillValidator::new(config);
-
-    let existing_names: std::collections::HashSet<String> =
-        all.iter().map(|m| m.name.clone()).collect();
-    let empty_set: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    let mut results = Vec::with_capacity(all.len());
-    for manifest in &all {
-        let skill_dir = store_path.join(&manifest.name);
-        let dir_errors = validator.validate_directory(&skill_dir);
-        let manifest_errors = validator.validate_manifest(
-            manifest,
-            &existing_names,
-            &empty_set,
-            &empty_set,
-            &empty_set,
-        );
-        let errors: Vec<String> = dir_errors
-            .into_iter()
-            .chain(manifest_errors)
-            .map(|e| e.to_string())
-            .collect();
-        let valid = errors.is_empty();
-        results.push(SkillValidationResult {
-            name: manifest.name.clone(),
-            valid,
-            errors,
-        });
-    }
-
-    Ok(results)
+    SkillService::new(&skills_store_path(&state.config_dir)).validate_all()
 }

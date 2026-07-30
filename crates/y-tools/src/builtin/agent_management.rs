@@ -4,95 +4,9 @@
 //! registry synchronization. The implementations here provide schemas and
 //! standalone argument validation for capability discovery.
 
-use async_trait::async_trait;
+use super::lifecycle_signal::define_lifecycle_signal_tool;
 
-use y_core::runtime::RuntimeCapability;
-use y_core::tool::{
-    Tool, ToolCategory, ToolDefinition, ToolError, ToolInput, ToolOutput, ToolType,
-};
-use y_core::types::ToolName;
-
-fn validate_required_strings(input: &ToolInput, fields: &[&str]) -> Result<(), ToolError> {
-    for field in fields {
-        let present = input
-            .arguments
-            .get(*field)
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty());
-        if !present {
-            return Err(ToolError::ValidationError {
-                message: format!("'{field}' is required"),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn pending_output(action: &str, arguments: &serde_json::Value) -> ToolOutput {
-    ToolOutput {
-        success: true,
-        content: serde_json::json!({
-            "action": action,
-            "arguments": arguments,
-            "status": "pending"
-        }),
-        warnings: vec![],
-        metadata: serde_json::json!({}),
-    }
-}
-
-macro_rules! define_agent_lifecycle_tool {
-    ($type_name:ident, $tool_name:literal, $description:literal, $parameters:expr, $required:expr, $dangerous:expr) => {
-        #[doc = concat!("Signal tool for `", $tool_name, "`.")]
-        pub struct $type_name {
-            def: ToolDefinition,
-        }
-
-        impl $type_name {
-            /// Create the lifecycle signal tool.
-            pub fn new() -> Self {
-                Self {
-                    def: Self::tool_definition(),
-                }
-            }
-
-            /// Return the tool definition used for discovery and validation.
-            pub fn tool_definition() -> ToolDefinition {
-                ToolDefinition {
-                    name: ToolName::from_string($tool_name),
-                    description: $description.into(),
-                    help: None,
-                    parameters: $parameters,
-                    result_schema: None,
-                    category: ToolCategory::Agent,
-                    tool_type: ToolType::BuiltIn,
-                    capabilities: RuntimeCapability::default(),
-                    is_dangerous: $dangerous,
-                }
-            }
-        }
-
-        impl Default for $type_name {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        #[async_trait]
-        impl Tool for $type_name {
-            async fn execute(&self, input: ToolInput) -> Result<ToolOutput, ToolError> {
-                validate_required_strings(&input, $required)?;
-                Ok(pending_output($tool_name, &input.arguments))
-            }
-
-            fn definition(&self) -> &ToolDefinition {
-                &self.def
-            }
-        }
-    };
-}
-
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentCreateTool,
     "AgentCreate",
     "Create a durable, runtime-callable dynamic agent. Its tools and numeric limits are always intersected with the creator's effective permissions, and the definition is security-screened before activation.",
@@ -137,10 +51,11 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &["name", "description"],
+    y_core::tool::ToolCategory::Agent,
     true
 );
 
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentUpdateTool,
     "AgentUpdate",
     "Update a durable dynamic agent and immediately replace its live delegation definition. Updates cannot expand beyond the permissions inherited at creation.",
@@ -163,10 +78,11 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &["id"],
+    y_core::tool::ToolCategory::Agent,
     true
 );
 
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentDeactivateTool,
     "AgentDeactivate",
     "Soft-delete a dynamic agent with an audit reason and remove it from new task delegations while preserving its durable history.",
@@ -180,10 +96,11 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &["id", "reason"],
+    y_core::tool::ToolCategory::Agent,
     true
 );
 
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentSearchTool,
     "AgentSearch",
     "Search durable dynamic agents by name, description, or capability, with optional lifecycle and mode filters.",
@@ -208,10 +125,11 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &[],
+    y_core::tool::ToolCategory::Agent,
     false
 );
 
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentEvaluateTool,
     "AgentEvaluate",
     "Evaluate durable execution evidence for dynamic-agent versions and report statistically supported regressions. This tool is read-only; use supervised lifecycle tools for any mutation.",
@@ -238,10 +156,11 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &[],
+    y_core::tool::ToolCategory::Agent,
     false
 );
 
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentProposalListTool,
     "AgentProposalList",
     "List durable governed dynamic-agent evolution proposals, including evidence, decisions, and applied versions.",
@@ -257,10 +176,11 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &[],
+    y_core::tool::ToolCategory::Agent,
     false
 );
 
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentProposalRefineTool,
     "AgentProposalRefine",
     "Ask the read-only agent-refiner to draft a permission-safe candidate update for a governed regression proposal. The candidate is validated and persisted, but the active agent is not mutated until separate approval.",
@@ -277,10 +197,11 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &["proposal_id"],
+    y_core::tool::ToolCategory::Agent,
     false
 );
 
-define_agent_lifecycle_tool!(
+define_lifecycle_signal_tool!(
     AgentProposalDecideTool,
     "AgentProposalDecide",
     "Approve, reject, or defer a governed dynamic-agent proposal. Approval may apply a validated candidate or reversible rollback and therefore requires dangerous-tool authorization.",
@@ -298,5 +219,6 @@ define_agent_lifecycle_tool!(
         "additionalProperties": false
     }),
     &["proposal_id", "decision"],
+    y_core::tool::ToolCategory::Agent,
     true
 );

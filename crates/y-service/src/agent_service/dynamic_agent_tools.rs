@@ -6,7 +6,7 @@ use y_core::types::ToolCallRequest;
 use crate::container::ServiceContainer;
 use crate::dynamic_agent_service::DynamicAgentProposalDecision;
 
-use super::AgentExecutionConfig;
+use super::{tool_handling::parse_tool_arguments, AgentExecutionConfig};
 
 #[derive(serde::Deserialize)]
 #[serde(default)]
@@ -58,7 +58,7 @@ pub(super) async fn handle(
 
     let content = match tc.name.as_str() {
         "AgentCreate" => {
-            let params: AgentCreateParams = parse_arguments(tc)?;
+            let params: AgentCreateParams = parse_tool_arguments(tc)?;
             let snapshot = creator_permission_snapshot(container, config).await?;
             let created = container
                 .dynamic_agent_service
@@ -71,7 +71,7 @@ pub(super) async fn handle(
             })
         }
         "AgentUpdate" => {
-            let params: AgentUpdateParams = parse_arguments(tc)?;
+            let params: AgentUpdateParams = parse_tool_arguments(tc)?;
             let updated = container
                 .dynamic_agent_service
                 .update(params)
@@ -83,7 +83,7 @@ pub(super) async fn handle(
             })
         }
         "AgentDeactivate" => {
-            let params: AgentDeactivateParams = parse_arguments(tc)?;
+            let params: AgentDeactivateParams = parse_tool_arguments(tc)?;
             container
                 .dynamic_agent_service
                 .deactivate(&params)
@@ -96,7 +96,7 @@ pub(super) async fn handle(
             })
         }
         "AgentSearch" => {
-            let params: AgentSearchParams = parse_arguments(tc)?;
+            let params: AgentSearchParams = parse_tool_arguments(tc)?;
             let agents = container.dynamic_agent_service.search(&params);
             serde_json::json!({
                 "count": agents.len(),
@@ -104,7 +104,7 @@ pub(super) async fn handle(
             })
         }
         "AgentEvaluate" => {
-            let params: AgentEvaluateParams = parse_arguments(tc)?;
+            let params: AgentEvaluateParams = parse_tool_arguments(tc)?;
             let store = container.diagnostics.store();
             let mut metrics =
                 crate::diagnostics::DiagnosticsService::dynamic_agent_version_metrics(
@@ -144,7 +144,7 @@ pub(super) async fn handle(
             })
         }
         "AgentProposalList" => {
-            let params: AgentProposalListParams = parse_arguments(tc)?;
+            let params: AgentProposalListParams = parse_tool_arguments(tc)?;
             let proposals = container
                 .dynamic_agent_service
                 .list_proposals(params.status, params.agent_id.as_deref());
@@ -155,7 +155,7 @@ pub(super) async fn handle(
             })
         }
         "AgentProposalRefine" => {
-            let params: AgentProposalRefineParams = parse_arguments(tc)?;
+            let params: AgentProposalRefineParams = parse_tool_arguments(tc)?;
             if params
                 .instructions
                 .as_deref()
@@ -186,7 +186,7 @@ pub(super) async fn handle(
             })
         }
         "AgentProposalDecide" => {
-            let params: AgentProposalDecideParams = parse_arguments(tc)?;
+            let params: AgentProposalDecideParams = parse_tool_arguments(tc)?;
             let proposal = container
                 .dynamic_agent_service
                 .decide_proposal(&params.proposal_id, params.decision, params.reason)
@@ -208,16 +208,6 @@ pub(super) async fn handle(
         content,
         warnings: vec![],
         metadata: serde_json::json!({ "action": tc.name }),
-    })
-}
-
-fn parse_arguments<T: serde::de::DeserializeOwned>(
-    tc: &ToolCallRequest,
-) -> Result<T, y_core::tool::ToolError> {
-    serde_json::from_value(tc.arguments.clone()).map_err(|error| {
-        y_core::tool::ToolError::ValidationError {
-            message: format!("invalid {} arguments: {error}", tc.name),
-        }
     })
 }
 

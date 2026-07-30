@@ -6,17 +6,14 @@
 //! Frontend contract: `docs/standards/FRONTEND_REUSE_STANDARD.md`.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
-use tokio::sync::Mutex;
 use tracing::instrument;
 
 use y_core::session::{DisplayTranscriptStore, SessionError};
 use y_core::types::{Message, SessionId};
 
-use crate::transcript::read_messages_from_file;
+use crate::jsonl_message_store::{JsonlMessageStore, TranscriptKind};
 
 /// JSONL file-based display transcript store.
 ///
@@ -27,35 +24,21 @@ use crate::transcript::read_messages_from_file;
 /// undo/rollback operations.
 #[derive(Debug, Clone)]
 pub struct JsonlDisplayTranscriptStore {
-    /// Base directory for transcript files.
-    base_dir: PathBuf,
-    /// Write lock to serialise concurrent appends (same rationale as
-    /// `JsonlTranscriptStore::write_lock`).
-    write_lock: Arc<Mutex<()>>,
+    inner: JsonlMessageStore,
 }
 
 impl JsonlDisplayTranscriptStore {
     /// Create a new display transcript store with the given base directory.
     pub fn new(base_dir: impl Into<PathBuf>) -> Self {
         Self {
-            base_dir: base_dir.into(),
-            write_lock: Arc::new(Mutex::new(())),
+            inner: JsonlMessageStore::new(base_dir, TranscriptKind::Display),
         }
     }
 
     /// Get the file path for a session's display transcript.
+    #[cfg(test)]
     fn transcript_path(&self, session_id: &SessionId) -> PathBuf {
-        self.base_dir
-            .join(format!("{}.display.jsonl", session_id.as_str()))
-    }
-
-    /// Ensure the base directory exists.
-    async fn ensure_dir(&self) -> Result<(), SessionError> {
-        tokio::fs::create_dir_all(&self.base_dir)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("create display transcript dir: {e}"),
-            })
+        self.inner.path(session_id)
     }
 }
 
@@ -63,86 +46,17 @@ impl JsonlDisplayTranscriptStore {
 impl DisplayTranscriptStore for JsonlDisplayTranscriptStore {
     #[instrument(skip(self, message), fields(session_id = %session_id))]
     async fn append(&self, session_id: &SessionId, message: &Message) -> Result<(), SessionError> {
-        self.ensure_dir().await?;
-
-        let path = self.transcript_path(session_id);
-        let mut line =
-            serde_json::to_string(message).map_err(|e| SessionError::TranscriptError {
-                message: format!("serialize message: {e}"),
-            })?;
-        line.push('\n');
-
-        // Serialise writes so concurrent appends cannot interleave bytes.
-        let _guard = self.write_lock.lock().await;
-
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("open display transcript file {}: {e}", path.display()),
-            })?;
-
-        file.write_all(line.as_bytes())
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("write to display transcript: {e}"),
-            })?;
-
-        file.flush()
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("flush display transcript: {e}"),
-            })?;
-
-        Ok(())
+        self.inner.append(session_id, message).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn read_all(&self, session_id: &SessionId) -> Result<Vec<Message>, SessionError> {
-        let path = self.transcript_path(session_id);
-
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-
-        read_messages_from_file(&path).await
+        self.inner.read_all(session_id).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id))]
     async fn message_count(&self, session_id: &SessionId) -> Result<usize, SessionError> {
-        let path = self.transcript_path(session_id);
-
-        if !path.exists() {
-            return Ok(0);
-        }
-
-        let file =
-            tokio::fs::File::open(&path)
-                .await
-                .map_err(|e| SessionError::TranscriptError {
-                    message: format!("open display transcript: {e}"),
-                })?;
-
-        let reader = tokio::io::BufReader::new(file);
-        let mut lines = reader.lines();
-        let mut count = 0;
-
-        while let Some(line) =
-            lines
-                .next_line()
-                .await
-                .map_err(|e| SessionError::TranscriptError {
-                    message: format!("read line: {e}"),
-                })?
-        {
-            if !line.trim().is_empty() {
-                count += 1;
-            }
-        }
-
-        Ok(count)
+        self.inner.message_count(session_id).await
     }
 
     #[instrument(skip(self), fields(session_id = %session_id, keep_count = keep_count))]
@@ -151,40 +65,7 @@ impl DisplayTranscriptStore for JsonlDisplayTranscriptStore {
         session_id: &SessionId,
         keep_count: usize,
     ) -> Result<usize, SessionError> {
-        let all = self.read_all(session_id).await?;
-        if keep_count >= all.len() {
-            return Ok(0);
-        }
-
-        let removed = all.len() - keep_count;
-        let kept = &all[..keep_count];
-
-        // Atomic rewrite: write to temp file, then rename.
-        let path = self.transcript_path(session_id);
-        let tmp_path = path.with_extension("display.jsonl.tmp");
-
-        let mut content = String::new();
-        for msg in kept {
-            let line = serde_json::to_string(msg).map_err(|e| SessionError::TranscriptError {
-                message: format!("serialize message: {e}"),
-            })?;
-            content.push_str(&line);
-            content.push('\n');
-        }
-
-        tokio::fs::write(&tmp_path, content.as_bytes())
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("write temp display transcript: {e}"),
-            })?;
-
-        tokio::fs::rename(&tmp_path, &path)
-            .await
-            .map_err(|e| SessionError::TranscriptError {
-                message: format!("rename temp display transcript: {e}"),
-            })?;
-
-        Ok(removed)
+        self.inner.truncate(session_id, keep_count).await
     }
 }
 
