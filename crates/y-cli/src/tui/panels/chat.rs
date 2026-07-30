@@ -651,6 +651,7 @@ fn render_message(
             plain_lines,
             &msg.reasoning_content,
             msg.reasoning_complete,
+            content_width,
             tick,
             t,
         );
@@ -674,7 +675,15 @@ fn render_message(
                     content,
                     is_complete,
                 } => {
-                    render_think_card(lines, plain_lines, content, *is_complete, tick, t);
+                    render_think_card(
+                        lines,
+                        plain_lines,
+                        content,
+                        *is_complete,
+                        content_width,
+                        tick,
+                        t,
+                    );
                 }
                 ContentSegment::ToolCall {
                     name,
@@ -751,6 +760,7 @@ fn render_message(
                                     plain_lines,
                                     content,
                                     *is_complete,
+                                    content_width,
                                     tick,
                                     t,
                                 );
@@ -777,7 +787,15 @@ fn render_message(
                     content,
                     is_complete,
                 } => {
-                    render_think_card(lines, plain_lines, content, *is_complete, tick, t);
+                    render_think_card(
+                        lines,
+                        plain_lines,
+                        content,
+                        *is_complete,
+                        content_width,
+                        tick,
+                        t,
+                    );
                     segment_index += 1;
                 }
                 StreamSegment::ToolCall(_) => {
@@ -1174,11 +1192,20 @@ fn render_think_card(
     plain: &mut Vec<String>,
     content: &str,
     is_complete: bool,
+    width: usize,
     tick: u64,
     t: &Theme,
 ) {
     // Thought cards are top-level separators now: no indent.
     let indent = "";
+
+    // Content rows are word-wrapped here at the card level so every
+    // continuation row carries its own `│ ` bar; the generic span wrapper
+    // downstream would split mid-word and lose the bar.
+    let bar = format!("{indent}\u{2502} ");
+    let text_width = width
+        .saturating_sub(UnicodeWidthStr::width(bar.as_str()))
+        .max(1);
 
     let header_spans = if is_complete {
         let label_style = Style::default()
@@ -1219,12 +1246,14 @@ fn render_think_card(
         let content_lines: Vec<&str> = content.lines().collect();
         let preview_count = 3.min(content_lines.len());
         for line_text in content_lines.iter().take(preview_count) {
-            let formatted = format!("{indent}\u{2502} {line_text}");
-            lines.push(Line::from(Span::styled(
-                formatted.clone(),
-                Style::default().fg(t.think_text()),
-            )));
-            plain.push(formatted);
+            for row in wrap_words(line_text, text_width) {
+                let formatted = format!("{bar}{row}");
+                lines.push(Line::from(Span::styled(
+                    formatted.clone(),
+                    Style::default().fg(t.think_text()),
+                )));
+                plain.push(formatted);
+            }
         }
         if content_lines.len() > preview_count {
             let more = content_lines.len() - preview_count;
@@ -1237,14 +1266,73 @@ fn render_think_card(
         }
     } else {
         for line_text in content.lines() {
-            let formatted = format!("{indent}\u{2502} {line_text}");
-            lines.push(Line::from(Span::styled(
-                formatted.clone(),
-                Style::default().fg(t.think_text()),
-            )));
-            plain.push(formatted);
+            for row in wrap_words(line_text, text_width) {
+                let formatted = format!("{bar}{row}");
+                lines.push(Line::from(Span::styled(
+                    formatted.clone(),
+                    Style::default().fg(t.think_text()),
+                )));
+                plain.push(formatted);
+            }
         }
     }
+}
+
+/// Greedy word-wrap `text` to `width` display columns. Words longer than
+/// `width` are hard-split by display width. Always returns at least one row.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut rows: Vec<String> = Vec::new();
+    let mut row = String::new();
+    let mut row_width = 0usize;
+
+    for word in text.split(' ') {
+        let word_width = UnicodeWidthStr::width(word);
+        if row_width > 0 && row_width + 1 + word_width > width {
+            rows.push(std::mem::take(&mut row));
+            row_width = 0;
+        }
+        // Hard-split words that exceed the width on their own.
+        let mut rest = word;
+        while UnicodeWidthStr::width(rest) > width {
+            if row_width > 0 {
+                rows.push(std::mem::take(&mut row));
+                row_width = 0;
+            }
+            let (head, tail) = split_at_display_width(rest, width);
+            rows.push(head.to_string());
+            rest = tail;
+        }
+        let rest_width = UnicodeWidthStr::width(rest);
+        if !row.is_empty() {
+            row.push(' ');
+            row_width += 1;
+        }
+        row.push_str(rest);
+        row_width += rest_width;
+    }
+    if !row.is_empty() {
+        rows.push(row);
+    }
+    if rows.is_empty() {
+        rows.push(String::new());
+    }
+    rows
+}
+
+/// Split `text` into the longest prefix fitting `width` display columns and
+/// the remainder. A wide char that would straddle the boundary starts the
+/// remainder.
+fn split_at_display_width(text: &str, width: usize) -> (&str, &str) {
+    let mut used = 0usize;
+    for (index, ch) in text.char_indices() {
+        let ch_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + ch_width > width {
+            return (&text[..index], &text[index..]);
+        }
+        used += ch_width;
+    }
+    (text, "")
 }
 
 // ---------------------------------------------------------------------------
@@ -2767,6 +2855,46 @@ mod tests {
         let height = 50;
         assert_eq!(compute_scroll_to(total, height, 0), 69_950);
         assert_eq!(compute_scroll_to(total, height, 69_950), 0);
+    }
+
+    // T-THINK-WRAP-01: think card content is word-wrapped at the card level
+    // and every continuation row keeps the `│ ` bar; words are never split.
+    #[test]
+    fn test_think_card_wraps_with_bar_on_continuation_rows() {
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+        let theme = Theme::default();
+        let content = "The user wants me to execute a release pipeline autonomously";
+        render_think_card(&mut lines, &mut plain, content, true, 30, 0, &theme);
+
+        assert!(
+            plain.len() > 2,
+            "content must wrap to multiple rows: {plain:?}"
+        );
+        // Every content row (past the header) keeps the bar and fits the width.
+        for line in lines.iter().skip(1) {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(
+                text.starts_with('\u{2502}'),
+                "continuation row lost the bar: {text:?}"
+            );
+            assert!(
+                UnicodeWidthStr::width(text.as_str()) <= 30,
+                "row overflows the width: {text:?}"
+            );
+        }
+        // No mid-word splits.
+        let body: String = plain[1..].join("\n");
+        assert!(body.contains("pipeline"), "word was split: {body:?}");
+        assert!(body.contains("autonomously"), "word was split: {body:?}");
+    }
+
+    // T-THINK-WRAP-02: words longer than the wrap width are hard-split by
+    // display width instead of overflowing.
+    #[test]
+    fn test_wrap_words_hard_splits_long_words() {
+        let rows = wrap_words("aaaa bbbbbbbbbb cc", 6);
+        assert_eq!(rows, vec!["aaaa", "bbbbbb", "bbbb", "cc"]);
     }
 
     // T-CHAT-MOUSE-01: the chat panel is borderless, so terminal coordinates
