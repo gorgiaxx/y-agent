@@ -20,7 +20,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
-use crate::tui::selection::TextSelection;
+use crate::tui::selection::{SelectionRow, TextSelection};
 use crate::tui::state::{
     AppState, CachedMessageRender, ChatMessage, ChatRenderCache, MessageRole, StreamSegment,
     ToolCallDisplayMode, ToolCallInfo, ToolCallStatus, ToolSelection,
@@ -96,7 +96,7 @@ pub fn render(
     area: Rect,
     state: &AppState,
     cache: &mut ChatRenderCache,
-    plain_out: &mut Vec<String>,
+    plain_out: &mut Vec<SelectionRow>,
     tool_rows_out: &mut Vec<(Range<usize>, ToolSelection)>,
 ) {
     let t = &state.theme;
@@ -112,7 +112,7 @@ pub fn render(
     if inner_width == 0 {
         let para = Paragraph::new(vec![Line::from("")]);
         frame.render_widget(para, area);
-        plain_out.push(String::new());
+        plain_out.push(SelectionRow::default());
         return;
     }
 
@@ -132,7 +132,13 @@ pub fn render(
             DisplayItem::WelcomeScreen => {
                 let mut raw_lines = Vec::new();
                 let mut raw_plain = Vec::new();
-                render_welcome(&mut raw_lines, &mut raw_plain, inner_width, t);
+                render_welcome(
+                    &mut raw_lines,
+                    &mut raw_plain,
+                    inner_width,
+                    t,
+                    state.welcome_tip,
+                );
                 let (lines, plain, _) = wrap_rendered_lines(raw_lines, raw_plain, inner_width);
                 push_owned_item(
                     &mut owned_items,
@@ -260,18 +266,22 @@ enum RowSource {
     Owned(usize),
 }
 
-/// Fully rendered message: wrapped styled lines, their plain-text mirror,
+/// Fully rendered message: wrapped styled lines, their selection mirrors,
 /// and the tool card line ranges in wrapped coordinates.
-type RenderedMessage = (Vec<Line<'static>>, Vec<String>, Vec<(usize, Range<usize>)>);
+type RenderedMessage = (
+    Vec<Line<'static>>,
+    Vec<SelectionRow>,
+    Vec<(usize, Range<usize>)>,
+);
 
 /// Append a frame-owned item to the assembled row space.
 fn push_owned_item(
     owned_items: &mut Vec<Vec<Line<'static>>>,
     row_spans: &mut Vec<(usize, usize, RowSource)>,
     row_cursor: &mut usize,
-    plain_out: &mut Vec<String>,
+    plain_out: &mut Vec<SelectionRow>,
     lines: Vec<Line<'static>>,
-    plain: Vec<String>,
+    plain: Vec<SelectionRow>,
 ) {
     row_spans.push((
         *row_cursor,
@@ -288,7 +298,7 @@ fn push_blank_separator(
     owned_items: &mut Vec<Vec<Line<'static>>>,
     row_spans: &mut Vec<(usize, usize, RowSource)>,
     row_cursor: &mut usize,
-    plain_out: &mut Vec<String>,
+    plain_out: &mut Vec<SelectionRow>,
 ) {
     push_owned_item(
         owned_items,
@@ -296,7 +306,7 @@ fn push_blank_separator(
         row_cursor,
         plain_out,
         vec![Line::from("")],
-        vec![String::new()],
+        vec![SelectionRow::default()],
     );
 }
 
@@ -411,7 +421,7 @@ fn render_message_wrapped(
     theme: &Theme,
 ) -> RenderedMessage {
     let mut raw_lines: Vec<Line> = Vec::new();
-    let mut raw_plain: Vec<String> = Vec::new();
+    let mut raw_plain: Vec<SelectionRow> = Vec::new();
     let mut raw_tool_ranges: Vec<(usize, Range<usize>)> = Vec::new();
     render_message(
         &mut raw_lines,
@@ -451,38 +461,48 @@ fn offset_tool_ranges(
         .collect()
 }
 
-/// Wrap pre-rendered lines to `inner_width`, keeping styled and plain output
-/// aligned row by row.
+/// Wrap pre-rendered lines to `inner_width`, keeping styled lines and their
+/// selection mirrors aligned row by row.
 ///
 /// Lines that fit keep their original spans. Lines that overflow are split
 /// span-aware: rows break by display width across span boundaries while each
-/// span keeps its own style, and wide characters are never split. The plain
-/// mirror of each wrapped row is the exact concatenation of that row's span
-/// contents, so selection row/col mapping stays 1:1 with the rendered output.
+/// span keeps its own style, and wide characters are never split. Each wrapped
+/// row's mirror records the full display text of that row plus the copy text
+/// of the raw source line and the offsets needed to map selection columns
+/// back into copy space, so selection row/col mapping stays 1:1 with the
+/// rendered output.
 ///
 /// The third return value holds, per raw input line, how many wrapped rows it
 /// produced, so raw line ranges can be mapped onto wrapped coordinates (see
 /// [`offset_tool_ranges`]).
 fn wrap_rendered_lines(
     raw_lines: Vec<Line<'static>>,
-    raw_plain: Vec<String>,
+    raw_plain: Vec<SelectionRow>,
     inner_width: usize,
-) -> (Vec<Line<'static>>, Vec<String>, Vec<usize>) {
+) -> (Vec<Line<'static>>, Vec<SelectionRow>, Vec<usize>) {
     let mut lines: Vec<Line> = Vec::new();
-    let mut plain_lines: Vec<String> = Vec::new();
+    let mut plain_lines: Vec<SelectionRow> = Vec::new();
     let mut wrap_counts: Vec<usize> = Vec::with_capacity(raw_lines.len());
-    for (raw_line, raw_text) in raw_lines.into_iter().zip(raw_plain) {
-        if inner_width == 0 || UnicodeWidthStr::width(raw_text.as_str()) <= inner_width {
+    for (raw_line, raw_row) in raw_lines.into_iter().zip(raw_plain) {
+        if inner_width == 0 || UnicodeWidthStr::width(raw_row.display.as_str()) <= inner_width {
             lines.push(raw_line);
-            plain_lines.push(raw_text);
+            plain_lines.push(raw_row);
             wrap_counts.push(1);
             continue;
         }
         let wrapped_rows = wrap_spans(&raw_line.spans, inner_width);
         wrap_counts.push(wrapped_rows.len());
+        let mut display_start = 0usize;
         for wrapped in wrapped_rows {
-            let plain_row: String = wrapped.spans.iter().map(|s| s.content.as_ref()).collect();
-            plain_lines.push(plain_row);
+            let display: String = wrapped.spans.iter().map(|s| s.content.as_ref()).collect();
+            let row = SelectionRow {
+                display,
+                copy: raw_row.copy.clone(),
+                display_start,
+                copy_offset: raw_row.copy_offset,
+            };
+            display_start += row.display.chars().count();
+            plain_lines.push(row);
             lines.push(wrapped);
         }
     }
@@ -562,12 +582,18 @@ fn has_open_think_block(text: &str) -> bool {
 // Welcome screen (aligned with GUI WelcomePage empty state)
 // ---------------------------------------------------------------------------
 
-fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, t: &Theme) {
+fn render_welcome(
+    lines: &mut Vec<Line>,
+    plain: &mut Vec<SelectionRow>,
+    width: usize,
+    t: &Theme,
+    tip: &str,
+) {
     // Center vertically by adding blank lines (best effort).
     let pad_lines = 3;
     for _ in 0..pad_lines {
         lines.push(Line::from(""));
-        plain.push(String::new());
+        plain.push(SelectionRow::default());
     }
 
     // Title line, centered.
@@ -580,10 +606,10 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, 
             .fg(t.welcome())
             .add_modifier(Modifier::BOLD),
     )));
-    plain.push(padded);
+    plain.push(padded.into());
 
     lines.push(Line::from(""));
-    plain.push(String::new());
+    plain.push(SelectionRow::default());
 
     let subtitle = "Type a message or press / for commands.";
     let pad2 = width.saturating_sub(subtitle.len()) / 2;
@@ -592,10 +618,10 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, 
         padded2.clone(),
         Style::default().fg(t.muted()),
     )));
-    plain.push(padded2);
+    plain.push(padded2.into());
 
     lines.push(Line::from(""));
-    plain.push(String::new());
+    plain.push(SelectionRow::default());
 
     let commands = "/mode   /goal <objective>   /resume   /copy";
     let command_pad = width.saturating_sub(commands.len()) / 2;
@@ -604,7 +630,23 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, 
         padded_commands.clone(),
         Style::default().fg(t.input_border_focused()),
     )));
-    plain.push(padded_commands);
+    plain.push(padded_commands.into());
+
+    // Per-session tip line (kimi-code style): helps new users discover
+    // features without leaving the empty state.
+    if !tip.is_empty() {
+        lines.push(Line::from(""));
+        plain.push(SelectionRow::default());
+
+        let tip_line = format!("Tip: {tip}");
+        let tip_pad = width.saturating_sub(tip_line.len()) / 2;
+        let padded_tip = format!("{}{}", " ".repeat(tip_pad), tip_line);
+        lines.push(Line::from(Span::styled(
+            padded_tip.clone(),
+            Style::default().fg(t.muted()),
+        )));
+        plain.push(padded_tip.into());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -628,7 +670,7 @@ fn render_welcome(lines: &mut Vec<Line>, plain: &mut Vec<String>, width: usize, 
 /// onto wrapped coordinates after [`wrap_rendered_lines`].
 fn render_message(
     lines: &mut Vec<Line>,
-    plain_lines: &mut Vec<String>,
+    plain_lines: &mut Vec<SelectionRow>,
     tool_ranges: &mut Vec<(usize, Range<usize>)>,
     msg: &ChatMessage,
     message_index: usize,
@@ -835,7 +877,7 @@ fn render_message(
             "(cancelled)".to_string(),
             Style::default().fg(t.error()),
         )));
-        plain_lines.push("(cancelled)".to_string());
+        plain_lines.push("(cancelled)".to_string().into());
     }
 
     // Footer: timestamp + tokens (for completed assistant messages only).
@@ -845,7 +887,7 @@ fn render_message(
             time_str.clone(),
             Style::default().fg(t.muted()),
         )));
-        plain_lines.push(time_str);
+        plain_lines.push(time_str.into());
     }
 }
 
@@ -1189,7 +1231,7 @@ pub(crate) const SPINNER_FRAMES: &[&str] = &[
 /// ```
 fn render_think_card(
     lines: &mut Vec<Line>,
-    plain: &mut Vec<String>,
+    plain: &mut Vec<SelectionRow>,
     content: &str,
     is_complete: bool,
     width: usize,
@@ -1240,7 +1282,7 @@ fn render_think_card(
     };
     let header_plain = format!("{indent}> {label}");
     lines.push(Line::from(header_spans));
-    plain.push(header_plain);
+    plain.push(header_plain.into());
 
     if is_complete {
         let content_lines: Vec<&str> = content.lines().collect();
@@ -1252,7 +1294,7 @@ fn render_think_card(
                     formatted.clone(),
                     Style::default().fg(t.think_text()),
                 )));
-                plain.push(formatted);
+                plain.push(formatted.into());
             }
         }
         if content_lines.len() > preview_count {
@@ -1262,7 +1304,7 @@ fn render_think_card(
                 more_text.clone(),
                 Style::default().fg(t.muted()),
             )));
-            plain.push(more_text);
+            plain.push(more_text.into());
         }
     } else {
         for line_text in content.lines() {
@@ -1272,7 +1314,7 @@ fn render_think_card(
                     formatted.clone(),
                     Style::default().fg(t.think_text()),
                 )));
-                plain.push(formatted);
+                plain.push(formatted.into());
             }
         }
     }
@@ -1348,7 +1390,7 @@ fn split_at_display_width(text: &str, width: usize) -> (&str, &str) {
 /// ```
 fn render_tool_call_card(
     lines: &mut Vec<Line>,
-    plain: &mut Vec<String>,
+    plain: &mut Vec<SelectionRow>,
     name: &str,
     arguments: Option<&str>,
     is_streaming: bool,
@@ -1378,7 +1420,7 @@ fn render_tool_call_card(
     ];
     let header_plain = format!("{indent}# {name}  {status_label}");
     lines.push(Line::from(header_spans));
-    plain.push(header_plain);
+    plain.push(header_plain.into());
 
     // Arguments preview (if available).
     if let Some(args) = arguments {
@@ -1401,7 +1443,7 @@ fn render_tool_call_card(
                 args_line.clone(),
                 Style::default().fg(t.tool_card_text()),
             )));
-            plain.push(args_line);
+            plain.push(args_line.into());
         }
     }
 }
@@ -1411,7 +1453,7 @@ fn render_tool_call_card(
 /// Records each rendered card's raw line span into `tool_ranges`.
 fn render_tool_index_run(
     lines: &mut Vec<Line>,
-    plain: &mut Vec<String>,
+    plain: &mut Vec<SelectionRow>,
     tool_ranges: &mut Vec<(usize, Range<usize>)>,
     tools: &[ToolCallInfo],
     tool_indexes: &[usize],
@@ -1461,7 +1503,7 @@ fn render_tool_index_run(
 /// belongs to no child and is left out of the ranges.
 fn render_exploration_group(
     lines: &mut Vec<Line>,
-    plain: &mut Vec<String>,
+    plain: &mut Vec<SelectionRow>,
     tool_ranges: &mut Vec<(usize, Range<usize>)>,
     tools: &[ToolCallInfo],
     tool_indexes: &[usize],
@@ -1505,10 +1547,13 @@ fn render_exploration_group(
         ),
         Span::styled(format!("  Done{timing}"), Style::default().fg(t.success())),
     ]));
-    plain.push(format!(
-        "{indent}{header_marker} Exploring  {} calls  Done{timing}",
-        tool_indexes.len()
-    ));
+    plain.push(
+        format!(
+            "{indent}{header_marker} Exploring  {} calls  Done{timing}",
+            tool_indexes.len()
+        )
+        .into(),
+    );
 
     for &tool_index in tool_indexes {
         let Some(tool) = tools.get(tool_index) else {
@@ -1552,9 +1597,7 @@ fn render_exploration_group(
                     Style::default().fg(t.input_border_focused()),
                 ),
             ]));
-            plain.push(format!(
-                "{indent}  {marker} {summary}{timing}{selected_label}"
-            ));
+            plain.push(format!("{indent}  {marker} {summary}{timing}{selected_label}").into());
         } else {
             let presentation = present_tool(tool, content_width.saturating_sub(indent.len() + 6));
             let summary = if presentation.summary.is_empty() {
@@ -1581,11 +1624,14 @@ fn render_exploration_group(
                     Style::default().fg(t.input_border_focused()),
                 ),
             ]));
-            plain.push(format!(
-                "{indent}  {marker} {} {}{timing}{selected_label}",
-                presentation.verb,
-                truncate_str(summary, 56)
-            ));
+            plain.push(
+                format!(
+                    "{indent}  {marker} {} {}{timing}{selected_label}",
+                    presentation.verb,
+                    truncate_str(summary, 56)
+                )
+                .into(),
+            );
 
             if tool.display_mode == ToolCallDisplayMode::Expanded {
                 push_tool_section(
@@ -1622,7 +1668,7 @@ fn render_exploration_group(
 /// Pushes the card's raw line span as `(tool_index, range)` onto `tool_ranges`.
 fn render_tool_call_executed_card(
     lines: &mut Vec<Line>,
-    plain: &mut Vec<String>,
+    plain: &mut Vec<SelectionRow>,
     tool_ranges: &mut Vec<(usize, Range<usize>)>,
     tc: &ToolCallInfo,
     tool_index: usize,
@@ -1700,7 +1746,7 @@ fn render_tool_call_executed_card(
         meta_chips
     );
     lines.push(Line::from(header_spans));
-    plain.push(header_plain);
+    plain.push(header_plain.into());
 
     if tc.display_mode != ToolCallDisplayMode::Collapsed {
         if tc.display_mode == ToolCallDisplayMode::Expanded
@@ -1746,7 +1792,7 @@ fn render_tool_call_executed_card(
 /// lines` marker; otherwise the first `limit` lines are kept.
 fn push_tool_section(
     lines: &mut Vec<Line>,
-    plain: &mut Vec<String>,
+    plain: &mut Vec<SelectionRow>,
     content: &[ToolLine],
     limit: usize,
     color: Color,
@@ -1768,7 +1814,7 @@ fn push_tool_section(
             marker.clone(),
             Style::default().fg(t.muted()),
         )));
-        plain.push(marker);
+        plain.push(marker.into());
     }
     for tool_line in window {
         let output_line = format!("{indent}  {}", tool_line.text);
@@ -1776,7 +1822,7 @@ fn push_tool_section(
             output_line.clone(),
             Style::default().fg(tool_tone_color(tool_line.tone, color, t)),
         )));
-        plain.push(output_line);
+        plain.push(output_line.into());
     }
     if earlier == 0 && content.len() > window.len() {
         let omitted = content.len() - window.len();
@@ -1785,7 +1831,7 @@ fn push_tool_section(
             more_line.clone(),
             Style::default().fg(t.muted()),
         )));
-        plain.push(more_line);
+        plain.push(more_line.into());
     }
 }
 
@@ -1861,7 +1907,7 @@ fn truncate_str(s: &str, max_len: usize) -> String {
 ///   - Bullet lists (- item, * item)
 fn render_content_lines(
     lines: &mut Vec<Line>,
-    plain_lines: &mut Vec<String>,
+    plain_lines: &mut Vec<SelectionRow>,
     content: &str,
     role: MessageRole,
     content_width: usize,
@@ -1884,13 +1930,23 @@ fn render_content_lines(
     if role == MessageRole::Assistant {
         let md_lines = crate::tui::markdown::render_markdown(content, content_width);
         for md_line in md_lines {
-            // The renderer supplies the copy text so decorative spans
-            // (code-block gutter, band padding) stay out of the clipboard.
-            let plain = format!("{indent}{}", md_line.copy_text);
+            // The display mirror is the exact on-screen text (decorations
+            // included) so selection columns map 1:1; `copy`/`copy_offset`
+            // carry the decoration-free clipboard text (code-block gutter
+            // and band padding excluded).
+            let mut display = indent.to_string();
             let mut spans = vec![Span::raw(indent.to_string())];
-            spans.extend(md_line.line.spans);
+            for span in &md_line.line.spans {
+                display.push_str(span.content.as_ref());
+                spans.push(span.clone());
+            }
             lines.push(Line::from(spans));
-            plain_lines.push(plain);
+            plain_lines.push(SelectionRow {
+                display,
+                copy: format!("{indent}{}", md_line.copy_text),
+                display_start: 0,
+                copy_offset: indent.chars().count() + md_line.copy_offset,
+            });
         }
         return;
     }
@@ -1909,7 +1965,7 @@ fn render_content_lines(
                     fence.clone(),
                     Style::default().fg(t.muted()),
                 )));
-                plain_lines.push(fence);
+                plain_lines.push(fence.into());
                 code_lang.clear();
             } else {
                 // Start of code block.
@@ -1930,7 +1986,7 @@ fn render_content_lines(
                     fence.clone(),
                     Style::default().fg(t.muted()),
                 )));
-                plain_lines.push(fence);
+                plain_lines.push(fence.into());
             }
             continue;
         }
@@ -1942,7 +1998,7 @@ fn render_content_lines(
                 formatted.clone(),
                 Style::default().fg(t.code_block_fg()).bg(t.code_bg()),
             )));
-            plain_lines.push(formatted);
+            plain_lines.push(formatted.into());
             continue;
         }
 
@@ -1954,7 +2010,7 @@ fn render_content_lines(
                 formatted.clone(),
                 content_style.add_modifier(Modifier::BOLD),
             )));
-            plain_lines.push(formatted);
+            plain_lines.push(formatted.into());
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("## ") {
@@ -1965,7 +2021,7 @@ fn render_content_lines(
                     .add_modifier(Modifier::BOLD)
                     .add_modifier(Modifier::UNDERLINED),
             )));
-            plain_lines.push(formatted);
+            plain_lines.push(formatted.into());
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix("# ") {
@@ -1976,7 +2032,7 @@ fn render_content_lines(
                     .add_modifier(Modifier::BOLD)
                     .add_modifier(Modifier::UNDERLINED),
             )));
-            plain_lines.push(formatted);
+            plain_lines.push(formatted.into());
             continue;
         }
 
@@ -1988,7 +2044,7 @@ fn render_content_lines(
                 hr_line.clone(),
                 Style::default().fg(t.hr()),
             )));
-            plain_lines.push(hr_line);
+            plain_lines.push(hr_line.into());
             continue;
         }
 
@@ -1997,7 +2053,7 @@ fn render_content_lines(
             let formatted = format!("{indent}\u{2502} {rest}");
             let spans = build_inline_spans(&formatted, Style::default().fg(t.blockquote()), t);
             lines.push(Line::from(spans));
-            plain_lines.push(formatted);
+            plain_lines.push(formatted.into());
             continue;
         }
         // Bare blockquote marker.
@@ -2007,7 +2063,7 @@ fn render_content_lines(
                 formatted.clone(),
                 Style::default().fg(t.blockquote()),
             )));
-            plain_lines.push(formatted);
+            plain_lines.push(formatted.into());
             continue;
         }
 
@@ -2018,7 +2074,7 @@ fn render_content_lines(
             let spans = build_inline_spans(&formatted, content_style, t);
             let plain_text = formatted;
             lines.push(Line::from(spans));
-            plain_lines.push(plain_text);
+            plain_lines.push(plain_text.into());
             continue;
         }
 
@@ -2034,7 +2090,7 @@ fn render_content_lines(
             let formatted = format!("{indent}  {trimmed}");
             let spans = build_inline_spans(&formatted, content_style, t);
             lines.push(Line::from(spans));
-            plain_lines.push(formatted);
+            plain_lines.push(formatted.into());
             continue;
         }
 
@@ -2042,7 +2098,7 @@ fn render_content_lines(
         let formatted = format!("{indent}{raw_line}");
         let spans = build_inline_spans(&formatted, content_style, t);
         lines.push(Line::from(spans));
-        plain_lines.push(formatted);
+        plain_lines.push(formatted.into());
     }
 }
 
@@ -2265,6 +2321,15 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
+    /// Join the display text of selection rows, mirroring the old
+    /// `Vec<String>.join("\n")` test idiom.
+    fn plain_text(rows: &[SelectionRow]) -> String {
+        rows.iter()
+            .map(|row| row.display.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     // T-TUI-02-04: Chat scroll offset limits clamp to message count.
     #[test]
     fn test_scroll_offset_clamping() {
@@ -2314,7 +2379,7 @@ mod tests {
         // No role header line: just the 2 content lines.
         assert_eq!(lines.len(), 2);
         assert_eq!(plain.len(), 2);
-        assert_eq!(plain[0], "Hello");
+        assert_eq!(plain[0].display, "Hello");
         // The user's own text carries the highlight: bold + user accent.
         let first_span = &lines[0].spans[0];
         assert_eq!(first_span.style.fg, Some(theme.user_accent()));
@@ -2352,9 +2417,12 @@ mod tests {
             &Theme::default(),
         );
 
-        assert_eq!(plain, vec!["partial answer".to_string()]);
+        assert_eq!(
+            plain,
+            vec![SelectionRow::simple("partial answer".to_string())]
+        );
         assert!(
-            plain.iter().all(|line| !line.contains("working")),
+            plain.iter().all(|line| !line.display.contains("working")),
             "chat must not carry a working indicator: {plain:?}"
         );
     }
@@ -2414,19 +2482,19 @@ mod tests {
 
         let first_reasoning = plain
             .iter()
-            .position(|line| line.contains("Inspect the file"))
+            .position(|line| line.display.contains("Inspect the file"))
             .unwrap();
         let tool = plain
             .iter()
-            .position(|line| line.contains("Read src/lib.rs"))
+            .position(|line| line.display.contains("Read src/lib.rs"))
             .unwrap();
         let second_reasoning = plain
             .iter()
-            .position(|line| line.contains("Now verify the result"))
+            .position(|line| line.display.contains("Now verify the result"))
             .unwrap();
         let answer = plain
             .iter()
-            .position(|line| line.contains("The result is valid."))
+            .position(|line| line.display.contains("The result is valid."))
             .unwrap();
 
         assert!(first_reasoning < tool);
@@ -2482,11 +2550,22 @@ mod tests {
         let blue = Style::default().fg(Color::Blue);
         let raw_line = Line::from(vec![Span::styled("aaaa", red), Span::styled("bbbb", blue)]);
         let (lines, plain, counts) =
-            wrap_rendered_lines(vec![raw_line], vec!["aaaabbbb".to_string()], 6);
+            wrap_rendered_lines(vec![raw_line], vec!["aaaabbbb".to_string().into()], 6);
 
         assert_eq!(lines.len(), 2);
         assert_eq!(counts, vec![2], "one raw line split into two rows");
-        assert_eq!(plain, vec!["aaaabb".to_string(), "bb".to_string()]);
+        assert_eq!(
+            plain
+                .iter()
+                .map(|row| row.display.as_str())
+                .collect::<Vec<_>>(),
+            vec!["aaaabb", "bb"]
+        );
+        // Wrapped continuation rows slice the raw copy text by display start.
+        assert_eq!(plain[0].copy, "aaaabbbb");
+        assert_eq!(plain[0].display_start, 0);
+        assert_eq!(plain[1].copy, "aaaabbbb");
+        assert_eq!(plain[1].display_start, 6);
         // First row: the red span intact plus the first half of the blue span.
         assert_eq!(lines[0].spans.len(), 2);
         assert_eq!(lines[0].spans[0].content.as_ref(), "aaaa");
@@ -2508,10 +2587,16 @@ mod tests {
             Span::styled("你好世界", cjk_style),
         ]);
         let (lines, plain, counts) =
-            wrap_rendered_lines(vec![raw_line], vec!["ab你好世界".to_string()], 6);
+            wrap_rendered_lines(vec![raw_line], vec!["ab你好世界".to_string().into()], 6);
 
         // "ab你好" is exactly 6 display columns; "世界" wraps to the next row.
-        assert_eq!(plain, vec!["ab你好".to_string(), "世界".to_string()]);
+        assert_eq!(
+            plain
+                .iter()
+                .map(|row| row.display.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ab你好", "世界"]
+        );
         assert_eq!(counts, vec![2]);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[1].spans[0].style, cjk_style);
@@ -2531,16 +2616,22 @@ mod tests {
             Span::styled("code mixed in", code),
         ]);
         let (lines, plain, counts) =
-            wrap_rendered_lines(vec![raw_line], vec![original.clone()], 10);
+            wrap_rendered_lines(vec![raw_line], vec![original.clone().into()], 10);
 
         assert!(lines.len() > 1, "line must actually wrap");
         assert_eq!(counts, vec![lines.len()]);
         assert_eq!(lines.len(), plain.len());
         for (line, plain_row) in lines.iter().zip(&plain) {
             let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-            assert_eq!(&joined, plain_row);
+            assert_eq!(joined, plain_row.display);
         }
-        assert_eq!(plain.concat(), original);
+        assert_eq!(
+            plain
+                .iter()
+                .map(|row| row.display.as_str())
+                .collect::<String>(),
+            original
+        );
     }
 
     #[test]
@@ -2555,13 +2646,40 @@ mod tests {
     fn test_welcome_screen_advertises_command_first_workflow() {
         let mut lines = Vec::new();
         let mut plain = Vec::new();
-        render_welcome(&mut lines, &mut plain, 80, &Theme::default());
-        let text = plain.join("\n");
+        render_welcome(&mut lines, &mut plain, 80, &Theme::default(), "a tip");
+        let text = plain
+            .iter()
+            .map(|row| row.display.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
 
         assert!(text.contains("/goal"));
         assert!(text.contains("/mode"));
         assert!(text.contains("/resume"));
         assert!(text.contains("/copy"));
+    }
+
+    #[test]
+    fn test_welcome_screen_shows_tip_line() {
+        let mut lines = Vec::new();
+        let mut plain = Vec::new();
+        render_welcome(
+            &mut lines,
+            &mut plain,
+            80,
+            &Theme::default(),
+            "/goal <objective> runs a goal-directed task",
+        );
+        let text = plain
+            .iter()
+            .map(|row| row.display.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            text.contains("Tip: /goal <objective> runs a goal-directed task"),
+            "welcome screen must show the session tip: {text}"
+        );
     }
 
     #[test]
@@ -2651,7 +2769,7 @@ mod tests {
             &Theme::default(),
         );
 
-        let text = plain.join("\n");
+        let text = plain_text(&plain);
         // The header carries the semantic action, not the raw tool name.
         assert!(text.contains("Ran cargo test"));
         // No raw `command=` line, no Arguments/Result labels, no box glyphs.
@@ -2695,7 +2813,7 @@ mod tests {
             &Theme::default(),
         );
 
-        let text = plain.join("\n");
+        let text = plain_text(&plain);
         assert!(text.contains("cargo check"));
         assert!(!text.contains("hidden result"));
     }
@@ -2759,7 +2877,7 @@ mod tests {
             &Theme::default(),
         );
 
-        let text = plain.join("\n");
+        let text = plain_text(&plain);
         assert_eq!(text.matches("Exploring").count(), 1);
         // Unselected children render the cheap one-line input summary (no
         // result parsing, no detail sections).
@@ -2820,7 +2938,7 @@ mod tests {
             &Theme::default(),
         );
 
-        let text = plain.join("\n");
+        let text = plain_text(&plain);
         // Collapsed children show the cheap input summary but no result detail.
         assert!(text.contains("src/lib.rs"));
         assert!(text.contains("ToolCallInfo"));
@@ -2884,7 +3002,7 @@ mod tests {
             );
         }
         // No mid-word splits.
-        let body: String = plain[1..].join("\n");
+        let body: String = plain_text(&plain[1..]);
         assert!(body.contains("pipeline"), "word was split: {body:?}");
         assert!(body.contains("autonomously"), "word was split: {body:?}");
     }
@@ -3028,8 +3146,8 @@ mod tests {
 
         // 50 messages x 1 content line + 49 separators = 99 rows.
         assert_eq!(plain.len(), 99);
-        assert!(plain.iter().any(|line| line.contains("message 0")));
-        assert!(plain.iter().any(|line| line.contains("message 49")));
+        assert!(plain.iter().any(|line| line.display.contains("message 0")));
+        assert!(plain.iter().any(|line| line.display.contains("message 49")));
 
         let text = buffer_text(&terminal);
         assert!(
@@ -3264,7 +3382,7 @@ mod tests {
         assert_eq!(range.end, lines.len());
         assert_eq!(range.end, plain.len());
         assert!(
-            plain[range.start].contains("Ran cargo test"),
+            plain[range.start].display.contains("Ran cargo test"),
             "first row of the range must be the card header: {plain:?}"
         );
     }
@@ -3305,8 +3423,8 @@ mod tests {
         assert_eq!(lines.len(), 3, "unexpected layout: {plain:?}");
         // Each child gets its own range; the group header belongs to no child.
         assert_eq!(ranges, vec![(0, 1..2), (1, 2..3)]);
-        assert!(plain[1].contains("src/lib.rs"));
-        assert!(plain[2].contains("ToolCallInfo"));
+        assert!(plain[1].display.contains("src/lib.rs"));
+        assert!(plain[2].display.contains("ToolCallInfo"));
     }
 
     #[test]
@@ -3339,13 +3457,11 @@ mod tests {
         assert!(
             plain[1..range.start]
                 .iter()
-                .all(|row| !row.contains("ShellExec")),
+                .all(|row| !row.display.contains("ShellExec")),
             "no content row may leak into the card range: {plain:?}"
         );
         assert!(
-            plain[range.start..range.end]
-                .concat()
-                .contains("Ran cargo test"),
+            plain_text(&plain[range.start..range.end]).contains("Ran cargo test"),
             "the card header must open the range (wrapped rows reassemble): {plain:?}"
         );
         assert_eq!(range.end, lines.len());
@@ -3425,7 +3541,7 @@ mod tests {
         );
         assert_eq!(range.start, 3, "card start in absolute rows: {plain:?}");
         assert_eq!(range.end, plain.len());
-        assert!(plain[range.start].contains("Ran cargo test"));
+        assert!(plain[range.start].display.contains("Ran cargo test"));
 
         // A second render (cache hit) clears and refills identical rows.
         terminal

@@ -22,6 +22,7 @@ pub mod selection;
 pub mod state;
 pub mod terminal;
 pub mod theme;
+pub mod tips;
 pub mod tool_renderers;
 pub mod tracing_bridge;
 
@@ -177,8 +178,9 @@ pub struct TuiApp {
     /// transient failure (e.g. a missing config directory) can still be
     /// retried on the next picker open.
     prompt_template_cache: Option<Vec<y_service::UserPromptTemplate>>,
-    /// Cached plain-text lines from last chat render (for selection extraction).
-    chat_plain_lines: Vec<String>,
+    /// Cached selection rows from last chat render: display text plus
+    /// clipboard text per row (for selection mapping and extraction).
+    chat_plain_lines: Vec<selection::SelectionRow>,
     /// Cached tool-card row ranges from last chat render (for mouse hit-testing).
     chat_tool_rows: Vec<(std::ops::Range<usize>, ToolSelection)>,
     /// Per-message render cache for the chat panel (markdown/highlight/wrap).
@@ -1553,7 +1555,7 @@ impl TuiApp {
         if let Some(row) = self
             .chat_plain_lines
             .iter()
-            .position(|line| line.contains(needle.trim()))
+            .position(|line| line.display.contains(needle.trim()))
         {
             let target_from_bottom = self
                 .chat_plain_lines
@@ -4299,14 +4301,15 @@ impl TuiApp {
     /// Render all panels into their layout chunks.
     ///
     /// The chat panel reuses `render_cache` across frames and writes its
-    /// plain-text lines into `plain_lines` for selection extraction.
+    /// selection rows (display + copy text) into `plain_lines` for selection
+    /// mapping and extraction.
     fn render_panels(
         frame: &mut ratatui::Frame,
         chunks: &LayoutChunks,
         state: &AppState,
         textarea: &mut TextArea<'_>,
         render_cache: &mut ChatRenderCache,
-        plain_lines: &mut Vec<String>,
+        plain_lines: &mut Vec<selection::SelectionRow>,
         tool_rows: &mut Vec<(std::ops::Range<usize>, ToolSelection)>,
         keymap: &Keymap,
     ) {
@@ -4330,8 +4333,8 @@ impl TuiApp {
             &state.theme,
         );
 
-        // Status bar.
-        panels::status_bar::render(frame, chunks.status_bar, state);
+        // Status bar (contextual shortcut hints derive from the live keymap).
+        panels::status_bar::render(frame, chunks.status_bar, state, keymap);
 
         // Input area.
         panels::input::render(
@@ -4371,7 +4374,7 @@ impl TuiApp {
 
         // Convert display column -> character index using unicode widths.
         let char_idx = if let Some(line) = self.chat_plain_lines.get(row) {
-            display_col_to_char_idx(line, display_col)
+            display_col_to_char_idx(&line.display, display_col)
         } else {
             display_col
         };

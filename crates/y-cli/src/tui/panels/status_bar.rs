@@ -17,8 +17,9 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::tui::keys::{platform_shortcut_label, KeyAction, KeyContext, Keymap};
 use crate::tui::panels::chat::SPINNER_FRAMES;
-use crate::tui::state::AppState;
+use crate::tui::state::{AppState, InteractionMode};
 use crate::tui::theme::Theme;
 
 // ---------------------------------------------------------------------------
@@ -26,7 +27,10 @@ use crate::tui::theme::Theme;
 // ---------------------------------------------------------------------------
 
 /// Render the status bar into the given area using live data from `AppState`.
-pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
+///
+/// `keymap` drives the contextual shortcut hints in the right segment, so
+/// user keymap overrides are reflected in the displayed chords.
+pub fn render(frame: &mut Frame, area: Rect, state: &AppState, keymap: &Keymap) {
     let t = &state.theme;
     // Thin powerline separator between segments (one dim gray, no bg blocks);
     // ASCII fallback for terminals without Nerd Font glyphs.
@@ -118,14 +122,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     }
 
     // -- Right section --
-    let right_str = format!("/ commands  v{} ", state.version);
-    let right_len = UnicodeWidthStr::width(right_str.as_str());
-
-    // Compute available width for left section.
+    // Contextual shortcut hints (streaming also carries a rotating tip);
+    // degrades to shorter variants on narrow terminals.
     let total_width = area.width as usize;
     // Display width, not bytes: the bar holds multibyte chars (box-drawing,
     // em dash) that occupy a single cell but multiple bytes.
     let left_len: usize = left_spans.iter().map(Span::width).sum();
+    let right_spans = build_right_spans(state, keymap, t, total_width.saturating_sub(left_len));
+    let right_len: usize = right_spans.iter().map(Span::width).sum();
 
     // Fill gap between left and right.
     let gap = total_width.saturating_sub(left_len + right_len);
@@ -134,10 +138,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     if gap > 0 {
         spans.push(Span::styled(" ".repeat(gap), Style::default()));
     }
-    spans.push(Span::styled(
-        right_str,
-        Style::default().fg(t.status_version()),
-    ));
+    spans.extend(right_spans);
 
     // Truncate if too wide.
     let total_len: usize = spans.iter().map(Span::width).sum();
@@ -150,6 +151,124 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     // styles only patch foreground colors, so the band is uniform.
     let para = Paragraph::new(line).style(Style::default().bg(t.status_bar_bg()));
     frame.render_widget(para, area);
+}
+
+// ---------------------------------------------------------------------------
+// Right segment: contextual shortcut hints + rotating tip
+// ---------------------------------------------------------------------------
+
+/// Build the right-aligned segment: contextual shortcut hints for the current
+/// interaction context plus, while streaming, the rotating tip.
+///
+/// Candidates are tried longest-first; the first that fits `avail` columns
+/// (including a trailing margin space) wins, so narrow terminals drop the
+/// tip first, then secondary hints. Empty when nothing fits.
+fn build_right_spans(
+    state: &AppState,
+    keymap: &Keymap,
+    t: &Theme,
+    avail: usize,
+) -> Vec<Span<'static>> {
+    for (hint, tip) in right_candidates(state, keymap) {
+        let width = UnicodeWidthStr::width(hint.as_str())
+            + tip
+                .as_ref()
+                .map_or(0, |tip| UnicodeWidthStr::width(tip.as_str()) + 2);
+        if width + 1 > avail {
+            continue;
+        }
+        let mut spans = Vec::new();
+        if !hint.is_empty() {
+            spans.push(Span::styled(hint, Style::default().fg(t.status_version())));
+        }
+        if let Some(tip) = tip {
+            spans.push(Span::styled(tip, Style::default().fg(t.muted())));
+        }
+        spans.push(Span::styled(" ", Style::default()));
+        return spans;
+    }
+    Vec::new()
+}
+
+/// Candidate right segments `(hint, optional "Tip: ..." text)`, longest first.
+fn right_candidates(state: &AppState, keymap: &Keymap) -> Vec<(String, Option<String>)> {
+    if state.is_streaming {
+        let cancel = chord_hint(
+            keymap,
+            KeyContext::Streaming,
+            KeyAction::CancelStreaming,
+            "cancel",
+        );
+        let steer = chord_hint(
+            keymap,
+            KeyContext::Streaming,
+            KeyAction::QueueSteerNext,
+            "steer",
+        );
+        let hints = join_hints(&[cancel.clone(), steer]);
+        let tip = format!(
+            "Tip: {}",
+            crate::tui::tips::tip_for_tick(state.tick_counter)
+        );
+        let mut candidates = Vec::new();
+        if !hints.is_empty() {
+            candidates.push((hints.clone(), Some(tip)));
+            candidates.push((hints, None));
+        }
+        if let Some(cancel) = cancel {
+            candidates.push((cancel, None));
+        }
+        return candidates;
+    }
+    let segment = match state.mode {
+        InteractionMode::Shell => join_hints(&[
+            chord_hint(keymap, KeyContext::Shell, KeyAction::Submit, "run"),
+            chord_hint(
+                keymap,
+                KeyContext::Shell,
+                KeyAction::ReturnToNormal,
+                "normal",
+            ),
+        ]),
+        InteractionMode::Command => join_hints(&[
+            chord_hint(
+                keymap,
+                KeyContext::Command,
+                KeyAction::CompleteCommand,
+                "complete",
+            ),
+            chord_hint(
+                keymap,
+                KeyContext::Command,
+                KeyAction::ReturnToNormal,
+                "close",
+            ),
+        ]),
+        _ => format!("/ commands  v{}", state.version),
+    };
+    vec![(segment, None)]
+}
+
+/// `"<chord> <label>"` for an action in a context, honoring keymap overrides
+/// and the host platform's modifier glyphs; `None` when the action is unbound.
+fn chord_hint(
+    keymap: &Keymap,
+    context: KeyContext,
+    action: KeyAction,
+    label: &str,
+) -> Option<String> {
+    let chord = keymap.primary_shortcut_in_context(context, action)?;
+    Some(format!("{} {label}", platform_shortcut_label(&chord)))
+}
+
+/// Join the bound hint parts with a double space, skipping unbound actions.
+fn join_hints(parts: &[Option<String>]) -> String {
+    parts
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 fn build_prompt_status_span(state: &AppState, t: &Theme) -> Span<'static> {
@@ -441,6 +560,122 @@ fn format_token_count(count: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::keys::Keymap;
+    use crate::tui::state::InteractionMode;
+
+    fn right_text(state: &AppState, keymap: &Keymap, avail: usize) -> String {
+        build_right_spans(state, keymap, &state.theme, avail)
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    // T-TUI-STATUS-HINT-STREAMING: while streaming, the right segment shows
+    // the cancel/steer chords plus the rotating tip.
+    #[test]
+    fn test_right_spans_streaming_show_cancel_steer_and_tip() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        state.tick_counter = 0;
+        let keymap = Keymap::default();
+
+        let text = right_text(&state, &keymap, 120);
+        assert!(text.contains("Esc cancel"), "cancel hint: {text}");
+        assert!(text.contains("Ctrl+S steer"), "steer hint: {text}");
+        assert!(
+            text.contains(&format!("Tip: {}", crate::tui::tips::tip_for_tick(0))),
+            "rotating tip: {text}"
+        );
+    }
+
+    // T-TUI-STATUS-HINT-ROTATE: the streaming tip follows the tick counter.
+    #[test]
+    fn test_right_spans_streaming_tip_rotates_with_ticks() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        let keymap = Keymap::default();
+
+        state.tick_counter = 0;
+        let first = right_text(&state, &keymap, 120);
+        state.tick_counter = crate::tui::tips::TIP_ROTATE_TICKS;
+        let second = right_text(&state, &keymap, 120);
+        assert_ne!(first, second, "tip must advance after one rotation");
+    }
+
+    // T-TUI-STATUS-HINT-NARROW: on narrow bars the tip is dropped first,
+    // then the steer hint, keeping the cancel hint as long as possible.
+    #[test]
+    fn test_right_spans_streaming_narrow_drops_tip_first() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        let keymap = Keymap::default();
+
+        // Exactly enough room for both hints (plus trailing space): no tip.
+        let hints = "Esc cancel  Ctrl+S steer";
+        let text = right_text(&state, &keymap, UnicodeWidthStr::width(hints) + 1);
+        assert!(text.contains("Ctrl+S steer"), "hints kept: {text}");
+        assert!(!text.contains("Tip:"), "tip dropped: {text}");
+
+        // Only room for the cancel hint.
+        let cancel = "Esc cancel";
+        let text = right_text(&state, &keymap, UnicodeWidthStr::width(cancel) + 1);
+        assert!(text.contains("Esc cancel"), "cancel kept: {text}");
+        assert!(!text.contains("steer"), "steer dropped: {text}");
+
+        // No room at all.
+        let text = right_text(&state, &keymap, 3);
+        assert!(text.is_empty(), "right segment dropped: {text:?}");
+    }
+
+    // T-TUI-STATUS-HINT-SHELL: shell mode advertises run/exit chords.
+    #[test]
+    fn test_right_spans_shell_mode() {
+        let mut state = AppState::new();
+        state.mode = InteractionMode::Shell;
+        let keymap = Keymap::default();
+
+        let text = right_text(&state, &keymap, 120);
+        assert!(text.contains("Enter run"), "run hint: {text}");
+        assert!(text.contains("Esc normal"), "exit hint: {text}");
+    }
+
+    // T-TUI-STATUS-HINT-COMMAND: command mode advertises completion chords.
+    #[test]
+    fn test_right_spans_command_mode() {
+        let mut state = AppState::new();
+        state.mode = InteractionMode::Command;
+        let keymap = Keymap::default();
+
+        let text = right_text(&state, &keymap, 120);
+        assert!(text.contains("Tab complete"), "complete hint: {text}");
+        assert!(text.contains("Esc close"), "close hint: {text}");
+    }
+
+    // T-TUI-STATUS-HINT-DEFAULT: idle normal mode keeps the legacy segment.
+    #[test]
+    fn test_right_spans_default_shows_commands_and_version() {
+        let state = AppState::new();
+        let keymap = Keymap::default();
+
+        let text = right_text(&state, &keymap, 120);
+        assert!(text.contains("/ commands"), "commands hint: {text}");
+        assert!(text.contains(&state.version), "version kept: {text}");
+    }
+
+    // T-TUI-STATUS-HINT-KEYMAP: hints derive from the live keymap, so user
+    // overrides change the displayed chord.
+    #[test]
+    fn test_right_spans_respects_keymap_override() {
+        let mut state = AppState::new();
+        state.is_streaming = true;
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("cancel_streaming".to_string(), vec!["ctrl+x".to_string()]);
+        let keymap = Keymap::with_overrides(overrides).unwrap();
+
+        let text = right_text(&state, &keymap, 120);
+        assert!(text.contains("Ctrl+X cancel"), "override chord: {text}");
+        assert!(!text.contains("Esc cancel"), "default chord gone: {text}");
+    }
 
     #[test]
     fn test_format_token_count_small() {
@@ -459,7 +694,7 @@ mod tests {
         let backend = ratatui::backend::TestBackend::new(60, 3);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render(frame, frame.area(), &state))
+            .draw(|frame| render(frame, frame.area(), &state, &Keymap::default()))
             .unwrap();
 
         let buffer = terminal.backend().buffer();

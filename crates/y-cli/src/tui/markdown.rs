@@ -87,6 +87,10 @@ pub struct RenderedLine {
     /// Decorative spans — the code-block line-number gutter, the block
     /// indent, and background band padding — are excluded.
     pub copy_text: String,
+    /// Leading display chars excluded from `copy_text` (the code-block
+    /// gutter width). Selection coordinates are display-based; extraction
+    /// subtracts this offset to land in copy space.
+    pub copy_offset: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -159,7 +163,7 @@ struct MdRenderer {
     lines: Vec<Line<'static>>,
     /// Per-line copy-text overrides, parallel to `lines`. `None` means the
     /// copy text is the concatenation of the line's span contents.
-    copy_overrides: Vec<Option<String>>,
+    copy_overrides: Vec<Option<(String, usize)>>,
     /// Current line being built (accumulated spans).
     current_spans: Vec<Span<'static>>,
     /// Current column position for word wrapping.
@@ -556,9 +560,10 @@ impl MdRenderer {
     }
 
     /// Push a finished display line with an explicit copy text that excludes
-    /// decorative spans (gutter, indent, background padding).
-    fn push_line_with_copy(&mut self, line: Line<'static>, copy_text: String) {
-        self.copy_overrides.push(Some(copy_text));
+    /// decorative spans (gutter, indent, background padding). `copy_offset`
+    /// is the number of leading display chars those decorations occupy.
+    fn push_line_with_copy(&mut self, line: Line<'static>, copy_text: String, copy_offset: usize) {
+        self.copy_overrides.push(Some((copy_text, copy_offset)));
         self.lines.push(line);
     }
 
@@ -614,6 +619,7 @@ impl MdRenderer {
 
         for (index, line_spans) in highlighted.iter().enumerate() {
             let gutter = format!("  {:>number_width$} │ ", index + 1);
+            let copy_offset = gutter.chars().count();
             let code_width: usize = line_spans.iter().map(Span::width).sum();
             let mut spans = vec![Span::styled(gutter, gutter_style)];
             spans.extend(line_spans.iter().cloned());
@@ -624,7 +630,7 @@ impl MdRenderer {
                 .copied()
                 .unwrap_or_default()
                 .to_string();
-            self.push_line_with_copy(Line::from(spans), copy_text);
+            self.push_line_with_copy(Line::from(spans), copy_text, copy_offset);
         }
     }
 
@@ -717,9 +723,14 @@ impl MdRenderer {
             .into_iter()
             .zip(self.copy_overrides)
             .map(|(line, copy_override)| {
-                let copy_text = copy_override
-                    .unwrap_or_else(|| line.spans.iter().map(|s| s.content.as_ref()).collect());
-                RenderedLine { line, copy_text }
+                let (copy_text, copy_offset) = copy_override.unwrap_or_else(|| {
+                    (line.spans.iter().map(|s| s.content.as_ref()).collect(), 0)
+                });
+                RenderedLine {
+                    line,
+                    copy_text,
+                    copy_offset,
+                }
             })
             .collect()
     }
@@ -894,6 +905,36 @@ mod tests {
                 "copy text must not contain the gutter separator: {:?}",
                 line.copy_text
             );
+        }
+
+        // The offset lets selection extraction skip the display gutter:
+        // display char at `copy_offset` is the first char of the copy text.
+        let code_line = lines
+            .iter()
+            .find(|l| l.copy_text == "fn main() {}")
+            .expect("code line present");
+        assert!(code_line.copy_offset > 0);
+        let display: String = code_line
+            .line
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(
+            display
+                .chars()
+                .skip(code_line.copy_offset)
+                .take(2)
+                .collect::<String>(),
+            "fn"
+        );
+        // Non-code lines carry no decorative prefix.
+        for line in lines
+            .iter()
+            .filter(|l| l.copy_offset == 0 && !l.copy_text.is_empty())
+        {
+            let display: String = line.line.spans.iter().map(|s| s.content.as_ref()).collect();
+            assert!(display.starts_with(line.copy_text.as_str()));
         }
     }
 

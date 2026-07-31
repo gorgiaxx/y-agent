@@ -711,7 +711,15 @@ impl Keymap {
         state: &AppState,
         composer_empty: bool,
     ) -> KeyAction {
-        if key.kind != KeyEventKind::Press {
+        // Only `Release` events are filtered out. `Repeat` events — emitted by
+        // terminals using the Kitty keyboard protocol (REPORT_EVENT_TYPES) when
+        // a key is held down — must dispatch like `Press` so that long-press
+        // cursor movement in the composer and navigation in pickers/overlays
+        // works. On terminals without event-type reporting, crossterm reports
+        // every auto-repeat as `Press`, so this branch is a no-op there.
+        // Consuming `Release` prevents a single tap from acting twice on hosts
+        // that emit both a press and a release for one keystroke.
+        if key.kind == KeyEventKind::Release {
             return KeyAction::Consumed;
         }
         let chord = KeyChord::from_event(key);
@@ -1464,36 +1472,71 @@ mod tests {
         assert_eq!(action, KeyAction::InputPassthrough);
     }
 
-    // Release/Repeat events must not dispatch actions, otherwise platforms
-    // that emit them (e.g. Windows) would handle one keystroke twice.
+    // Release events must not dispatch actions, otherwise hosts that emit both
+    // a press and a release for one tap would handle the keystroke twice.
     #[test]
-    fn test_non_press_key_events_are_consumed() {
-        for kind in [KeyEventKind::Release, KeyEventKind::Repeat] {
-            let state = AppState::new();
-            let quit = KeyEvent {
-                code: KeyCode::Char('q'),
-                modifiers: KeyModifiers::CONTROL,
-                kind,
-                state: KeyEventState::NONE,
-            };
-            assert_eq!(
-                dispatch(quit, &state),
-                KeyAction::Consumed,
-                "{kind:?} events must not trigger actions"
-            );
+    fn test_release_key_events_are_consumed() {
+        let state = AppState::new();
+        let quit = KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        };
+        assert_eq!(
+            dispatch(quit, &state),
+            KeyAction::Consumed,
+            "Release events must not trigger actions"
+        );
 
-            let submit = KeyEvent {
-                code: KeyCode::Enter,
-                modifiers: KeyModifiers::NONE,
-                kind,
-                state: KeyEventState::NONE,
-            };
-            assert_eq!(
-                dispatch(submit, &state),
-                KeyAction::Consumed,
-                "{kind:?} events must not trigger actions"
-            );
-        }
+        let submit = KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        };
+        assert_eq!(
+            dispatch(submit, &state),
+            KeyAction::Consumed,
+            "Release events must not trigger actions"
+        );
+    }
+
+    // Repeat events — emitted by Kitty-protocol terminals when a key is held —
+    // must dispatch the same action as the initial Press, so long-press cursor
+    // movement in the composer and list navigation in pickers/overlays works.
+    // On terminals without event-type reporting, crossterm reports each
+    // auto-repeat as a Press, so this matches existing behavior there.
+    #[test]
+    fn test_repeat_key_events_dispatch_like_press() {
+        let state = AppState::new();
+        let quit = KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Repeat,
+            state: KeyEventState::NONE,
+        };
+        assert_eq!(
+            dispatch(quit, &state),
+            KeyAction::Quit,
+            "Repeat Ctrl+Q must quit, mirroring the initial Press"
+        );
+
+        // Holding Up in the chat panel scrolls, just like tapping it.
+        let mut state = AppState::new();
+        state.mode = InteractionMode::Normal;
+        state.focus = PanelFocus::Chat;
+        let up = KeyEvent {
+            code: KeyCode::Up,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Repeat,
+            state: KeyEventState::NONE,
+        };
+        assert_eq!(
+            dispatch(up, &state),
+            KeyAction::ScrollUp,
+            "Repeat Up must scroll, mirroring the initial Press"
+        );
     }
 
     // T-TUI-03-07: Escape returns to normal from command mode.

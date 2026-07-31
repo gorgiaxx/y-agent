@@ -13,6 +13,7 @@ pub enum ToolKind {
     Edit,
     Web,
     Task,
+    AskUser,
     Generic,
 }
 
@@ -158,6 +159,7 @@ fn classify_tool(name: &str) -> ToolKind {
         "glob" => return ToolKind::List,
         "webfetch" | "browser" => return ToolKind::Web,
         "task" => return ToolKind::Task,
+        "askuser" => return ToolKind::AskUser,
         _ => {}
     }
     let name = name.to_ascii_lowercase();
@@ -191,6 +193,7 @@ fn tool_verb(kind: ToolKind, name: &str) -> &'static str {
         ToolKind::Web if name.to_ascii_lowercase().contains("search") => "Searched web",
         ToolKind::Web => "Fetched",
         ToolKind::Task => "Delegated",
+        ToolKind::AskUser => "Asked",
         ToolKind::Generic => "Called",
     }
 }
@@ -198,6 +201,7 @@ fn tool_verb(kind: ToolKind, name: &str) -> &'static str {
 fn tool_summary(kind: ToolKind, input: Option<&Value>) -> String {
     match kind {
         ToolKind::Read => return read_summary(input),
+        ToolKind::AskUser => return ask_user_summary(input),
         ToolKind::Generic => return input.map_or_else(String::new, inline_args_summary),
         _ => {}
     }
@@ -209,7 +213,7 @@ fn tool_summary(kind: ToolKind, input: Option<&Value>) -> String {
         ToolKind::Search => &["query", "pattern", "search", "needle"],
         ToolKind::Web => &["url", "query", "href"],
         ToolKind::Task => &["description", "prompt", "task", "agent_name"],
-        ToolKind::Read | ToolKind::Generic => unreachable!(),
+        ToolKind::Read | ToolKind::AskUser | ToolKind::Generic => unreachable!(),
     };
     input
         .and_then(|value| first_string(value, keys))
@@ -236,6 +240,19 @@ fn read_summary(input: Option<&Value>) -> String {
         (Some(start), None) if start > 0 => format!("{path}:{}-", start + 1),
         _ => path,
     }
+}
+
+/// First question's text, so collapsed `AskUser` rows read like the prompt the
+/// operator actually saw.
+fn ask_user_summary(input: Option<&Value>) -> String {
+    input
+        .and_then(|value| value.get("questions"))
+        .and_then(Value::as_array)
+        .and_then(|questions| questions.first())
+        .and_then(|question| question.get("question"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// Compact `key=value` one-liner for tools without a dedicated summary field,
@@ -298,6 +315,27 @@ fn tool_meta(kind: ToolKind, input: Option<&Value>, result: Option<&Value>) -> V
         }
         ToolKind::Search => meta.extend(grep_meta(result)),
         ToolKind::List => meta.extend(glob_meta(result)),
+        ToolKind::AskUser => {
+            if let Some(count) = input
+                .and_then(|value| value.get("questions"))
+                .and_then(Value::as_array)
+                .map(Vec::len)
+            {
+                meta.push(format!(
+                    "{count} question{}",
+                    if count == 1 { "" } else { "s" }
+                ));
+            }
+            // Surface non-answer outcomes (declined/timeout) in the header.
+            if let Some(status) = result
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str)
+            {
+                if status != "answered" {
+                    meta.push(status.to_string());
+                }
+            }
+        }
         _ => {}
     }
     meta
@@ -382,6 +420,7 @@ fn argument_preview_lines(
             ToolKind::Search => text_field_lines(value, &["query", "pattern"], width),
             ToolKind::List => text_field_lines(value, &["path", "directory"], width),
             ToolKind::Task => text_field_lines(value, &["description", "prompt"], width),
+            ToolKind::AskUser => ask_user_argument_lines(value, width),
             ToolKind::Generic => None,
         };
         if let Some(lines) = extracted {
@@ -389,6 +428,46 @@ fn argument_preview_lines(
         }
     }
     preview_lines(raw, parsed, width)
+}
+
+/// `AskUser` args render as the numbered question list with lettered options,
+/// mirroring what the overlay asked the operator.
+fn ask_user_argument_lines(value: &Value, width: usize) -> Option<Vec<ToolLine>> {
+    let questions = value.get("questions")?.as_array()?;
+    let mut lines = Vec::new();
+    for (index, question) in questions.iter().enumerate() {
+        let text = question
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("(question)");
+        let multi = question
+            .get("multi_select")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let header = format!(
+            "{}. {}{}",
+            index + 1,
+            text,
+            if multi { " (select multiple)" } else { "" }
+        );
+        lines.extend(text_lines(&header, width).into_iter().map(ToolLine::plain));
+        if let Some(options) = question.get("options").and_then(Value::as_array) {
+            for (option_index, option) in options.iter().enumerate() {
+                let label = option.as_str().unwrap_or("?");
+                let letter = (b'A' + u8::try_from(option_index).unwrap_or(0)) as char;
+                lines.extend(
+                    text_lines(&format!("   {letter}) {label}"), width)
+                        .into_iter()
+                        .map(ToolLine::dim),
+                );
+            }
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines)
+    }
 }
 
 /// Shell arguments render as the operator typed them: `$ command`.
@@ -483,6 +562,7 @@ fn result_preview_lines(
             ToolKind::Web => text_field_lines(value, &["content", "text"], width),
             ToolKind::Search => grep_result_lines(value, width),
             ToolKind::List => glob_result_lines(value, width),
+            ToolKind::AskUser => ask_user_result_lines(value, width),
             _ => None,
         };
         if let Some(lines) = extracted {
@@ -494,6 +574,33 @@ fn result_preview_lines(
         return toned_diff_lines(raw, width);
     }
     preview_lines(raw, parsed, width)
+}
+
+/// `AskUser` results show each question with the answer the operator picked;
+/// declined, timed-out, or bot-fallback outcomes show the status message.
+fn ask_user_result_lines(value: &Value, width: usize) -> Option<Vec<ToolLine>> {
+    let object = value.as_object()?;
+    let status = object.get("status").and_then(Value::as_str)?;
+    let mut lines = Vec::new();
+    if status == "answered" {
+        if let Some(answers) = object.get("answers").and_then(Value::as_object) {
+            for (question, answer) in answers {
+                let answer_text = answer.as_str().unwrap_or_default();
+                lines.extend(
+                    text_lines(&format!("{question} -> {answer_text}"), width)
+                        .into_iter()
+                        .map(ToolLine::plain),
+                );
+            }
+        }
+    } else if let Some(message) = object.get("message").and_then(Value::as_str) {
+        lines.extend(text_lines(message, width).into_iter().map(ToolLine::dim));
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines)
+    }
 }
 
 /// Shell results surface stdout first, then stderr on warning-toned lines.
@@ -935,6 +1042,65 @@ mod tests {
             "count=3, path=src/main.rs, verbose=true"
         );
         assert!(!presentation.summary.contains('{'));
+    }
+
+    #[test]
+    fn test_ask_user_renderer_shows_questions_and_answers_not_json() {
+        let presentation = present_tool(
+            &tool(
+                "AskUser",
+                r#"{"questions":[{"question":"Which library?","options":["chrono","time"]},{"question":"Pick features?","options":["a","b"],"multi_select":true}]}"#,
+                r#"{"status":"answered","answers":{"Which library?":"chrono","Pick features?":"a, b"}}"#,
+            ),
+            80,
+        );
+
+        assert_eq!(presentation.kind, ToolKind::AskUser);
+        assert_eq!(presentation.verb, "Asked");
+        assert_eq!(presentation.summary, "Which library?");
+        assert_eq!(presentation.meta, vec!["2 questions".to_string()]);
+        assert_eq!(
+            texts(&presentation.argument_lines),
+            vec![
+                "1. Which library?",
+                "   A) chrono",
+                "   B) time",
+                "2. Pick features? (select multiple)",
+                "   A) a",
+                "   B) b",
+            ]
+        );
+        assert!(presentation
+            .argument_lines
+            .iter()
+            .all(|line| !line.text.contains('{')));
+        assert_eq!(
+            texts(&presentation.result_lines),
+            vec!["Pick features? -> a, b", "Which library? -> chrono"]
+        );
+    }
+
+    #[test]
+    fn test_ask_user_renderer_surfaces_declined_status() {
+        let presentation = present_tool(
+            &tool(
+                "AskUser",
+                r#"{"questions":[{"question":"Proceed?","options":["yes","no"]}]}"#,
+                r#"{"status":"declined","message":"The user dismissed the question without answering."}"#,
+            ),
+            80,
+        );
+
+        assert_eq!(presentation.summary, "Proceed?");
+        assert_eq!(
+            presentation.meta,
+            vec!["1 question".to_string(), "declined".to_string()]
+        );
+        assert_eq!(
+            texts(&presentation.result_lines),
+            vec!["The user dismissed the question without answering."]
+        );
+        assert_eq!(presentation.result_lines[0].tone, ToolTone::Dim);
     }
 
     #[test]

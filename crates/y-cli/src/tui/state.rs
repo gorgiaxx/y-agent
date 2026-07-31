@@ -10,7 +10,7 @@ use std::hash::{Hash, Hasher};
 use chrono::{DateTime, Utc};
 use ratatui::text::Line;
 
-use crate::tui::selection::TextSelection;
+use crate::tui::selection::{SelectionRow, TextSelection};
 use crate::tui::theme::Theme;
 
 // ---------------------------------------------------------------------------
@@ -343,8 +343,9 @@ pub struct CachedMessageRender {
     pub tick: u64,
     /// Wrapped, styled lines ready for the chat `Paragraph`.
     pub lines: Vec<Line<'static>>,
-    /// Plain-text mirror of `lines`, aligned by row, for selection extraction.
-    pub plain: Vec<String>,
+    /// Selection mirror of `lines`, aligned by row: each entry carries the
+    /// display text plus the clipboard text for extraction.
+    pub plain: Vec<SelectionRow>,
     /// Tool card line spans within `lines` (wrapped coordinates), as
     /// `(tool_index, line_range)` pairs. Used for mouse hit-testing: the chat
     /// panel offsets them to absolute transcript rows each frame.
@@ -587,6 +588,9 @@ pub struct AppState {
     /// Whether the terminal is expected to have Nerd Font glyphs (powerline
     /// separators); falls back to ASCII separators otherwise.
     pub powerline_glyphs: bool,
+    /// Tip shown on the welcome screen; picked once per session so it does
+    /// not flicker between frames.
+    pub welcome_tip: &'static str,
 }
 
 impl Default for AppState {
@@ -631,6 +635,12 @@ impl Default for AppState {
                 .unwrap_or_default(),
             git_status: None,
             powerline_glyphs: crate::tui::terminal::nerd_font_available(),
+            welcome_tip: crate::tui::tips::random_tip(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| u64::from(duration.subsec_nanos()))
+                    .unwrap_or(0),
+            ),
         }
     }
 }
@@ -1037,6 +1047,18 @@ mod tests {
         assert_eq!(template.template_id(), Some("daily-driver"));
         assert_eq!(PromptTemplateStatus::Custom.label(), "prompt:custom");
         assert_eq!(PromptTemplateStatus::Default.template_id(), None);
+    }
+
+    #[test]
+    fn test_welcome_tip_is_a_builtin_tip() {
+        let state = AppState::new();
+        assert!(
+            crate::tui::tips::TIPS
+                .iter()
+                .any(|tip| tip.text == state.welcome_tip),
+            "welcome tip must come from the built-in tip list: {:?}",
+            state.welcome_tip
+        );
     }
 
     // T-TUI-01-02: set_focus() transitions update focus field.

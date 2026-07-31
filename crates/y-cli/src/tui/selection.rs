@@ -78,40 +78,87 @@ impl TextSelection {
     }
 }
 
-/// Extract selected text from rendered chat lines.
+/// One rendered chat row's text mirrors, bridging selection coordinates and
+/// clipboard text.
 ///
-/// `lines` should be the flat list of content-line strings (without ANSI
-/// styling) that the chat panel has rendered. The selection coordinates
-/// are indices into this list.
-pub fn extract_text(lines: &[String], selection: &TextSelection) -> String {
-    if selection.is_empty() || lines.is_empty() {
+/// Selection coordinates are character indices into `display` — exactly what
+/// is on screen, decorations included. `copy` is what extraction returns;
+/// decorative spans such as the code-block gutter and background padding are
+/// excluded from it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SelectionRow {
+    /// Concatenated span contents of the rendered row (what is on screen).
+    pub display: String,
+    /// Clipboard text of the raw, unwrapped source line.
+    pub copy: String,
+    /// Display char index within the raw source line at which this row
+    /// starts; nonzero only for wrapped continuation rows.
+    pub display_start: usize,
+    /// Leading display chars of the raw source line excluded from `copy`
+    /// (e.g. the code-block gutter width).
+    pub copy_offset: usize,
+}
+
+impl SelectionRow {
+    /// A row whose clipboard text is exactly what is on screen.
+    pub fn simple(text: String) -> Self {
+        Self {
+            display: text.clone(),
+            copy: text,
+            display_start: 0,
+            copy_offset: 0,
+        }
+    }
+}
+
+impl From<String> for SelectionRow {
+    fn from(text: String) -> Self {
+        Self::simple(text)
+    }
+}
+
+/// Extract selected text from rendered chat rows.
+///
+/// The selection coordinates are char indices into each row's `display` text;
+/// extraction maps them back into `copy` space so decorations (code gutter,
+/// band padding) never reach the clipboard.
+pub fn extract_text(rows: &[SelectionRow], selection: &TextSelection) -> String {
+    if selection.is_empty() || rows.is_empty() {
         return String::new();
     }
 
     let ((sr, sc), (er, ec)) = selection.sorted();
     let mut result = Vec::new();
 
-    let end_bound = er.min(lines.len().saturating_sub(1));
-    for (row, line) in lines.iter().enumerate().take(end_bound + 1).skip(sr) {
-        let chars: Vec<char> = line.chars().collect();
+    let end_bound = er.min(rows.len().saturating_sub(1));
+    for (row, line) in rows.iter().enumerate().take(end_bound + 1).skip(sr) {
+        let display_len = line.display.chars().count();
         let start_col = if row == sr { sc } else { 0 };
         let end_col = if row == er {
-            ec.min(chars.len())
+            ec.min(display_len)
         } else {
-            chars.len()
+            display_len
         };
 
-        if start_col >= chars.len() {
-            // Skip rows whose selection start lies beyond the line's content
-            // instead of emitting a spurious blank line. Genuinely empty
-            // in-range lines (start_col == 0) are kept so interior blank
-            // lines survive extraction.
-            if start_col > 0 {
-                continue;
-            }
+        // Map the row-relative display range onto the raw source line, then
+        // drop the decorative prefix to land in copy space.
+        let copy_chars: Vec<char> = line.copy.chars().collect();
+        let copy_start = (line.display_start + start_col).saturating_sub(line.copy_offset);
+        let copy_end = (line.display_start + end_col)
+            .saturating_sub(line.copy_offset)
+            .min(copy_chars.len());
+
+        if copy_start >= copy_chars.len() && start_col > 0 {
+            // The selection starts beyond the row's copyable content (e.g. in
+            // the background padding); skip the row instead of emitting a
+            // spurious blank line. Rows covered from their left edge fall
+            // through so interior blank lines survive extraction.
+            continue;
         }
 
-        let selected: String = chars[start_col..end_col.min(chars.len())].iter().collect();
+        let selected: String = copy_chars[copy_start..copy_end.max(copy_start)]
+            .iter()
+            .collect();
         result.push(selected.trim_end().to_string());
     }
 
@@ -200,7 +247,10 @@ mod tests {
 
     #[test]
     fn test_extract_text_single_line() {
-        let lines = vec!["Hello, world!".to_string(), "Second line".to_string()];
+        let lines = vec![
+            SelectionRow::simple("Hello, world!".to_string()),
+            SelectionRow::simple("Second line".to_string()),
+        ];
         let sel = TextSelection {
             start: (0, 7),
             end: (0, 12),
@@ -212,10 +262,10 @@ mod tests {
     #[test]
     fn test_extract_text_multi_line() {
         let lines = vec![
-            "Line zero".to_string(),
-            "First line here".to_string(),
-            "Second line here".to_string(),
-            "Third line here".to_string(),
+            SelectionRow::simple("Line zero".to_string()),
+            SelectionRow::simple("First line here".to_string()),
+            SelectionRow::simple("Second line here".to_string()),
+            SelectionRow::simple("Third line here".to_string()),
         ];
         let sel = TextSelection {
             start: (1, 6),
@@ -228,7 +278,10 @@ mod tests {
 
     #[test]
     fn test_extract_text_skips_out_of_range_start_row() {
-        let lines = vec!["short".to_string(), "Second line here".to_string()];
+        let lines = vec![
+            SelectionRow::simple("short".to_string()),
+            SelectionRow::simple("Second line here".to_string()),
+        ];
         let sel = TextSelection {
             start: (0, 10),
             end: (1, 6),
@@ -241,7 +294,11 @@ mod tests {
 
     #[test]
     fn test_extract_text_preserves_interior_blank_lines() {
-        let lines = vec!["aaa".to_string(), String::new(), "ccc".to_string()];
+        let lines = vec![
+            SelectionRow::simple("aaa".to_string()),
+            SelectionRow::default(),
+            SelectionRow::simple("ccc".to_string()),
+        ];
         let sel = TextSelection {
             start: (0, 0),
             end: (2, 3),
@@ -252,9 +309,63 @@ mod tests {
 
     #[test]
     fn test_extract_text_empty_selection() {
-        let lines = vec!["Hello".to_string()];
+        let lines = vec![SelectionRow::simple("Hello".to_string())];
         let sel = TextSelection::default();
         assert_eq!(extract_text(&lines, &sel), "");
+    }
+
+    /// Code-block rows display a gutter (`  1 │ `) that the clipboard must
+    /// never include; display coordinates map back onto the raw code line.
+    #[test]
+    fn test_extract_text_code_gutter_stays_out_of_clipboard() {
+        let row = SelectionRow {
+            display: "  1 │ fn main()".to_string(),
+            copy: "fn main()".to_string(),
+            display_start: 0,
+            copy_offset: 6,
+        };
+
+        // Full-row drag (from the gutter to past the line end).
+        let full = TextSelection {
+            start: (0, 0),
+            end: (0, 15),
+            ..Default::default()
+        };
+        assert_eq!(extract_text(&[row.clone()], &full), "fn main()");
+
+        // Drag starting on the code itself.
+        let code_only = TextSelection {
+            start: (0, 6),
+            end: (0, 8),
+            ..Default::default()
+        };
+        assert_eq!(extract_text(&[row], &code_only), "fn");
+    }
+
+    /// A wrapped continuation row slices the raw copy text by its display
+    /// start, after subtracting the decorative prefix.
+    #[test]
+    fn test_extract_text_wrapped_code_continuation_row() {
+        let rows = vec![
+            SelectionRow {
+                display: "  1 │ fn ma".to_string(),
+                copy: "fn main() {}".to_string(),
+                display_start: 0,
+                copy_offset: 6,
+            },
+            SelectionRow {
+                display: "in() {}".to_string(),
+                copy: "fn main() {}".to_string(),
+                display_start: 11,
+                copy_offset: 6,
+            },
+        ];
+        let sel = TextSelection {
+            start: (0, 0),
+            end: (1, 6),
+            ..Default::default()
+        };
+        assert_eq!(extract_text(&rows, &sel), "fn ma\nin() {");
     }
 
     #[test]
