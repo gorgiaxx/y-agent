@@ -3,7 +3,7 @@
 //!
 //! [`YAgentConfig`] wraps the domain sub-configs (also found in
 //! [`ServiceConfig`](crate::config::ServiceConfig)) plus presentation-only
-//! fields (`log_level`, `output_format`, `log_dir`, `log_retention_days`).
+//! fields (`log_level`, `output_format`, `log_dir`, `log_retention_days`, `tui`).
 //!
 //! [`ConfigLoader`] implements the 5-layer merge hierarchy:
 //! CLI args > env vars > user config > project config > defaults.
@@ -23,6 +23,25 @@ use crate::config_types::{
     RuntimeConfig, SessionConfig, StorageConfig, ToolRegistryConfig,
 };
 use crate::workspace::{WorkspaceService, WorkspaceTrustStatus};
+
+/// Presentation settings for the terminal user interface.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(default)]
+pub struct TuiConfig {
+    /// Copy selected composer or transcript text when a mouse drag ends.
+    pub copy_on_select: bool,
+    /// Built-in color-scheme name or custom file stem under `themes/`.
+    pub theme: String,
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            copy_on_select: true,
+            theme: "default".to_string(),
+        }
+    }
+}
 
 /// Combined struct for deserializing `session.toml` which contains both
 /// session configuration and a nested `[pruning]` section.
@@ -75,6 +94,9 @@ pub struct YAgentConfig {
     /// Context pruning configuration (strategies, thresholds).
     pub pruning: PruningConfig,
 
+    /// Terminal user interface preferences.
+    pub tui: TuiConfig,
+
     /// Log level (trace, debug, info, warn, error).
     pub log_level: String,
 
@@ -101,6 +123,7 @@ impl Default for YAgentConfig {
             browser: BrowserConfig::default(),
             knowledge: KnowledgeConfig::default(),
             pruning: PruningConfig::default(),
+            tui: TuiConfig::default(),
             log_level: "info".to_string(),
             output_format: "plain".to_string(),
             log_dir: None,
@@ -121,6 +144,7 @@ const CONFIG_FILE_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "tui",
 ];
 
 /// Provenance and trust result for one project configuration source.
@@ -364,6 +388,7 @@ impl ConfigLoader {
     /// - `guardrails.toml`-> `config.guardrails`
     /// - `browser.toml`   -> `config.browser`
     /// - `knowledge.toml` -> `config.knowledge`
+    /// - `tui.toml`       -> `config.tui`
     fn load_config_dir_from(dir_path: Option<&PathBuf>, config: &mut YAgentConfig) -> Result<()> {
         let dir = match dir_path {
             Some(p) if p.is_dir() => p,
@@ -428,6 +453,10 @@ impl ConfigLoader {
                     config.knowledge = toml::from_str(&content)
                         .with_context(|| format!("parsing {}", path.display()))?;
                 }
+                "tui" => {
+                    config.tui = toml::from_str(&content)
+                        .with_context(|| format!("parsing {}", path.display()))?;
+                }
                 _ => {}
             }
         }
@@ -461,6 +490,14 @@ impl ConfigLoader {
             if let Ok(days) = val.parse::<u32>() {
                 config.log_retention_days = days;
             }
+        }
+        if let Some(val) = get_env(&format!("{ENV_PREFIX}TUI_COPY_ON_SELECT")) {
+            if let Ok(enabled) = val.parse::<bool>() {
+                config.tui.copy_on_select = enabled;
+            }
+        }
+        if let Some(val) = get_env(&format!("{ENV_PREFIX}TUI_THEME")) {
+            config.tui.theme = val;
         }
     }
 
@@ -634,6 +671,9 @@ fn merge_config(target: &mut YAgentConfig, source: &YAgentConfig) {
     }
     if source.log_retention_days != defaults.log_retention_days {
         target.log_retention_days = source.log_retention_days;
+    }
+    if source.tui != defaults.tui {
+        target.tui.clone_from(&source.tui);
     }
 }
 
@@ -890,6 +930,35 @@ log_level = "debug"
         assert_eq!(config.log_level, "debug");
         assert_eq!(config.storage.db_path, "/tmp/split-test.db");
         assert_eq!(config.storage.pool_size, 10);
+    }
+
+    #[test]
+    fn test_tui_config_defaults_and_split_file_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_dir = dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("tui.toml"),
+            "copy_on_select = false\ntheme = \"solarized-dark\"\n",
+        )
+        .unwrap();
+
+        let user_root = tempfile::tempdir().unwrap();
+        let user_dir = user_root.path().to_path_buf();
+        crate::workspace::WorkspaceService::new(&user_dir)
+            .trust_workspace(dir.path())
+            .unwrap();
+
+        let config = ConfigLoader::for_testing()
+            .with_config_dir(Some(config_dir))
+            .with_user_config_dir(Some(user_dir))
+            .load()
+            .expect("TUI config should load");
+
+        assert!(!config.tui.copy_on_select);
+        assert_eq!(config.tui.theme, "solarized-dark");
+        assert!(TuiConfig::default().copy_on_select);
+        assert_eq!(TuiConfig::default().theme, "default");
     }
 
     // T-CLI-001-08: test_project_config_overrides_dir

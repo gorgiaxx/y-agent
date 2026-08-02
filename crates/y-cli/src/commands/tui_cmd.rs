@@ -3,6 +3,7 @@
 //! Constructs the `TuiApp` with wired application services and delegates
 //! to its main event loop.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -30,10 +31,15 @@ pub async fn run(
     services: AppServices,
     toast_rx: Option<mpsc::UnboundedReceiver<Toast>>,
     resume_session: Option<String>,
+    config: &crate::config::YAgentConfig,
+    user_config_dir: Option<&Path>,
 ) -> Result<ExitInfo> {
     let services = Arc::new(services);
     services.start_background_services().await?;
-    let mut app = TuiApp::new(services, toast_rx)?;
+    let effective_config_dir = user_config_dir
+        .map(Path::to_path_buf)
+        .or_else(crate::config::dirs_user_config);
+    let mut app = TuiApp::new(services, toast_rx, &config.tui, effective_config_dir)?;
 
     // If a session was specified, switch to it before entering the main loop.
     if let Some(ref target) = resume_session {

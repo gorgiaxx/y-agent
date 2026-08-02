@@ -26,6 +26,7 @@ pub const CONFIG_SECTIONS: &[&str] = &[
     "guardrails",
     "browser",
     "knowledge",
+    "tui",
     "background_auto_wake",
     "lsp",
     "langfuse",
@@ -111,6 +112,13 @@ impl ConfigService {
         std::fs::write(&path, toml_str)
             .map_err(|e| format!("Failed to write {section}.toml: {e}"))?;
         Ok(())
+    }
+
+    /// Persist the complete TUI preference file.
+    pub fn save_tui_config(config_dir: &Path, config: &crate::TuiConfig) -> Result<(), String> {
+        let content = toml::to_string_pretty(config)
+            .map_err(|error| format!("Failed to serialize TUI config: {error}"))?;
+        Self::save_section(config_dir, "tui", &content)
     }
 }
 
@@ -246,6 +254,21 @@ pub use crate::system::HttpProtocol;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn save_tui_config_persists_theme_without_losing_other_tui_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = crate::TuiConfig {
+            copy_on_select: false,
+            theme: "nord".to_string(),
+        };
+
+        ConfigService::save_tui_config(dir.path(), &config).unwrap();
+
+        let source = std::fs::read_to_string(dir.path().join("tui.toml")).unwrap();
+        let saved: crate::TuiConfig = toml::from_str(&source).unwrap();
+        assert_eq!(saved, config);
+    }
 
     #[test]
     fn validate_section_accepts_known() {

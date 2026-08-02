@@ -49,6 +49,8 @@ pub enum InteractionMode {
     Resume,
     /// Full-screen session prompt-template selector.
     Prompt,
+    /// Full-screen color-scheme selector with live preview.
+    Theme,
     /// Full-screen follow-up queue viewer for the active run.
     Queue,
     /// Full-screen background task and subagent viewer (`/tasks` overlay).
@@ -569,6 +571,12 @@ pub struct AppState {
     /// to the service-side session permission map once the next session is
     /// created (see the `SessionCreated` handling in the event drain).
     pub pending_permission_mode: Option<y_core::permission_types::PermissionMode>,
+    /// Effective permission mode of the active session, mirrored for the
+    /// status bar segment. The service-side map in
+    /// `session_state.session_permission_modes` remains the source of truth;
+    /// this field is re-synced on `/permission`, HITL allow-all, session
+    /// loads, and turn completion.
+    pub permission_mode: y_core::permission_types::PermissionMode,
     /// Number of background shell tasks currently running.
     ///
     /// Maintained by the app loop's polling task; read by the status bar
@@ -628,6 +636,7 @@ impl Default for AppState {
             theme: Theme::default(),
             follow_up_queue: Vec::new(),
             pending_permission_mode: None,
+            permission_mode: y_core::permission_types::PermissionMode::Default,
             bg_task_count: 0,
             active_subagent_count: 0,
             workspace_dir: std::env::current_dir()

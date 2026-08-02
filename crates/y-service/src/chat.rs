@@ -1652,7 +1652,12 @@ impl ChatService {
             }
         });
 
-        // 3. Delegate to AgentService.
+        // 3. Anchor the request before entering provider code. Refreshing the
+        // same turn slot after success or a handled error is idempotent, while
+        // creating it here also makes an unexpected worker stop retryable.
+        Self::persist_turn_checkpoint(container, input).await;
+
+        // 4. Delegate to AgentService.
         let mut result =
             match AgentService::execute(container, &exec_config, progress, cancel).await {
                 Ok(r) => r,
@@ -1812,7 +1817,7 @@ impl ChatService {
                 }
             };
 
-        // 4. Session-specific post-processing: persist final assistant message,
+        // 5. Session-specific post-processing: persist final assistant message,
         //    create checkpoint. AgentService doesn't handle session storage —
         //    that's the ChatService's responsibility.
 

@@ -183,4 +183,28 @@ describe('DESIGN.md visual contracts', () => {
       /@media\s*\(max-width:\s*640px\)[\s\S]*?\.wizard-api-types\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/,
     )
   })
+
+  it('keeps the wizard header and progress visually integrated', () => {
+    const component = readSource('../components/wizard/SetupWizard.tsx')
+    const wizard = readSource('../components/wizard/SetupWizard.css')
+
+    expect(component).toContain('className="wizard-header-step"')
+    expect(component).not.toContain('className="wizard-step-title"')
+    expect(component).toContain('aria-label="Setup progress"')
+    expect(component).toContain("aria-current={stepState === 'active' ? 'step' : undefined}")
+    expect(cssRule(wizard, '.wizard-header')).not.toMatch(/border-bottom:/)
+    expect(cssRule(wizard, '.wizard-timeline')).not.toMatch(/border-(?:top|bottom):/)
+    expect(cssRule(wizard, '.wizard-timeline-track')).toMatch(/max-width:\s*720px;/)
+  })
+
+  it('uses the product accent rather than the info blue for wizard guidance', () => {
+    const component = readSource('../components/wizard/SetupWizard.tsx')
+    const wizard = readSource('../components/wizard/SetupWizard.css')
+
+    expect(component).not.toContain('wizard-info-card info')
+    expect(wizard).not.toContain('.wizard-info-card.info')
+    expect(cssRule(wizard, '.wizard-info-card')).toMatch(
+      /background:\s*var\(--accent-subtle\);/,
+    )
+  })
 })

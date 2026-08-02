@@ -30,6 +30,7 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::io::{self, Stdout};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -70,6 +71,7 @@ use overlays::prompt_picker::{PromptPickerSelection, PromptPickerState};
 use overlays::queue_picker::QueuePickerState;
 use overlays::session_picker::SessionPickerState;
 use overlays::tasks_picker::{kill_effect, KillEffect, TasksPickerState};
+use overlays::theme_picker::ThemePickerState;
 use overlays::transcript_search::TranscriptSearchState;
 use state::{
     AppState, ChatMessage, ChatRenderCache, InteractionMode, MessageRole, PanelFocus,
@@ -124,6 +126,8 @@ pub struct TuiApp {
     session_picker: SessionPickerState,
     /// Full-screen session prompt-template selector state.
     prompt_picker: PromptPickerState,
+    /// Searchable color-scheme selector state.
+    theme_picker: ThemePickerState,
     /// Follow-up queue overlay state.
     queue_picker: QueuePickerState,
     /// `/tasks` overlay state (subagents + background tasks).
@@ -199,6 +203,14 @@ pub struct TuiApp {
     needs_redraw: Toggle,
     /// Active semantic keymap, shared by dispatch and generated help.
     keymap: Keymap,
+    /// Whether releasing a mouse drag copies the selected text immediately.
+    copy_on_select: bool,
+    /// Name of the persisted theme currently active outside picker preview.
+    active_theme_name: String,
+    /// Theme snapshot restored when a live-preview picker is cancelled.
+    theme_preview_origin: Option<theme::Theme>,
+    /// Effective user configuration directory for keymaps, themes, and turn context.
+    user_config_dir: Option<PathBuf>,
     /// Detected host features used by input and clipboard adapters.
     terminal_capabilities: terminal::TerminalCapabilities,
     /// Deadline for the second `Ctrl+C` required to exit from an idle,
@@ -241,6 +253,8 @@ impl TuiApp {
     pub fn new(
         services: Arc<AppServices>,
         toast_rx: Option<tokio::sync::mpsc::UnboundedReceiver<Toast>>,
+        tui_config: &crate::config::TuiConfig,
+        user_config_dir: Option<PathBuf>,
     ) -> Result<Self> {
         let terminal_capabilities = terminal::TerminalCapabilities::detect();
         enable_raw_mode()?;
@@ -278,8 +292,9 @@ impl TuiApp {
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
-        let keymap_path =
-            crate::config::dirs_user_config().map(|directory| directory.join("tui-keymap.toml"));
+        let keymap_path = user_config_dir
+            .as_ref()
+            .map(|directory| directory.join("tui-keymap.toml"));
         let (keymap, keymap_warning) = match keymap_path
             .as_deref()
             .map(|path| Keymap::load_for_terminal(path, terminal_capabilities))
@@ -300,6 +315,17 @@ impl TuiApp {
             DraftStore::memory_only()
         });
         let mut state = AppState::new();
+        let active_theme_name =
+            match theme::Theme::load(&tui_config.theme, user_config_dir.as_deref()) {
+                Ok(theme) => {
+                    state.theme = theme;
+                    tui_config.theme.clone()
+                }
+                Err(error) => {
+                    state.push_toast(format!("Theme ignored: {error}"), ToastLevel::Error);
+                    "default".to_string()
+                }
+            };
         if let Some(warning) = keymap_warning {
             state.push_toast(warning, ToastLevel::Error);
         }
@@ -318,6 +344,7 @@ impl TuiApp {
         let transcript_search = TranscriptSearchState::default();
         let session_picker = SessionPickerState::default();
         let prompt_picker = PromptPickerState::default();
+        let theme_picker = ThemePickerState::default();
         let queue_picker = QueuePickerState::default();
         let tasks_picker = TasksPickerState::default();
         let ask_user = AskUserState::default();
@@ -336,6 +363,7 @@ impl TuiApp {
             transcript_search,
             session_picker,
             prompt_picker,
+            theme_picker,
             queue_picker,
             tasks_picker,
             ask_user,
@@ -365,6 +393,10 @@ impl TuiApp {
             input_vscroll: 0,
             needs_redraw: Toggle::On,
             keymap,
+            copy_on_select: tui_config.copy_on_select,
+            active_theme_name,
+            theme_preview_origin: None,
+            user_config_dir,
             terminal_capabilities,
             keyboard_enhanced,
             quit_confirmation_deadline: None,
@@ -641,6 +673,22 @@ impl TuiApp {
         // git segment on the next tick instead of waiting out the interval.
         if submission_finished {
             self.git_poll_due_now = Toggle::On;
+            // The turn may also have flipped the session permission mode
+            // server-side (e.g. an agent-definition default applied during
+            // turn prep): re-mirror it so the status bar stays accurate.
+            if let Some(ref id) = self.state.current_session_id {
+                if let Ok(map) = self
+                    .services
+                    .session_state
+                    .session_permission_modes
+                    .try_read()
+                {
+                    self.state.permission_mode = map
+                        .get(&SessionId::from_string(id.clone()))
+                        .copied()
+                        .unwrap_or_default();
+                }
+            }
         }
         // A `/permission` selection made before any session existed applies
         // to the session this turn just created.
@@ -657,7 +705,9 @@ impl TuiApp {
             });
         }
         if channel_closed {
-            handle_chat_channel_closed(&mut self.state);
+            if handle_chat_channel_closed(&mut self.state) {
+                self.restore_failed_submission();
+            }
             self.active_chat = None;
             applied = true;
         }
@@ -787,6 +837,12 @@ impl TuiApp {
             self.close_permission();
             return;
         };
+        // The service flips the session into bypass mode on allow-all; mirror
+        // it so the status bar shows the escalation immediately.
+        let allow_all_session = matches!(
+            response,
+            y_service::PermissionPromptResponse::AllowAllForSession
+        );
         let delivered = {
             let mut map = self.services.session_state.pending_permissions.lock().await;
             map.remove(&request_id)
@@ -797,6 +853,8 @@ impl TuiApp {
                 "Permission request expired before it could be answered.".into(),
                 ToastLevel::Warning,
             );
+        } else if allow_all_session {
+            self.state.permission_mode = PermissionMode::BypassPermissions;
         }
         self.close_permission();
     }
@@ -922,6 +980,9 @@ impl TuiApp {
                     self.transcript_search.select_prev();
                 } else if self.state.mode == InteractionMode::Prompt {
                     self.prompt_picker.select_prev();
+                } else if self.state.mode == InteractionMode::Theme {
+                    self.theme_picker.select_prev();
+                    self.preview_selected_theme();
                 } else if self.state.mode == InteractionMode::Queue {
                     self.queue_picker.select_prev();
                 } else if self.state.mode == InteractionMode::Tasks {
@@ -951,6 +1012,9 @@ impl TuiApp {
                     self.transcript_search.select_next();
                 } else if self.state.mode == InteractionMode::Prompt {
                     self.prompt_picker.select_next();
+                } else if self.state.mode == InteractionMode::Theme {
+                    self.theme_picker.select_next();
+                    self.preview_selected_theme();
                 } else if self.state.mode == InteractionMode::Queue {
                     self.queue_picker.select_next();
                 } else if self.state.mode == InteractionMode::Tasks {
@@ -976,6 +1040,9 @@ impl TuiApp {
                     for _ in 0..10 {
                         self.prompt_picker.select_prev();
                     }
+                } else if self.state.mode == InteractionMode::Theme {
+                    self.theme_picker.page_prev(10);
+                    self.preview_selected_theme();
                 } else {
                     let page = self.state.page_height.max(1);
                     self.state.scroll_offset = self.state.scroll_offset.saturating_add(page);
@@ -996,6 +1063,9 @@ impl TuiApp {
                     for _ in 0..10 {
                         self.prompt_picker.select_next();
                     }
+                } else if self.state.mode == InteractionMode::Theme {
+                    self.theme_picker.page_next(10);
+                    self.preview_selected_theme();
                 } else {
                     let page = self.state.page_height.max(1);
                     self.state.scroll_offset = self.state.scroll_offset.saturating_sub(page);
@@ -1022,6 +1092,7 @@ impl TuiApp {
                         .push_toast("Cancelling response...".into(), ToastLevel::Info);
                 }
             }
+            KeyAction::RetryLastRequest => self.retry_last_request().await,
             KeyAction::ShowHelp => {
                 if self.state.mode == InteractionMode::Help {
                     self.state.clear_backtrack_selection();
@@ -1076,6 +1147,9 @@ impl TuiApp {
             KeyAction::BacktrackInspectTools => self.inspect_backtrack_tools(),
             KeyAction::BacktrackDiff => self.inspect_backtrack_diff(),
             KeyAction::ReturnToNormal => {
+                if self.state.mode == InteractionMode::Theme {
+                    self.restore_theme_preview();
+                }
                 self.state.clear_backtrack_selection();
                 self.state.set_mode(InteractionMode::Normal);
                 self.state.set_focus(PanelFocus::Input);
@@ -1161,6 +1235,7 @@ impl TuiApp {
                 self.queue_toggle_steer_selected().await;
             }
             KeyAction::QueueRecall => self.queue_recall_selected(),
+            KeyAction::QueueRecallLast => self.queue_recall_last(),
             KeyAction::QueueSteerNext => self.queue_steer_next().await,
             KeyAction::TasksKill => {
                 self.tasks_kill_selected().await;
@@ -1270,6 +1345,13 @@ impl TuiApp {
                 return false;
             };
             self.apply_prompt_selection(selection).await;
+        } else if self.state.mode == InteractionMode::Theme {
+            let Some(name) = self.theme_picker.selected_name().map(str::to_string) else {
+                self.state
+                    .push_toast("No color scheme selected.".into(), ToastLevel::Info);
+                return false;
+            };
+            self.apply_theme_name(&name);
         } else if self.state.mode == InteractionMode::Queue {
             // Enter closes the overlay; queue mutations use d/s.
             self.state.set_mode(InteractionMode::Normal);
@@ -1908,6 +1990,14 @@ impl TuiApp {
             } else if key.code == crossterm::event::KeyCode::Backspace {
                 self.prompt_picker.pop_char();
             }
+        } else if self.state.mode == InteractionMode::Theme {
+            if let crossterm::event::KeyCode::Char(character) = key.code {
+                self.theme_picker.push_char(character);
+                self.preview_selected_theme();
+            } else if key.code == crossterm::event::KeyCode::Backspace {
+                self.theme_picker.pop_char();
+                self.preview_selected_theme();
+            }
         } else if self.state.mode == InteractionMode::Command {
             let edits_text = key_edits_composer(key.code);
             if !self.handle_word_motion(key) {
@@ -2011,6 +2101,12 @@ impl TuiApp {
                 for character in single_line_paste_text(text).chars() {
                     self.prompt_picker.push_char(character);
                 }
+            }
+            InteractionMode::Theme => {
+                for character in single_line_paste_text(text).chars() {
+                    self.theme_picker.push_char(character);
+                }
+                self.preview_selected_theme();
             }
             InteractionMode::Command => {
                 self.textarea.insert_str(single_line_paste_text(text));
@@ -2139,7 +2235,7 @@ impl TuiApp {
 
     /// Cancel an in-progress composer mouse selection, if any.
     fn cancel_input_selection(&mut self) {
-        if self.selecting_input.is_on() {
+        if self.selecting_input.is_on() || self.textarea.is_selecting() {
             self.textarea.cancel_selection();
             self.selecting_input = Toggle::Off;
         }
@@ -2156,6 +2252,7 @@ impl TuiApp {
                 | InteractionMode::TranscriptSearch
                 | InteractionMode::Select
                 | InteractionMode::Prompt
+                | InteractionMode::Theme
                 | InteractionMode::Queue
                 | InteractionMode::Tasks
                 | InteractionMode::AskUser
@@ -2222,7 +2319,7 @@ impl TuiApp {
                     }
                     // A pure click yanks an empty string; only a real span
                     // reaches the clipboard.
-                    if self.textarea.is_selecting() {
+                    if self.copy_on_select && self.textarea.is_selecting() {
                         self.textarea.copy();
                         self.textarea.cancel_selection();
                         let text = self.textarea.yank_text();
@@ -2239,11 +2336,15 @@ impl TuiApp {
                     self.state.selection.finish();
 
                     if !self.state.selection.is_empty() {
-                        // Drag selection: copy the highlighted text.
-                        let text =
-                            selection::extract_text(&self.chat_plain_lines, &self.state.selection);
-                        if !text.is_empty() {
-                            self.deliver_copy(&text, "selection");
+                        if self.copy_on_select {
+                            // Drag selection: copy the highlighted text.
+                            let text = selection::extract_text(
+                                &self.chat_plain_lines,
+                                &self.state.selection,
+                            );
+                            if !text.is_empty() {
+                                self.deliver_copy(&text, "selection");
+                            }
                         }
                     } else if let Some(ref chunks) = self.last_chunks {
                         // Pure click (no drag): toggle the tool card under
@@ -2525,6 +2626,15 @@ impl TuiApp {
         self.terminal.draw(|frame| {
             let area = frame.area();
 
+            frame.render_widget(
+                Block::default().style(
+                    Style::default()
+                        .fg(state.theme.text())
+                        .bg(state.theme.panel_bg()),
+                ),
+                area,
+            );
+
             // Check minimum terminal size.
             if layout::is_terminal_too_small(area.width, area.height) {
                 let msg = Paragraph::new(vec![
@@ -2608,6 +2718,10 @@ impl TuiApp {
 
             if state.mode == InteractionMode::Prompt {
                 overlays::prompt_picker::render(frame, area, &self.prompt_picker, &state.theme);
+            }
+
+            if state.mode == InteractionMode::Theme {
+                overlays::theme_picker::render(frame, area, &self.theme_picker, &state.theme);
             }
 
             if state.mode == InteractionMode::Queue {
@@ -2701,6 +2815,10 @@ impl TuiApp {
                     self.state.set_mode(InteractionMode::Normal);
                     self.state.set_focus(PanelFocus::Input);
                 }
+                true
+            }
+            "theme" => {
+                self.open_theme_picker();
                 true
             }
             _ => false,
@@ -2834,7 +2952,7 @@ impl TuiApp {
                 // State has been reset by the handler (messages cleared,
                 // current_session_id set to None, user_message_count reset).
                 // Actual session creation is deferred to first message.
-                self.refresh_default_status_model().await;
+                self.restore_status_model_after_reset().await;
                 self.state
                     .push_toast("New session started.".into(), ToastLevel::Info);
             }
@@ -2876,6 +2994,9 @@ impl TuiApp {
                 }
             }
             CommandResult::OpenTasksOverlay => self.open_tasks_overlay().await,
+            CommandResult::RetryLastRequest => self.retry_last_request().await,
+            CommandResult::OpenThemePicker => self.open_theme_picker(),
+            CommandResult::SelectTheme(name) => self.apply_theme_name(&name),
         }
         false
     }
@@ -2885,6 +3006,8 @@ impl TuiApp {
     /// session is created (the guardrails pipeline re-reads the map on every
     /// tool call, so writes take effect immediately).
     async fn apply_permission_mode(&mut self, mode: PermissionMode) {
+        // Mirror into AppState so the status bar segment lights up at once.
+        self.state.permission_mode = mode;
         if let Some(ref session_id) = self.state.current_session_id {
             self.services
                 .session_state
@@ -3053,6 +3176,87 @@ impl TuiApp {
         self.state.set_mode(InteractionMode::Prompt);
         self.state.set_focus(PanelFocus::Chat);
         true
+    }
+
+    fn open_theme_picker(&mut self) {
+        let themes = theme::Theme::available_themes(self.user_config_dir.as_deref());
+        self.theme_picker = ThemePickerState::new(themes, &self.active_theme_name);
+        self.theme_preview_origin = Some(self.state.theme.clone());
+        self.state.set_mode(InteractionMode::Theme);
+        self.state.set_focus(PanelFocus::Chat);
+    }
+
+    fn preview_selected_theme(&mut self) {
+        let Some(name) = self.theme_picker.selected_name().map(str::to_string) else {
+            return;
+        };
+        if let Ok(theme) = theme::Theme::load(&name, self.user_config_dir.as_deref()) {
+            self.state.theme = theme;
+        }
+    }
+
+    fn restore_theme_preview(&mut self) {
+        if let Some(original) = self.theme_preview_origin.take() {
+            self.state.theme = original;
+        }
+        self.theme_picker = ThemePickerState::default();
+    }
+
+    fn apply_theme_name(&mut self, name: &str) {
+        let original = self
+            .theme_preview_origin
+            .take()
+            .unwrap_or_else(|| self.state.theme.clone());
+        let loaded = match theme::Theme::load(name, self.user_config_dir.as_deref()) {
+            Ok(theme) => theme,
+            Err(error) => {
+                self.state.theme = original;
+                self.preserve_composer_after_command = Toggle::On;
+                self.finish_theme_selection(
+                    format!("Could not load theme '{name}': {error}"),
+                    ToastLevel::Error,
+                );
+                return;
+            }
+        };
+        if name == self.active_theme_name {
+            self.state.theme = loaded;
+            self.finish_theme_selection(format!("Theme unchanged: {name}."), ToastLevel::Info);
+            return;
+        }
+        let Some(config_dir) = self.user_config_dir.as_deref() else {
+            self.state.theme = original;
+            self.preserve_composer_after_command = Toggle::On;
+            self.finish_theme_selection(
+                "Could not save the theme without a user configuration directory.".to_string(),
+                ToastLevel::Error,
+            );
+            return;
+        };
+        let config = crate::config::TuiConfig {
+            copy_on_select: self.copy_on_select,
+            theme: name.to_string(),
+        };
+        if let Err(error) = y_service::ConfigService::save_tui_config(config_dir, &config) {
+            self.state.theme = original;
+            self.preserve_composer_after_command = Toggle::On;
+            self.finish_theme_selection(
+                format!("Could not save theme '{name}': {error}"),
+                ToastLevel::Error,
+            );
+            return;
+        }
+        self.state.theme = loaded;
+        self.active_theme_name = name.to_string();
+        self.finish_theme_selection(format!("Theme: {name}."), ToastLevel::Success);
+    }
+
+    fn finish_theme_selection(&mut self, message: String, level: ToastLevel) {
+        self.theme_picker = ThemePickerState::default();
+        self.theme_preview_origin = None;
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Input);
+        self.state.push_toast(message, level);
     }
 
     async fn apply_prompt_target(&mut self, target: &str) {
@@ -3267,6 +3471,51 @@ impl TuiApp {
         let prompt = self.state.selected_user_message()?.content.clone();
         let session_id = self.state.current_session_id.clone()?;
         Some((index, prompt, session_id))
+    }
+
+    /// Retry the latest LLM request using the service-owned turn checkpoint.
+    async fn retry_last_request(&mut self) {
+        if self.state.is_streaming {
+            self.state.push_toast(
+                "A response is already active. Cancel it before retrying.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        }
+        let Some(session_id) = self.active_session_id() else {
+            self.state
+                .push_toast("Nothing to retry in this session.".into(), ToastLevel::Info);
+            return;
+        };
+
+        match chat_flow::prepare_retry_last_request(
+            &self.services,
+            &session_id,
+            self.user_config_dir.as_deref(),
+        )
+        .await
+        {
+            Ok(Some(prepared)) => {
+                if let Err(error) = self.load_session_transcript(&session_id).await {
+                    self.state
+                        .push_toast(format!("Retry failed: {error}"), ToastLevel::Error);
+                    return;
+                }
+                self.active_chat = Some(chat_flow::submit_prepared_retry(
+                    prepared,
+                    &mut self.state,
+                    &self.services,
+                ));
+                self.state
+                    .push_toast("Retrying the last LLM request.".into(), ToastLevel::Success);
+            }
+            Ok(None) => self
+                .state
+                .push_toast("Nothing to retry in this session.".into(), ToastLevel::Info),
+            Err(error) => self
+                .state
+                .push_toast(format!("Retry failed: {error}"), ToastLevel::Error),
+        }
     }
 
     async fn create_selected_backtrack_branch(
@@ -3602,6 +3851,43 @@ impl TuiApp {
         self.state.set_focus(PanelFocus::Input);
         self.state.push_toast(
             "Queued TODO recalled for editing.".into(),
+            ToastLevel::Success,
+        );
+    }
+
+    /// Recall the newest pending TODO without opening the queue overlay.
+    fn queue_recall_last(&mut self) {
+        let Some(session_id) = self.active_session_id() else {
+            return;
+        };
+        let Some(item) = self
+            .state
+            .follow_up_queue
+            .iter()
+            .rev()
+            .find(|item| item.status == y_service::FollowUpStatus::Pending)
+            .cloned()
+        else {
+            self.state.push_toast(
+                "No queued TODO is available to edit.".into(),
+                ToastLevel::Info,
+            );
+            return;
+        };
+        if !y_service::ChatService::delete_follow_up(&self.services, &session_id, &item.id) {
+            self.state.push_toast(
+                "Could not recall the latest TODO.".into(),
+                ToastLevel::Error,
+            );
+            return;
+        }
+        let current = self.textarea.lines().join("\n");
+        self.replace_composer_text(&merge_recalled_todo(&current, &item.text));
+        chat_flow::refresh_follow_up_queue(&mut self.state, &self.services);
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Input);
+        self.state.push_toast(
+            "Latest TODO restored to the composer.".into(),
             ToastLevel::Success,
         );
     }
@@ -4208,6 +4494,20 @@ impl TuiApp {
         }
     }
 
+    /// Restore the status-bar model display after a session reset (transcript
+    /// load, `/new`). An explicit `/model` selection routes the next turn, so
+    /// it must also win the display — historical metadata and the pool
+    /// default only apply when no selection exists.
+    async fn restore_status_model_after_reset(&mut self) {
+        let reasserted = {
+            let pool = self.services.provider_pool().await;
+            apply_selected_model_display(&mut self.state, &pool.list_metadata())
+        };
+        if !reasserted && self.state.status_model.is_empty() {
+            self.refresh_default_status_model().await;
+        }
+    }
+
     /// `/model [provider-id]` -- list models or switch active provider.
     async fn cmd_model(&mut self, provider_id: Option<String>) {
         let pool = self.services.provider_pool().await;
@@ -4324,12 +4624,18 @@ impl TuiApp {
             tool_rows,
         );
 
-        let todo_shortcut = keymap.primary_shortcut(KeyAction::QueueSteerNext);
+        let todo_shortcut = keymap
+            .primary_shortcut(KeyAction::QueueSteerNext)
+            .map(|shortcut| keys::platform_shortcut_label(&shortcut));
+        let recall_shortcut = keymap
+            .primary_shortcut(KeyAction::QueueRecallLast)
+            .map(|shortcut| keys::platform_shortcut_label(&shortcut));
         panels::todo::render(
             frame,
             chunks.todo,
             &state.follow_up_queue,
             todo_shortcut.as_deref(),
+            recall_shortcut.as_deref(),
             &state.theme,
         );
 
@@ -4346,6 +4652,7 @@ impl TuiApp {
             state.is_cancelling,
             state.follow_up_queue.len(),
             textarea,
+            keymap,
             &state.theme,
         );
     }
@@ -4581,6 +4888,18 @@ impl TuiApp {
             .collect();
         self.state.scroll_offset = 0;
 
+        // Mirror the session's permission mode for the status bar (the
+        // service-side map is the source of truth; absent entry = default).
+        self.state.permission_mode = self
+            .services
+            .session_state
+            .session_permission_modes
+            .read()
+            .await
+            .get(session_id)
+            .copied()
+            .unwrap_or_default();
+
         // Reset user message counter from transcript.
         self.state.user_message_count = u32::try_from(
             self.state
@@ -4591,12 +4910,11 @@ impl TuiApp {
         )
         .unwrap_or(0);
         self.load_session_prompt_status(session_id).await;
-        // A brand-new branch (or a session with no assistant turns yet) carries
-        // no model metadata, so restore_status_from_metadata left status_model
-        // empty. Fall back to the provider pool default instead of an em dash.
-        if self.state.status_model.is_empty() {
-            self.refresh_default_status_model().await;
-        }
+        // An explicit /model selection routes the next turn, so it must also
+        // win the display; otherwise the historical model restored from
+        // metadata stays, falling back to the pool default when the branch
+        // has no assistant turns yet.
+        self.restore_status_model_after_reset().await;
         Ok(())
     }
 
@@ -4767,7 +5085,7 @@ fn tool_at_row(
 /// response is marked cancelled and the operator is warned. The service
 /// destroys the follow-up queue when the run dies, so the projection is
 /// cleared as well.
-fn handle_chat_channel_closed(state: &mut AppState) {
+fn handle_chat_channel_closed(state: &mut AppState) -> bool {
     state.is_streaming = false;
     state.is_cancelling = false;
     state.follow_up_queue.clear();
@@ -4782,9 +5100,19 @@ fn handle_chat_channel_closed(state: &mut AppState) {
     };
     if interrupted {
         state.push_toast(
-            "Turn interrupted: connection to the service was lost.".into(),
+            "Turn interrupted: connection to the service was lost. Use /retry to resume the last LLM request."
+                .into(),
             ToastLevel::Warning,
         );
+    }
+    interrupted
+}
+
+fn merge_recalled_todo(existing: &str, recalled: &str) -> String {
+    if existing.trim().is_empty() {
+        recalled.to_string()
+    } else {
+        format!("{recalled}\n\n{existing}")
     }
 }
 
@@ -4858,6 +5186,25 @@ fn resolve_prompt_template_status(
     } else {
         PromptTemplateStatus::Default
     }
+}
+
+/// Re-assert the status-bar model display from an explicit `/model`
+/// selection, copying the provider's model name and context window into the
+/// state. Returns `false` when no selection exists or the selected provider
+/// is unknown, leaving the current (historical/default) display untouched.
+fn apply_selected_model_display(
+    state: &mut AppState,
+    metadata: &[y_core::provider::ProviderMetadata],
+) -> bool {
+    let Some(selected) = state.selected_provider_id.as_deref() else {
+        return false;
+    };
+    let Some(meta) = metadata.iter().find(|m| m.id.as_str() == selected) else {
+        return false;
+    };
+    state.status_model.clone_from(&meta.model);
+    state.context_window = meta.context_window;
+    true
 }
 
 /// Convert a display-column offset to a character index within a string.
@@ -5106,6 +5453,48 @@ fn restore_status_from_metadata(metadata: &serde_json::Value, state: &mut state:
 #[cfg(test)]
 mod transcript_tests {
     use super::*;
+
+    // T-STATUS-MODEL-01: without an explicit /model selection the historical
+    // model display is preserved.
+    #[test]
+    fn test_apply_selected_model_display_without_selection_keeps_history() {
+        let mut state = AppState::new();
+        state.status_model = "model-a".into();
+        let metadata = vec![y_test_utils::fixtures::make_provider_metadata("b")];
+
+        assert!(!apply_selected_model_display(&mut state, &metadata));
+        assert_eq!(state.status_model, "model-a");
+    }
+
+    // T-STATUS-MODEL-02: an explicit /model selection always wins the display
+    // after a transcript reset — historical metadata (the model that answered
+    // past turns) must not overwrite it.
+    #[test]
+    fn test_apply_selected_model_display_reasserts_selection_over_history() {
+        let mut state = AppState::new();
+        state.status_model = "model-a".into(); // historical, pre-switch
+        let mut meta = y_test_utils::fixtures::make_provider_metadata("b");
+        meta.model = "model-b".into();
+        meta.context_window = 128_000;
+        state.selected_provider_id = Some(meta.id.as_str().to_string());
+
+        assert!(apply_selected_model_display(&mut state, &[meta]));
+        assert_eq!(state.status_model, "model-b");
+        assert_eq!(state.context_window, 128_000);
+    }
+
+    // T-STATUS-MODEL-03: an unknown selected provider cannot reassert and
+    // leaves the historical/default display in place.
+    #[test]
+    fn test_apply_selected_model_display_unknown_provider() {
+        let mut state = AppState::new();
+        state.status_model = "model-a".into();
+        state.selected_provider_id = Some("missing".into());
+        let metadata = vec![y_test_utils::fixtures::make_provider_metadata("b")];
+
+        assert!(!apply_selected_model_display(&mut state, &metadata));
+        assert_eq!(state.status_model, "model-a");
+    }
 
     // T-REDRAW-01: idle ticks must not request a redraw; time-dependent UI
     // (streaming animation, toast countdowns, toast changes) must.
@@ -5532,7 +5921,7 @@ mod interaction_tests {
             .push(y_service::FollowUpMessage::new("queued".to_string()));
         state.messages.push(assistant_message(true, &[]));
 
-        handle_chat_channel_closed(&mut state);
+        let retry_available = handle_chat_channel_closed(&mut state);
 
         assert!(!state.is_streaming);
         assert!(!state.is_cancelling);
@@ -5540,6 +5929,7 @@ mod interaction_tests {
         let last = &state.messages[0];
         assert!(!last.is_streaming);
         assert!(last.is_cancelled);
+        assert!(retry_available);
         assert_eq!(state.toasts.len(), 1);
         let toast = &state.toasts[0];
         assert_eq!(toast.level, ToastLevel::Warning);
@@ -5548,6 +5938,7 @@ mod interaction_tests {
             "unexpected toast: {}",
             toast.message
         );
+        assert!(toast.message.contains("/retry"));
     }
 
     // A channel close after a cleanly completed turn is the normal path: no
@@ -5560,18 +5951,28 @@ mod interaction_tests {
             .push(y_service::FollowUpMessage::new("queued".to_string()));
         state.messages.push(assistant_message(false, &[]));
 
-        handle_chat_channel_closed(&mut state);
+        let retry_available = handle_chat_channel_closed(&mut state);
 
         assert!(state.follow_up_queue.is_empty());
         assert!(state.toasts.is_empty());
         assert!(!state.messages[0].is_cancelled);
+        assert!(!retry_available);
     }
 
     #[test]
     fn test_channel_close_with_empty_transcript_does_not_panic() {
         let mut state = AppState::new();
-        handle_chat_channel_closed(&mut state);
+        assert!(!handle_chat_channel_closed(&mut state));
         assert!(state.toasts.is_empty());
+    }
+
+    #[test]
+    fn test_recalled_todo_is_restored_without_losing_current_draft() {
+        assert_eq!(merge_recalled_todo("", "queued"), "queued");
+        assert_eq!(
+            merge_recalled_todo("current draft", "queued"),
+            "queued\n\ncurrent draft"
+        );
     }
 
     #[test]

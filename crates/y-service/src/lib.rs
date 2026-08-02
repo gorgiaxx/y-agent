@@ -97,7 +97,7 @@ pub use agent_service::{
 };
 pub use app_config::{
     cleanup_old_logs, dirs_log, dirs_state, dirs_user_config, home_dir, validate_config,
-    ConfigLoader, LoadedConfig, ProjectConfigProvenance, YAgentConfig,
+    ConfigLoader, LoadedConfig, ProjectConfigProvenance, TuiConfig, YAgentConfig,
 };
 #[cfg(feature = "automation_a2a")]
 pub use automation_run::{

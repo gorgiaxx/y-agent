@@ -307,10 +307,7 @@ async fn main() -> Result<ExitCode> {
                 commands::mcp::run_offline(other, &path, mode)?;
             }
         },
-        Some(Commands::Completion(_)) => {
-            // Already handled above before config loading.
-            unreachable!("completion is dispatched before config loading");
-        }
+        Some(Commands::Completion(_)) => unreachable!("completion handled before config loading"),
         Some(Commands::Print {
             mode: print_mode,
             session,
@@ -337,21 +334,16 @@ async fn main() -> Result<ExitCode> {
         }
         #[cfg(feature = "tui")]
         Some(Commands::Tui { session }) => {
-            let services = wire::wire(&config).await?;
-            let resume_session = match session {
-                Some(target) => {
-                    Some(resolve_resume_session(Some(target.clone()), &services).await?)
-                }
-                None => None,
-            };
-            let exit_info =
-                commands::tui_cmd::run(services, Some(toast_rx), resume_session).await?;
-            print_exit_summary(&exit_info);
+            launch_tui(
+                &config,
+                toast_rx,
+                session.clone(),
+                false,
+                user_config_dir.as_deref(),
+            )
+            .await?;
         }
-        Some(Commands::Init(_)) => {
-            // Already handled above before config loading.
-            unreachable!("init is dispatched before config loading");
-        }
+        Some(Commands::Init(_)) => unreachable!("init is dispatched before config loading"),
         Some(Commands::Serve(args)) => {
             let services = wire::wire(&config).await?;
             let services = std::sync::Arc::new(services);
@@ -368,19 +360,25 @@ async fn main() -> Result<ExitCode> {
         }
         #[cfg(feature = "tui")]
         Some(Commands::Resume { session }) => {
-            let services = wire::wire(&config).await?;
-            // Resume uses the most recent session if none specified.
-            let session_id = resolve_resume_session(session.clone(), &services).await?;
-            let exit_info =
-                commands::tui_cmd::run(services, Some(toast_rx), Some(session_id)).await?;
-            print_exit_summary(&exit_info);
+            launch_tui(
+                &config,
+                toast_rx,
+                session.clone(),
+                true,
+                user_config_dir.as_deref(),
+            )
+            .await?;
         }
         #[cfg(feature = "tui")]
         Some(Commands::Fork { session, label }) => {
-            let services = wire::wire(&config).await?;
-            let forked = fork_session(session.clone(), label.clone(), &services).await?;
-            let exit_info = commands::tui_cmd::run(services, Some(toast_rx), Some(forked)).await?;
-            print_exit_summary(&exit_info);
+            launch_fork_tui(
+                &config,
+                toast_rx,
+                session.clone(),
+                label.clone(),
+                user_config_dir.as_deref(),
+            )
+            .await?;
         }
         Some(Commands::Workspace { action }) => {
             commands::workspace::run(action, mode, user_config_dir.as_deref())?;
@@ -414,16 +412,14 @@ async fn main() -> Result<ExitCode> {
             // No subcommand given.
             #[cfg(feature = "tui")]
             if is_tui {
-                let services = wire::wire(&config).await?;
-                let resume_session = match &cli.session {
-                    Some(target) => {
-                        Some(resolve_resume_session(Some(target.clone()), &services).await?)
-                    }
-                    None => None,
-                };
-                let exit_info =
-                    commands::tui_cmd::run(services, Some(toast_rx), resume_session).await?;
-                print_exit_summary(&exit_info);
+                launch_tui(
+                    &config,
+                    toast_rx,
+                    cli.session.clone(),
+                    false,
+                    user_config_dir.as_deref(),
+                )
+                .await?;
                 return Ok(ExitCode::SUCCESS);
             }
             println!("y-agent v{}", env!("CARGO_PKG_VERSION"));
@@ -432,6 +428,54 @@ async fn main() -> Result<ExitCode> {
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(feature = "tui")]
+async fn launch_tui(
+    config: &config::YAgentConfig,
+    toast_rx: tokio::sync::mpsc::UnboundedReceiver<tui::state::Toast>,
+    target: Option<String>,
+    resume_latest: bool,
+    user_config_dir: Option<&std::path::Path>,
+) -> Result<()> {
+    let services = wire::wire(config).await?;
+    let resume_session = if target.is_some() || resume_latest {
+        Some(resolve_resume_session(target, &services).await?)
+    } else {
+        None
+    };
+    let exit_info = commands::tui_cmd::run(
+        services,
+        Some(toast_rx),
+        resume_session,
+        config,
+        user_config_dir,
+    )
+    .await?;
+    print_exit_summary(&exit_info);
+    Ok(())
+}
+
+#[cfg(feature = "tui")]
+async fn launch_fork_tui(
+    config: &config::YAgentConfig,
+    toast_rx: tokio::sync::mpsc::UnboundedReceiver<tui::state::Toast>,
+    session: Option<String>,
+    label: Option<String>,
+    user_config_dir: Option<&std::path::Path>,
+) -> Result<()> {
+    let services = wire::wire(config).await?;
+    let forked = fork_session(session, label, &services).await?;
+    let exit_info = commands::tui_cmd::run(
+        services,
+        Some(toast_rx),
+        Some(forked),
+        config,
+        user_config_dir,
+    )
+    .await?;
+    print_exit_summary(&exit_info);
+    Ok(())
 }
 
 #[cfg(feature = "automation_a2a")]

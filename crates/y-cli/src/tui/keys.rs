@@ -59,6 +59,8 @@ pub enum KeyAction {
     ScrollToBottom,
     /// Cancel the current streaming response.
     CancelStreaming,
+    /// Retry the most recent LLM request from its service checkpoint.
+    RetryLastRequest,
     /// Show the help overlay.
     ShowHelp,
     /// Temporarily expose the transcript in normal terminal scrollback.
@@ -121,6 +123,8 @@ pub enum KeyAction {
     QueueSteer,
     /// Remove the selected TODO and recall it into the composer.
     QueueRecall,
+    /// Recall the most recently queued TODO directly into the composer.
+    QueueRecallLast,
     /// Promote the next pending TODO for immediate steering.
     QueueSteerNext,
     /// Kill the selected entry in the `/tasks` overlay.
@@ -172,6 +176,7 @@ impl KeyAction {
             Self::ScrollToTop => "scroll_to_top",
             Self::ScrollToBottom => "scroll_to_bottom",
             Self::CancelStreaming => "cancel_streaming",
+            Self::RetryLastRequest => "retry_last_request",
             Self::ShowHelp => "show_help",
             Self::ShowRawScrollback => "show_raw_scrollback",
             Self::EnterCommandMode => "enter_command_mode",
@@ -203,6 +208,7 @@ impl KeyAction {
             Self::QueueDelete => "queue_delete",
             Self::QueueSteer => "queue_steer",
             Self::QueueRecall => "queue_recall",
+            Self::QueueRecallLast => "queue_recall_last",
             Self::QueueSteerNext => "queue_steer_next",
             Self::TasksKill => "tasks_kill",
             Self::TasksRefresh => "tasks_refresh",
@@ -246,6 +252,7 @@ impl KeyAction {
             Self::ScrollToTop => "Scroll to top",
             Self::ScrollToBottom => "Scroll to bottom",
             Self::CancelStreaming => "Cancel the active response",
+            Self::RetryLastRequest => "Retry the last LLM request",
             Self::ShowHelp => "Show keyboard help",
             Self::ShowRawScrollback => "Show transcript in terminal scrollback",
             Self::EnterCommandMode => "Open command palette",
@@ -277,6 +284,7 @@ impl KeyAction {
             Self::QueueDelete => "Delete queued TODO",
             Self::QueueSteer => "Steer or un-steer TODO",
             Self::QueueRecall => "Recall queued TODO for editing",
+            Self::QueueRecallLast => "Edit the last queued TODO",
             Self::QueueSteerNext => "Send the next TODO immediately",
             Self::TasksKill => "Kill selected background task",
             Self::TasksRefresh => "Refresh tasks",
@@ -314,6 +322,7 @@ const ALL_ACTIONS: &[KeyAction] = &[
     KeyAction::ScrollToTop,
     KeyAction::ScrollToBottom,
     KeyAction::CancelStreaming,
+    KeyAction::RetryLastRequest,
     KeyAction::ShowHelp,
     KeyAction::ShowRawScrollback,
     KeyAction::EnterCommandMode,
@@ -345,6 +354,7 @@ const ALL_ACTIONS: &[KeyAction] = &[
     KeyAction::QueueDelete,
     KeyAction::QueueSteer,
     KeyAction::QueueRecall,
+    KeyAction::QueueRecallLast,
     KeyAction::QueueSteerNext,
     KeyAction::TasksKill,
     KeyAction::TasksRefresh,
@@ -872,20 +882,47 @@ fn shift(character: char) -> KeyChord {
     KeyChord::new(KeyCode::Char(character), KeyModifiers::SHIFT)
 }
 
+fn streaming_bindings() -> [KeyBinding; 4] {
+    use KeyAction as A;
+    use KeyContext as C;
+
+    [
+        binding(C::Streaming, plain(KeyCode::Esc), A::CancelStreaming),
+        binding(C::Streaming, ctrl('c'), A::CancelStreaming),
+        binding(C::Streaming, ctrl('s'), A::QueueSteerNext),
+        binding(
+            C::Streaming,
+            KeyChord::new(KeyCode::Up, KeyModifiers::ALT),
+            A::QueueRecallLast,
+        ),
+    ]
+}
+
+fn normal_workspace_bindings() -> [KeyBinding; 6] {
+    use KeyAction as A;
+    use KeyContext as C;
+
+    [
+        binding(C::NormalInputEmpty, alt('r'), A::RetryLastRequest),
+        binding(C::NormalInputDraft, alt('r'), A::RetryLastRequest),
+        binding(C::NormalChat, alt('r'), A::RetryLastRequest),
+        binding(C::NormalInputEmpty, alt('h'), A::OpenSessionHub),
+        binding(C::NormalInputDraft, alt('h'), A::OpenSessionHub),
+        binding(C::NormalChat, alt('h'), A::OpenSessionHub),
+    ]
+}
+
 fn default_bindings() -> Vec<KeyBinding> {
     use KeyAction as A;
     use KeyContext as C;
 
-    vec![
+    let mut bindings = vec![
         binding(C::Global, ctrl('q'), A::Quit),
         binding(C::Global, plain(KeyCode::F(1)), A::ShowHelp),
         binding(C::Global, plain(KeyCode::F(3)), A::ShowRawScrollback),
         binding(C::Global, ctrl('o'), A::ToggleSelectedTool),
         binding(C::Cancelling, plain(KeyCode::Esc), A::Consumed),
         binding(C::Cancelling, ctrl('c'), A::Consumed),
-        binding(C::Streaming, plain(KeyCode::Esc), A::CancelStreaming),
-        binding(C::Streaming, ctrl('c'), A::CancelStreaming),
-        binding(C::Streaming, ctrl('s'), A::QueueSteerNext),
         binding(C::NormalInputEmpty, ctrl('c'), A::ConfirmQuit),
         binding(C::NormalInputEmpty, ctrl('d'), A::Quit),
         binding(C::NormalInputDraft, ctrl('c'), A::ClearInput),
@@ -953,9 +990,6 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::NormalInputEmpty, alt('c'), A::OpenCopy),
         binding(C::NormalInputDraft, alt('c'), A::OpenCopy),
         binding(C::NormalChat, alt('c'), A::OpenCopy),
-        binding(C::NormalInputEmpty, alt('r'), A::OpenSessionHub),
-        binding(C::NormalInputDraft, alt('r'), A::OpenSessionHub),
-        binding(C::NormalChat, alt('r'), A::OpenSessionHub),
         binding(C::NormalInputEmpty, character(':'), A::EnterCommandMode),
         binding(C::NormalInputDraft, character(':'), A::EnterCommandMode),
         binding(C::NormalInputEmpty, character('!'), A::EnterShellMode),
@@ -1174,7 +1208,10 @@ fn default_bindings() -> Vec<KeyBinding> {
         binding(C::Permission, plain(KeyCode::Enter), A::Submit),
         binding(C::Permission, plain(KeyCode::Up), A::ScrollUp),
         binding(C::Permission, plain(KeyCode::Down), A::ScrollDown),
-    ]
+    ];
+    bindings.extend(streaming_bindings());
+    bindings.extend(normal_workspace_bindings());
+    bindings
 }
 
 fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
@@ -1206,7 +1243,8 @@ fn active_contexts(state: &AppState, composer_empty: bool) -> Vec<KeyContext> {
         InteractionMode::Copy => KeyContext::CopyPicker,
         InteractionMode::HistorySearch
         | InteractionMode::TranscriptSearch
-        | InteractionMode::Prompt => KeyContext::Picker,
+        | InteractionMode::Prompt
+        | InteractionMode::Theme => KeyContext::Picker,
     };
     if mode == KeyContext::Command && !state.is_cancelling {
         contexts.insert(0, mode);
@@ -1226,6 +1264,7 @@ fn fallback_action(state: &AppState) -> KeyAction {
         | InteractionMode::TranscriptSearch
         | InteractionMode::Resume
         | InteractionMode::Prompt
+        | InteractionMode::Theme
         | InteractionMode::AskUser => KeyAction::InputPassthrough,
         InteractionMode::Help
         | InteractionMode::Queue
@@ -1976,6 +2015,37 @@ mod tests {
                 true,
             ),
             KeyAction::OpenQueue
+        );
+        assert_eq!(
+            keymap.dispatch_with_composer(
+                key_with_mod(KeyCode::Up, KeyModifiers::ALT),
+                &state,
+                true,
+            ),
+            KeyAction::QueueRecallLast
+        );
+    }
+
+    #[test]
+    fn test_retry_and_session_hub_have_distinct_default_shortcuts() {
+        let keymap = Keymap::default();
+        let state = AppState::new();
+
+        assert_eq!(
+            keymap.dispatch_with_composer(
+                key_with_mod(KeyCode::Char('r'), KeyModifiers::ALT),
+                &state,
+                true,
+            ),
+            KeyAction::RetryLastRequest
+        );
+        assert_eq!(
+            keymap.dispatch_with_composer(
+                key_with_mod(KeyCode::Char('h'), KeyModifiers::ALT),
+                &state,
+                true,
+            ),
+            KeyAction::OpenSessionHub
         );
     }
 }

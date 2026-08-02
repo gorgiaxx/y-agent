@@ -699,6 +699,7 @@ mod tests {
                     false,
                     0,
                     &mut textarea,
+                    &keymap,
                     &theme,
                 );
                 render(frame, frame.area(), composer, &palette, &keymap, &theme);

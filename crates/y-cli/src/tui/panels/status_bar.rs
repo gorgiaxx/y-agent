@@ -65,6 +65,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, keymap: &Keymap) 
         Style::default().fg(t.input_border_focused()),
     ));
     left_spans.push(sep.clone());
+    left_spans.push(build_permission_status_span(state, t));
+    left_spans.push(sep.clone());
     left_spans.push(build_prompt_status_span(state, t));
     if let Some(queue_span) = build_queue_status_span(state, t) {
         left_spans.push(sep.clone());
@@ -205,7 +207,17 @@ fn right_candidates(state: &AppState, keymap: &Keymap) -> Vec<(String, Option<St
             KeyAction::QueueSteerNext,
             "steer",
         );
-        let hints = join_hints(&[cancel.clone(), steer]);
+        let recall = (!state.follow_up_queue.is_empty())
+            .then(|| {
+                chord_hint(
+                    keymap,
+                    KeyContext::Streaming,
+                    KeyAction::QueueRecallLast,
+                    "edit last",
+                )
+            })
+            .flatten();
+        let hints = join_hints(&[cancel.clone(), steer, recall]);
         let tip = format!(
             "Tip: {}",
             crate::tui::tips::tip_for_tick(state.tick_counter)
@@ -244,7 +256,19 @@ fn right_candidates(state: &AppState, keymap: &Keymap) -> Vec<(String, Option<St
                 "close",
             ),
         ]),
-        _ => format!("/ commands  v{}", state.version),
+        _ => {
+            let context = if state.focus == crate::tui::state::PanelFocus::Chat {
+                KeyContext::NormalChat
+            } else {
+                KeyContext::NormalInputEmpty
+            };
+            join_hints(&[
+                chord_hint(keymap, context, KeyAction::RetryLastRequest, "retry"),
+                Some("/ commands".to_string()),
+                chord_hint(keymap, KeyContext::Global, KeyAction::ShowHelp, "shortcuts"),
+                Some(format!("v{}", state.version)),
+            ])
+        }
     };
     vec![(segment, None)]
 }
@@ -275,6 +299,23 @@ fn build_prompt_status_span(state: &AppState, t: &Theme) -> Span<'static> {
     Span::styled(
         state.prompt_template_status.label(),
         Style::default().fg(t.active()),
+    )
+}
+
+/// Permission-mode segment. Always visible — even `default` — so the active
+/// mode is never in doubt; risky modes (bypass/dont-ask) render in warning
+/// color so an escalation cannot hide. The `perm:` prefix distinguishes it
+/// from the bare orchestration-mode label (`plan` exists in both domains).
+fn build_permission_status_span(state: &AppState, t: &Theme) -> Span<'static> {
+    use y_core::permission_types::PermissionMode;
+    let color = match state.permission_mode {
+        PermissionMode::Default => t.muted(),
+        PermissionMode::BypassPermissions | PermissionMode::DontAsk => t.warning(),
+        PermissionMode::Plan | PermissionMode::AcceptEdits => t.active(),
+    };
+    Span::styled(
+        format!("perm:{}", state.permission_mode),
+        Style::default().fg(color),
     )
 }
 
@@ -562,6 +603,49 @@ mod tests {
     use super::*;
     use crate::tui::keys::Keymap;
     use crate::tui::state::InteractionMode;
+    use y_core::permission_types::PermissionMode;
+
+    // T-TUI-STATUS-PERM-DEFAULT: the segment is always visible — even the
+    // default mode is shown (muted) so the active mode is never in doubt.
+    #[test]
+    fn test_permission_segment_shows_default_muted() {
+        let state = AppState::new();
+        let span = build_permission_status_span(&state, &state.theme);
+        assert_eq!(span.content.as_ref(), "perm:default");
+        assert_eq!(span.style.fg, Some(state.theme.muted()));
+    }
+
+    // T-TUI-STATUS-PERM-RISKY: bypass/dont-ask render in warning color.
+    #[test]
+    fn test_permission_segment_warning_for_bypass_and_dont_ask() {
+        let mut state = AppState::new();
+        for mode in [PermissionMode::BypassPermissions, PermissionMode::DontAsk] {
+            state.permission_mode = mode;
+            let span = build_permission_status_span(&state, &state.theme);
+            assert_eq!(span.content.as_ref(), format!("perm:{mode}"));
+            assert_eq!(
+                span.style.fg,
+                Some(state.theme.warning()),
+                "{mode} must render in warning color"
+            );
+        }
+    }
+
+    // T-TUI-STATUS-PERM-SOFT: plan/accept-edits render in the active color.
+    #[test]
+    fn test_permission_segment_active_for_plan_and_accept_edits() {
+        let mut state = AppState::new();
+        for mode in [PermissionMode::Plan, PermissionMode::AcceptEdits] {
+            state.permission_mode = mode;
+            let span = build_permission_status_span(&state, &state.theme);
+            assert_eq!(span.content.as_ref(), format!("perm:{mode}"));
+            assert_eq!(
+                span.style.fg,
+                Some(state.theme.active()),
+                "{mode} must render in the active color"
+            );
+        }
+    }
 
     fn right_text(state: &AppState, keymap: &Keymap, avail: usize) -> String {
         build_right_spans(state, keymap, &state.theme, avail)

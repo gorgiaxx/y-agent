@@ -20,6 +20,7 @@
 #   hooks.toml          — Middleware & event bus
 #   tools.toml          — Tool registry & lazy loading
 #   guardrails.toml     — Permissions, loop detection, risk scoring
+#   tui.toml            — Terminal UI selection and theme preferences
 # ==============================================================================
 
 # Log level: trace | debug | info | warn | error

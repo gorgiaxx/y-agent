@@ -16,26 +16,39 @@ pub fn render(
     area: Rect,
     todos: &[y_service::FollowUpMessage],
     send_shortcut: Option<&str>,
+    recall_shortcut: Option<&str>,
     theme: &Theme,
 ) {
     if area.height == 0 || todos.is_empty() {
         return;
     }
-    let lines = styled_todo_lines(todos, send_shortcut, area.width as usize, theme);
+    let lines = styled_todo_lines(
+        todos,
+        send_shortcut,
+        recall_shortcut,
+        area.width as usize,
+        theme,
+    );
     frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn styled_todo_lines(
     todos: &[y_service::FollowUpMessage],
     send_shortcut: Option<&str>,
+    recall_shortcut: Option<&str>,
     width: usize,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(MAX_VISIBLE + 2);
-    let shortcut = send_shortcut.map_or_else(
-        || "  /queue manage".to_string(),
-        |key| format!("  {key} send next  /queue manage"),
-    );
+    let mut actions = Vec::new();
+    if let Some(key) = send_shortcut {
+        actions.push(format!("{key} send next"));
+    }
+    if let Some(key) = recall_shortcut {
+        actions.push(format!("{key} edit last"));
+    }
+    actions.push("/queue manage".to_string());
+    let shortcut = format!("  {}", actions.join("  "));
     lines.push(Line::from(vec![
         Span::styled(
             format!(" TODO ({})", todos.len()),
@@ -80,9 +93,16 @@ fn styled_todo_lines(
 fn todo_lines(
     todos: &[y_service::FollowUpMessage],
     send_shortcut: Option<&str>,
+    recall_shortcut: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    styled_todo_lines(todos, send_shortcut, width, &Theme::default())
+    styled_todo_lines(
+        todos,
+        send_shortcut,
+        recall_shortcut,
+        width,
+        &Theme::default(),
+    )
 }
 
 fn truncate(text: &str, width: usize) -> String {
@@ -130,7 +150,7 @@ mod tests {
             todo("5", "fifth", y_service::FollowUpStatus::Pending),
         ];
 
-        let lines = todo_lines(&todos, Some("Ctrl+S"), 80);
+        let lines = todo_lines(&todos, Some("Ctrl+S"), Some("Alt+Up"), 80);
         let text = lines
             .iter()
             .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
@@ -138,6 +158,7 @@ mod tests {
 
         assert!(text.contains("TODO (5)"));
         assert!(text.contains("Ctrl+S send next"));
+        assert!(text.contains("Alt+Up edit last"));
         assert!(text.contains("steering"));
         assert!(text.contains("+1 more"));
     }

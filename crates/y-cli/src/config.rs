@@ -7,5 +7,5 @@
 
 pub use y_service::app_config::{
     cleanup_old_logs, dirs_log, dirs_user_config, home_dir, validate_config, ConfigLoader,
-    YAgentConfig,
+    TuiConfig, YAgentConfig,
 };

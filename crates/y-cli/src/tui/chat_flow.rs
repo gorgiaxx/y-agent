@@ -6,7 +6,7 @@ use tracing::warn;
 
 use y_core::session::{CreateSessionOptions, SessionType};
 use y_core::types::SessionId;
-use y_service::{PrepareTurnRequest, PreparedTurn};
+use y_service::{PrepareTurnRequest, PreparedTurn, ResendTurnRequest};
 
 use crate::orchestrator::{self, ChatService, TurnCancellationToken, TurnError};
 use crate::tui::state::{
@@ -436,237 +436,343 @@ fn submit_message_with_mode_and_attachments(
                 return;
             }
         };
-        let session_id = prepared.session_id.clone();
-        let session_id_str = session_id.to_string();
-        if let Some(node) = created_session {
-            let _ = tx
-                .send(ChatEvent::SessionCreated {
-                    id: session_id_str.clone(),
-                    title: "New Chat".into(),
-                    updated_at: node.updated_at,
-                })
-                .await;
-        }
-
-        // Fire title generation concurrently with the turn. The title only
-        // consumes user messages (the just-appended one is already persisted),
-        // so it does not need to wait for the assistant reply.
-        if should_generate_title {
-            let title_services = Arc::clone(&services);
-            let title_tx = tx.clone();
-            let title_session_id = session_id.clone();
-            let title_session_id_str = session_id_str.clone();
-            tokio::spawn(async move {
-                let has_manual_title = title_services
-                    .session_manager
-                    .get_session(&title_session_id)
-                    .await
-                    .map(|s| s.manual_title.is_some())
-                    .unwrap_or(false);
-                if has_manual_title {
-                    return;
-                }
-                match title_services
-                    .session_manager
-                    .read_transcript(&title_session_id)
-                    .await
-                {
-                    Ok(transcript) => {
-                        match title_services
-                            .session_manager
-                            .generate_title(
-                                &*title_services.agent_delegator,
-                                &title_session_id,
-                                &transcript,
-                            )
-                            .await
-                        {
-                            Ok(title) => {
-                                let _ = title_tx
-                                    .send(ChatEvent::TitleUpdated {
-                                        session_id: title_session_id_str,
-                                        title,
-                                    })
-                                    .await;
-                            }
-                            Err(e) => warn!(error = %e, "title generation failed"),
-                        }
-                    }
-                    Err(e) => {
-                        warn!(error = %e, "failed to read transcript for title generation");
-                    }
-                }
-            });
-        }
-
-        let turn_input = prepared.as_turn_input();
-
-        // Set up a progress channel to receive streaming deltas.
-        let (progress_tx, mut progress_rx) = y_service::TurnEventSender::channel();
-
-        // Spawn a sub-task to forward StreamDelta events from the progress
-        // channel to the TUI event channel.
-        let tx_stream = tx.clone();
-        let progress_forwarder = tokio::spawn(async move {
-            while let Some((event, _session_id)) = progress_rx.recv().await {
-                match event {
-                    y_service::TurnEvent::StreamDelta { content, .. } => {
-                        let _ = tx_stream.send(ChatEvent::StreamDelta { content }).await;
-                    }
-                    y_service::TurnEvent::StreamReasoningDelta { content, .. } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::StreamReasoningDelta { content })
-                            .await;
-                    }
-                    y_service::TurnEvent::ToolStart {
-                        tool_call_id,
-                        name,
-                        input_preview,
-                        agent_name,
-                    } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::ToolCallStarted {
-                                tool_call_id,
-                                name,
-                                input_preview,
-                                agent_name,
-                            })
-                            .await;
-                    }
-                    y_service::TurnEvent::ToolResult {
-                        tool_call_id,
-                        name,
-                        success,
-                        duration_ms,
-                        input_preview,
-                        result_preview,
-                        agent_name,
-                        url_meta,
-                        metadata,
-                    } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::ToolCallCompleted {
-                                tool_call_id,
-                                name,
-                                success,
-                                duration_ms,
-                                input_preview,
-                                result_preview,
-                                agent_name,
-                                url_meta,
-                                metadata,
-                            })
-                            .await;
-                    }
-                    y_service::TurnEvent::FollowUpInjected { follow_up_id, text } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::FollowUpInjected { follow_up_id, text })
-                            .await;
-                    }
-                    y_service::TurnEvent::SteerInjected { steer_id, text } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::SteerInjected { steer_id, text })
-                            .await;
-                    }
-                    y_service::TurnEvent::UserInteractionRequest {
-                        interaction_id,
-                        questions,
-                        ..
-                    } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::AskUserRequested {
-                                interaction_id,
-                                questions,
-                            })
-                            .await;
-                    }
-                    y_service::TurnEvent::PermissionRequest {
-                        request_id,
-                        tool_name,
-                        action_description,
-                        reason,
-                        content_preview,
-                    } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::PermissionRequested {
-                                request_id,
-                                tool_name,
-                                action_description,
-                                reason,
-                                content_preview,
-                            })
-                            .await;
-                    }
-                    y_service::TurnEvent::PlanReviewRequest {
-                        review_id,
-                        plan_title,
-                        plan_file,
-                        estimated_effort,
-                        overview,
-                        scope_in,
-                        scope_out,
-                        ..
-                    } => {
-                        let _ = tx_stream
-                            .send(ChatEvent::PlanReviewRequested {
-                                review_id,
-                                plan_title,
-                                plan_file,
-                                estimated_effort,
-                                overview,
-                                scope_in,
-                                scope_out,
-                            })
-                            .await;
-                    }
-                    _ => {}
-                }
-            }
-        });
-
-        ChatService::begin_follow_up_run(&services, &session_id);
-        let result = orchestrator::execute_turn_streaming(
-            &services,
-            &turn_input,
-            progress_tx,
-            Some(task_cancellation),
+        run_prepared_turn(
+            services,
+            prepared,
+            created_session,
+            should_generate_title,
+            tx,
+            task_cancellation,
         )
         .await;
-        let _ = progress_forwarder.await;
-        ChatService::finish_follow_up_run(&services, &session_id).await;
-
-        match result {
-            Ok(result) => {
-                let _ = tx
-                    .send(ChatEvent::ToolCallsSnapshot {
-                        calls: result.tool_calls_executed.clone(),
-                    })
-                    .await;
-                let _ = tx
-                    .send(ChatEvent::Response {
-                        content: result.content,
-                        model: result.model,
-                        input_tokens: result.input_tokens,
-                        output_tokens: result.output_tokens,
-                        last_input_tokens: result.last_input_tokens,
-                        context_window: result.context_window,
-                        cost_usd: result.cost_usd,
-                    })
-                    .await;
-            }
-            Err(TurnError::Cancelled) => {
-                let _ = tx.send(ChatEvent::Cancelled).await;
-            }
-            Err(e) => {
-                let _ = tx.send(ChatEvent::Error(format!("{e}"))).await;
-            }
-        }
     });
 
     Some(ActiveChat {
         events: rx,
         cancellation,
     })
+}
+
+/// Prepare the latest non-invalidated LLM checkpoint for an explicit retry.
+pub async fn prepare_retry_last_request(
+    services: &AppServices,
+    session_id: &SessionId,
+    config_dir: Option<&std::path::Path>,
+) -> Result<Option<PreparedTurn>, String> {
+    let checkpoints = services
+        .chat_checkpoint_manager
+        .list_checkpoints(session_id)
+        .await
+        .map_err(|error| format!("Could not list retry checkpoints: {error}"))?;
+    let Some(checkpoint) = checkpoints.first() else {
+        return Ok(None);
+    };
+
+    y_service::SystemService::thaw_frozen_providers(services).await;
+    let mut prepared = ChatService::prepare_resend_turn(
+        services,
+        ResendTurnRequest {
+            session_id: session_id.clone(),
+            checkpoint_id: checkpoint.checkpoint_id.clone(),
+            provider_id: None,
+            request_mode: None,
+            knowledge_collections: None,
+            thinking: None,
+            plan_mode: None,
+            operation_mode: None,
+        },
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let effective_config_dir = config_dir
+        .map(std::path::Path::to_path_buf)
+        .or_else(crate::config::dirs_user_config)
+        .ok_or_else(|| "Failed to resolve the y-agent configuration directory".to_string())?;
+    let fallback_working_directory = std::env::current_dir().ok();
+    ChatService::apply_prepared_turn_context(
+        services,
+        &effective_config_dir,
+        fallback_working_directory.as_deref(),
+        &mut prepared,
+    )
+    .await;
+    Ok(Some(prepared))
+}
+
+/// Start a previously prepared resend without appending another user message.
+pub fn submit_prepared_retry(
+    prepared: PreparedTurn,
+    state: &mut AppState,
+    services: &Arc<AppServices>,
+) -> ActiveChat {
+    state.is_streaming = true;
+    state.is_cancelling = false;
+    state.scroll_offset = 0;
+    state.messages.push(ChatMessage {
+        role: MessageRole::Assistant,
+        content: String::new(),
+        timestamp: Utc::now(),
+        is_streaming: true,
+        is_cancelled: false,
+        reasoning_content: String::new(),
+        reasoning_complete: false,
+        tool_calls: Vec::new(),
+        segments: Vec::new(),
+    });
+
+    let services = Arc::clone(services);
+    let (tx, rx) = mpsc::channel(16);
+    let cancellation = TurnCancellationToken::new();
+    let task_cancellation = cancellation.clone();
+    tokio::spawn(async move {
+        run_prepared_turn(services, prepared, None, false, tx, task_cancellation).await;
+    });
+
+    ActiveChat {
+        events: rx,
+        cancellation,
+    }
+}
+
+async fn run_prepared_turn(
+    services: Arc<AppServices>,
+    prepared: PreparedTurn,
+    created_session: Option<y_core::session::SessionNode>,
+    should_generate_title: bool,
+    tx: mpsc::Sender<ChatEvent>,
+    cancellation: TurnCancellationToken,
+) {
+    let session_id = prepared.session_id.clone();
+    let session_id_str = session_id.to_string();
+    if let Some(node) = created_session {
+        let _ = tx
+            .send(ChatEvent::SessionCreated {
+                id: session_id_str.clone(),
+                title: "New Chat".into(),
+                updated_at: node.updated_at,
+            })
+            .await;
+    }
+
+    if should_generate_title {
+        spawn_title_generation(
+            Arc::clone(&services),
+            tx.clone(),
+            session_id.clone(),
+            session_id_str,
+        );
+    }
+
+    let turn_input = prepared.as_turn_input();
+    let (progress_tx, progress_rx) = y_service::TurnEventSender::channel();
+    let (progress_finish_tx, progress_finish_rx) = tokio::sync::oneshot::channel();
+    let progress_forwarder = tokio::spawn(forward_progress_events(
+        progress_rx,
+        tx.clone(),
+        progress_finish_rx,
+    ));
+
+    ChatService::begin_follow_up_run(&services, &session_id);
+    let result = orchestrator::execute_turn_streaming(
+        &services,
+        &turn_input,
+        progress_tx,
+        Some(cancellation),
+    )
+    .await;
+    let _ = progress_finish_tx.send(());
+    let _ = progress_forwarder.await;
+    ChatService::finish_follow_up_run(&services, &session_id).await;
+
+    match result {
+        Ok(result) => {
+            let _ = tx
+                .send(ChatEvent::ToolCallsSnapshot {
+                    calls: result.tool_calls_executed.clone(),
+                })
+                .await;
+            let _ = tx
+                .send(ChatEvent::Response {
+                    content: result.content,
+                    model: result.model,
+                    input_tokens: result.input_tokens,
+                    output_tokens: result.output_tokens,
+                    last_input_tokens: result.last_input_tokens,
+                    context_window: result.context_window,
+                    cost_usd: result.cost_usd,
+                })
+                .await;
+        }
+        Err(TurnError::Cancelled) => {
+            let _ = tx.send(ChatEvent::Cancelled).await;
+        }
+        Err(error) => {
+            let _ = tx.send(ChatEvent::Error(error.to_string())).await;
+        }
+    }
+}
+
+fn spawn_title_generation(
+    services: Arc<AppServices>,
+    tx: mpsc::Sender<ChatEvent>,
+    session_id: SessionId,
+    session_id_string: String,
+) {
+    tokio::spawn(async move {
+        let has_manual_title = services
+            .session_manager
+            .get_session(&session_id)
+            .await
+            .map(|session| session.manual_title.is_some())
+            .unwrap_or(false);
+        if has_manual_title {
+            return;
+        }
+        let transcript = match services.session_manager.read_transcript(&session_id).await {
+            Ok(transcript) => transcript,
+            Err(error) => {
+                warn!(%error, "failed to read transcript for title generation");
+                return;
+            }
+        };
+        match services
+            .session_manager
+            .generate_title(&*services.agent_delegator, &session_id, &transcript)
+            .await
+        {
+            Ok(title) => {
+                let _ = tx
+                    .send(ChatEvent::TitleUpdated {
+                        session_id: session_id_string,
+                        title,
+                    })
+                    .await;
+            }
+            Err(error) => warn!(%error, "title generation failed"),
+        }
+    });
+}
+
+async fn forward_progress_events(
+    mut progress_rx: mpsc::UnboundedReceiver<(y_service::TurnEvent, Option<SessionId>)>,
+    tx: mpsc::Sender<ChatEvent>,
+    mut finish: tokio::sync::oneshot::Receiver<()>,
+) {
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut finish => {
+                while let Ok((event, _session_id)) = progress_rx.try_recv() {
+                    if !forward_progress_event(event, &tx).await {
+                        return;
+                    }
+                }
+                return;
+            }
+            received = progress_rx.recv() => {
+                let Some((event, _session_id)) = received else {
+                    return;
+                };
+                if !forward_progress_event(event, &tx).await {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn forward_progress_event(event: y_service::TurnEvent, tx: &mpsc::Sender<ChatEvent>) -> bool {
+    let event = match event {
+        y_service::TurnEvent::StreamDelta { content, .. } => {
+            Some(ChatEvent::StreamDelta { content })
+        }
+        y_service::TurnEvent::StreamReasoningDelta { content, .. } => {
+            Some(ChatEvent::StreamReasoningDelta { content })
+        }
+        y_service::TurnEvent::ToolStart {
+            tool_call_id,
+            name,
+            input_preview,
+            agent_name,
+        } => Some(ChatEvent::ToolCallStarted {
+            tool_call_id,
+            name,
+            input_preview,
+            agent_name,
+        }),
+        y_service::TurnEvent::ToolResult {
+            tool_call_id,
+            name,
+            success,
+            duration_ms,
+            input_preview,
+            result_preview,
+            agent_name,
+            url_meta,
+            metadata,
+        } => Some(ChatEvent::ToolCallCompleted {
+            tool_call_id,
+            name,
+            success,
+            duration_ms,
+            input_preview,
+            result_preview,
+            agent_name,
+            url_meta,
+            metadata,
+        }),
+        y_service::TurnEvent::FollowUpInjected { follow_up_id, text } => {
+            Some(ChatEvent::FollowUpInjected { follow_up_id, text })
+        }
+        y_service::TurnEvent::SteerInjected { steer_id, text } => {
+            Some(ChatEvent::SteerInjected { steer_id, text })
+        }
+        y_service::TurnEvent::UserInteractionRequest {
+            interaction_id,
+            questions,
+            ..
+        } => Some(ChatEvent::AskUserRequested {
+            interaction_id,
+            questions,
+        }),
+        y_service::TurnEvent::PermissionRequest {
+            request_id,
+            tool_name,
+            action_description,
+            reason,
+            content_preview,
+        } => Some(ChatEvent::PermissionRequested {
+            request_id,
+            tool_name,
+            action_description,
+            reason,
+            content_preview,
+        }),
+        y_service::TurnEvent::PlanReviewRequest {
+            review_id,
+            plan_title,
+            plan_file,
+            estimated_effort,
+            overview,
+            scope_in,
+            scope_out,
+            ..
+        } => Some(ChatEvent::PlanReviewRequested {
+            review_id,
+            plan_title,
+            plan_file,
+            estimated_effort,
+            overview,
+            scope_in,
+            scope_out,
+        }),
+        _ => None,
+    };
+    if let Some(event) = event {
+        tx.send(event).await.is_ok()
+    } else {
+        true
+    }
 }
 
 async fn create_workspace_session(
@@ -1124,6 +1230,33 @@ mod tests {
     use crate::tui::state::SessionListItem;
 
     #[tokio::test]
+    async fn progress_forwarder_finishes_even_when_a_sender_clone_lingers() {
+        let (progress, progress_rx) = y_service::TurnEventSender::channel();
+        let lingering_sender = progress.clone();
+        let (chat_tx, mut chat_rx) = mpsc::channel(4);
+        let (finish_tx, finish_rx) = tokio::sync::oneshot::channel();
+        let forwarder = tokio::spawn(forward_progress_events(progress_rx, chat_tx, finish_rx));
+        progress
+            .send(y_service::TurnEvent::StreamDelta {
+                content: "partial".to_string(),
+                agent_name: "root".to_string(),
+            })
+            .unwrap();
+
+        finish_tx.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), forwarder)
+            .await
+            .expect("forwarder waited for the lingering sender")
+            .unwrap();
+
+        assert!(matches!(
+            chat_rx.recv().await,
+            Some(ChatEvent::StreamDelta { content }) if content == "partial"
+        ));
+        drop(lingering_sender);
+    }
+
+    #[tokio::test]
     async fn prepare_tui_turn_uses_shared_service_preparation() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = y_service::ServiceConfig {
@@ -1149,6 +1282,55 @@ mod tests {
         let managers = services.file_history_managers.read().await;
         let manager = managers.get(&prepared.session_id).unwrap();
         assert_eq!(manager.snapshots().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn prepare_retry_last_request_reuses_latest_user_turn() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = y_service::ServiceConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
+        config.storage.transcript_dir = temp.path().join("transcripts");
+        let services = AppServices::from_config(&config).await.unwrap();
+        let (prepared, _) = prepare_tui_turn(
+            &services,
+            None,
+            "continue after the tool call".into(),
+            None,
+            TurnMode::Fast,
+            Vec::new(),
+        )
+        .await
+        .unwrap();
+        services
+            .chat_checkpoint_manager
+            .create_checkpoint(&prepared.session_id, 1, 0, "scope-1".into())
+            .await
+            .unwrap();
+
+        let resent = prepare_retry_last_request(&services, &prepared.session_id, Some(temp.path()))
+            .await
+            .unwrap()
+            .expect("checkpoint should be retryable");
+
+        assert_eq!(resent.user_input, "continue after the tool call");
+        assert_eq!(resent.session_id, prepared.session_id);
+    }
+
+    #[tokio::test]
+    async fn prepare_retry_last_request_returns_none_without_checkpoint() {
+        let config = y_service::ServiceConfig {
+            storage: y_service::config_types::StorageConfig::in_memory(),
+            ..Default::default()
+        };
+        let services = AppServices::from_config(&config).await.unwrap();
+
+        let resent = prepare_retry_last_request(&services, &SessionId::new(), None)
+            .await
+            .unwrap();
+
+        assert!(resent.is_none());
     }
 
     // T-TUI-05-01: User message appended to history.

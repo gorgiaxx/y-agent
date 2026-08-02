@@ -53,7 +53,7 @@ impl ChatCheckpointManager {
         }
     }
 
-    /// Create a checkpoint after a completed agent turn.
+    /// Create or refresh a checkpoint for an agent turn.
     ///
     /// - `session_id`: The session this turn belongs to.
     /// - `turn_number`: 1-indexed turn counter.
@@ -72,8 +72,8 @@ impl ChatCheckpointManager {
         journal_scope_id: String,
     ) -> Result<ChatCheckpoint, SessionError> {
         // Reuse the existing id for this turn if the slot is already occupied.
-        // A turn is checkpointed on failure (so a retry can anchor to it) and
-        // again on the subsequent successful retry; reusing the id keeps the
+        // A turn is checkpointed before provider execution and refreshed after
+        // completion or a handled failure; reusing the id keeps the
         // (session_id, turn_number) slot stable instead of churning ids or
         // colliding with the UNIQUE(session_id, turn_number) constraint.
         let existing_id = self

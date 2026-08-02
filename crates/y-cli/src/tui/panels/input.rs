@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 use tui_textarea::TextArea;
 
+use crate::tui::keys::{platform_shortcut_label, KeyAction, KeyContext, Keymap};
 use crate::tui::state::{InteractionMode, PanelFocus};
 use crate::tui::theme::Theme;
 
@@ -49,6 +50,7 @@ pub fn render(
     is_cancelling: bool,
     follow_up_count: usize,
     textarea: &mut TextArea<'_>,
+    keymap: &Keymap,
     t: &Theme,
 ) {
     let is_focused = focus == PanelFocus::Input;
@@ -104,7 +106,14 @@ pub fn render(
             height: area.height.saturating_sub(2),
         };
         if inner.width > 0 && inner.height > 0 {
-            let hint = input_hint(focus, mode, is_streaming, is_cancelling, follow_up_count);
+            let hint = input_hint(
+                focus,
+                mode,
+                is_streaming,
+                is_cancelling,
+                follow_up_count,
+                keymap,
+            );
             frame.render_widget(
                 Paragraph::new(hint).style(Style::default().fg(t.muted())),
                 inner,
@@ -124,6 +133,7 @@ fn input_hint(
     is_streaming: bool,
     is_cancelling: bool,
     follow_up_count: usize,
+    keymap: &Keymap,
 ) -> String {
     if focus != PanelFocus::Input {
         return "Message".to_string();
@@ -133,17 +143,65 @@ fn input_hint(
             return "Shell  Cancelling...".to_string();
         }
         if is_streaming {
-            return "Shell  Running...  Esc cancel".to_string();
+            return format!(
+                "Shell  Running...  {}",
+                input_action_hint(
+                    keymap,
+                    KeyContext::Streaming,
+                    KeyAction::CancelStreaming,
+                    "cancel"
+                )
+            );
         }
-        return "Shell  Enter run  Esc exit".to_string();
+        return format!(
+            "Shell  {}  {}",
+            input_action_hint(keymap, KeyContext::Shell, KeyAction::Submit, "run"),
+            input_action_hint(keymap, KeyContext::Shell, KeyAction::ReturnToNormal, "exit")
+        );
     }
     if is_cancelling {
         return " TODO  Cancelling...".to_string();
     }
     if is_streaming {
-        return format!(" TODO ({follow_up_count})  Enter queue  Esc cancel");
+        return format!(
+            "TODO ({follow_up_count})  {}  {}",
+            input_action_hint(
+                keymap,
+                KeyContext::NormalInputEmpty,
+                KeyAction::Submit,
+                "queue"
+            ),
+            input_action_hint(
+                keymap,
+                KeyContext::Streaming,
+                KeyAction::CancelStreaming,
+                "cancel"
+            )
+        );
     }
-    "Message  / commands  Enter send".to_string()
+    format!(
+        "Message  {}  / commands",
+        input_action_hint(
+            keymap,
+            KeyContext::NormalInputEmpty,
+            KeyAction::Submit,
+            "send"
+        )
+    )
+}
+
+fn input_action_hint(
+    keymap: &Keymap,
+    context: KeyContext,
+    action: KeyAction,
+    label: &str,
+) -> String {
+    keymap
+        .primary_shortcut_in_context(context, action)
+        .map_or_else(
+            || label.to_string(),
+            |shortcut| format!("{} {label}", platform_shortcut_label(&shortcut)),
+        )
 }
 
 /// Calculate the desired input area height based on content.
@@ -187,23 +245,44 @@ mod tests {
     #[test]
     fn test_input_hint_explains_todo_queue_and_cancel_during_streaming() {
         assert_eq!(
-            input_hint(PanelFocus::Input, InteractionMode::Normal, true, false, 0),
-            " TODO (0)  Enter queue  Esc cancel"
+            input_hint(
+                PanelFocus::Input,
+                InteractionMode::Normal,
+                true,
+                false,
+                0,
+                &Keymap::default(),
+            ),
+            "TODO (0)  Enter queue  Esc cancel"
         );
     }
 
     #[test]
     fn test_input_hint_shows_todo_queue_depth_during_streaming() {
         assert_eq!(
-            input_hint(PanelFocus::Input, InteractionMode::Normal, true, false, 3),
-            " TODO (3)  Enter queue  Esc cancel"
+            input_hint(
+                PanelFocus::Input,
+                InteractionMode::Normal,
+                true,
+                false,
+                3,
+                &Keymap::default(),
+            ),
+            "TODO (3)  Enter queue  Esc cancel"
         );
     }
 
     #[test]
     fn test_input_hint_reports_pending_cancellation() {
         assert_eq!(
-            input_hint(PanelFocus::Input, InteractionMode::Normal, true, true, 2),
+            input_hint(
+                PanelFocus::Input,
+                InteractionMode::Normal,
+                true,
+                true,
+                2,
+                &Keymap::default(),
+            ),
             " TODO  Cancelling..."
         );
     }
@@ -211,23 +290,51 @@ mod tests {
     #[test]
     fn test_input_hint_unfocused_and_idle() {
         assert_eq!(
-            input_hint(PanelFocus::Chat, InteractionMode::Normal, true, false, 5),
+            input_hint(
+                PanelFocus::Chat,
+                InteractionMode::Normal,
+                true,
+                false,
+                5,
+                &Keymap::default(),
+            ),
             "Message"
         );
         assert_eq!(
-            input_hint(PanelFocus::Input, InteractionMode::Normal, false, false, 0),
-            "Message  / commands  Enter send"
+            input_hint(
+                PanelFocus::Input,
+                InteractionMode::Normal,
+                false,
+                false,
+                0,
+                &Keymap::default(),
+            ),
+            "Message  Enter send  / commands"
         );
     }
 
     #[test]
     fn test_input_hint_identifies_shell_mode() {
         assert_eq!(
-            input_hint(PanelFocus::Input, InteractionMode::Shell, false, false, 0),
+            input_hint(
+                PanelFocus::Input,
+                InteractionMode::Shell,
+                false,
+                false,
+                0,
+                &Keymap::default(),
+            ),
             "Shell  Enter run  Esc exit"
         );
         assert_eq!(
-            input_hint(PanelFocus::Input, InteractionMode::Shell, true, false, 0),
+            input_hint(
+                PanelFocus::Input,
+                InteractionMode::Shell,
+                true,
+                false,
+                0,
+                &Keymap::default(),
+            ),
             "Shell  Running...  Esc cancel"
         );
     }
@@ -248,6 +355,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         let mut textarea = TextArea::default();
         let theme = Theme::default();
+        let keymap = Keymap::default();
         terminal
             .draw(|frame| {
                 render(
@@ -259,6 +367,7 @@ mod tests {
                     false,
                     0,
                     &mut textarea,
+                    &keymap,
                     &theme,
                 );
             })
@@ -273,7 +382,7 @@ mod tests {
         // The hint appears on the first content row inside the box.
         let inner_row = row_text(&terminal, 1);
         assert!(
-            inner_row.contains("Message  / commands  Enter send"),
+            inner_row.contains("Message  Enter send  / commands"),
             "placeholder must render inside the box: {inner_row:?}"
         );
     }
@@ -285,6 +394,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         let mut textarea = TextArea::new(vec!["hi".to_string()]);
         let theme = Theme::default();
+        let keymap = Keymap::default();
         terminal
             .draw(|frame| {
                 render(
@@ -296,6 +406,7 @@ mod tests {
                     false,
                     0,
                     &mut textarea,
+                    &keymap,
                     &theme,
                 );
             })

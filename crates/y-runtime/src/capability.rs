@@ -43,6 +43,21 @@ impl<'a> CapabilityChecker<'a> {
         Ok(capped)
     }
 
+    /// Validate a declared capability set without a full execution request.
+    ///
+    /// Used for pre-flight checks (e.g. skipping a pointless HITL prompt when
+    /// the policy will certainly refuse the capabilities anyway).
+    pub fn validate_capabilities(
+        &self,
+        caps: &RuntimeCapability,
+    ) -> Result<(), RuntimeModuleError> {
+        self.validate_network(&caps.network)?;
+        self.validate_filesystem(&caps.filesystem)?;
+        self.validate_container(&caps.container, None)?;
+        self.validate_process(&caps.process)?;
+        Ok(())
+    }
+
     /// Validate network capability.
     fn validate_network(&self, network: &NetworkCapability) -> Result<(), RuntimeModuleError> {
         match network {
@@ -137,7 +152,9 @@ impl<'a> CapabilityChecker<'a> {
     fn validate_process(&self, process: &ProcessCapability) -> Result<(), RuntimeModuleError> {
         if process.shell && !self.config.allow_shell {
             return Err(RuntimeModuleError::CapabilityDenied {
-                capability: "process: shell execution denied by policy".into(),
+                capability: "process: shell execution denied by policy; \
+                             set allow_shell = true in runtime.toml to enable it"
+                    .into(),
             });
         }
         Ok(())

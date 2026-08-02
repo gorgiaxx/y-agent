@@ -53,6 +53,12 @@ pub enum CommandResult {
     QueueFollowUp(String),
     /// Open the background task and subagent overlay.
     OpenTasksOverlay,
+    /// Retry the most recent service checkpoint at LLM-request granularity.
+    RetryLastRequest,
+    /// Open the searchable theme picker.
+    OpenThemePicker,
+    /// Apply a built-in or custom theme by name.
+    SelectTheme(String),
 }
 
 /// Deferred async commands that require `AppServices` access.
@@ -148,6 +154,9 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             state.cumulative_output_tokens = 0;
             state.last_input_tokens = 0;
             state.last_cost = None;
+            // A new session starts with the pending pre-session permission
+            // choice (if any), never the previous session's mode.
+            state.permission_mode = state.pending_permission_mode.unwrap_or_default();
             // `context_window` is provider metadata, not per-session: leave it
             // so the usage bar still renders against the active provider limit.
             CommandResult::NewSession
@@ -202,6 +211,11 @@ pub fn execute(input: &str, state: &mut AppState) -> CommandResult {
             };
             CommandResult::Async(AsyncCommand::ResumeSession(target))
         }
+
+        "retry" => CommandResult::RetryLastRequest,
+
+        "theme" if args.trim().is_empty() => CommandResult::OpenThemePicker,
+        "theme" => CommandResult::SelectTheme(args.trim().to_string()),
 
         "goal" => {
             if args.is_empty() {
@@ -489,6 +503,29 @@ mod tests {
         assert!(state.follow_up_queue.is_empty());
     }
 
+    // A new session must not inherit the previous session's permission mode:
+    // it falls back to the pending pre-session choice, or to default.
+    #[test]
+    fn test_new_command_resets_permission_mode() {
+        use y_core::permission_types::PermissionMode;
+
+        let mut state = AppState::new();
+        state.permission_mode = PermissionMode::BypassPermissions;
+
+        let result = execute("new", &mut state);
+        assert!(matches!(result, CommandResult::NewSession));
+        assert_eq!(state.permission_mode, PermissionMode::Default);
+
+        // A pending pre-session choice survives into the next session.
+        let mut state = AppState::new();
+        state.permission_mode = PermissionMode::BypassPermissions;
+        state.pending_permission_mode = Some(PermissionMode::Plan);
+
+        let result = execute("new", &mut state);
+        assert!(matches!(result, CommandResult::NewSession));
+        assert_eq!(state.permission_mode, PermissionMode::Plan);
+    }
+
     #[test]
     fn test_queue_command_opens_queue_overlay() {
         let mut state = AppState::new();
@@ -508,6 +545,30 @@ mod tests {
         assert!(matches!(
             execute("todo", &mut state),
             CommandResult::Error(message) if message.contains("/todo <text>")
+        ));
+    }
+
+    #[test]
+    fn test_retry_command_requests_last_llm_retry() {
+        let mut state = AppState::new();
+
+        assert!(matches!(
+            execute("retry", &mut state),
+            CommandResult::RetryLastRequest
+        ));
+    }
+
+    #[test]
+    fn test_theme_command_opens_picker_or_selects_named_theme() {
+        let mut state = AppState::new();
+
+        assert!(matches!(
+            execute("theme", &mut state),
+            CommandResult::OpenThemePicker
+        ));
+        assert!(matches!(
+            execute("theme nord", &mut state),
+            CommandResult::SelectTheme(ref name) if name == "nord"
         ));
     }
 

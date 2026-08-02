@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph};
 use ratatui::Frame;
 
 use super::picker::{preview, visible_range, PickerItem, PickerState};
-use crate::tui::keys::{KeyAction, Keymap};
+use crate::tui::keys::{platform_shortcut_label, KeyAction, Keymap};
 use crate::tui::theme::Theme;
 
 /// A follow-up plus its precomputed lowercase match text, mirroring the
@@ -161,14 +161,14 @@ pub fn render(
 }
 
 fn queue_footer(keymap: &Keymap) -> String {
-    let mut hints = vec!["Up/Down navigate".to_string()];
+    let mut hints = vec!["Up/Down choose".to_string()];
     for (action, label) in [
         (KeyAction::QueueDelete, "delete"),
         (KeyAction::QueueSteer, "steer"),
-        (KeyAction::QueueRecall, "edit"),
+        (KeyAction::QueueRecall, "edit in composer"),
     ] {
         if let Some(shortcut) = keymap.primary_shortcut(action) {
-            hints.push(format!("{shortcut} {label}"));
+            hints.push(format!("{} {label}", platform_shortcut_label(&shortcut)));
         }
     }
     hints.push("Esc close".to_string());

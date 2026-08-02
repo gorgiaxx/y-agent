@@ -1,0 +1,22 @@
+# Copy this file to ~/.config/y-agent/themes/custom.toml and set
+# `theme = "custom"` in ~/.config/y-agent/tui.toml, or select it with `/theme`.
+# Unspecified semantic colors keep their built-in values. Values may be
+# `#RRGGBB`, an xterm index from 0 through 255, or an ANSI color name.
+
+[colors]
+panel_bg = "#101418"
+code_bg = "#182027"
+border_focused = "#5fb3b3"
+text = "#d8dee9"
+muted = "#7f8c98"
+user_accent = "#99c794"
+assistant_accent = "#6699cc"
+system_accent = "#fac863"
+success = "#99c794"
+warning = "#fac863"
+error = "#ec5f67"
+think_accent = "#c594c5"
+tool_card_accent = "#5fb3b3"
+status_model = "#c594c5"
+status_path = "#5fb3b3"
+input_border_focused = "#5fb3b3"

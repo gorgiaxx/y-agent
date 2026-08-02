@@ -790,7 +790,14 @@ The TUI loads action-level overrides from the user-owned
 `tui-keymap.toml`; `config/tui-keymap.example.toml` documents the supported
 shape. Missing configuration preserves built-in defaults, while invalid chords,
 unknown actions, and simultaneously active conflicts fail closed with a visible
-diagnostic.
+diagnostic. Mouse selection copying and theme selection are presentation
+preferences loaded from `tui.toml`. The `/theme` picker exposes built-in dark,
+light, Nord, Gruvbox, Solarized, and Dracula color schemes with searchable live
+preview, cancel restoration, and durable selection. Custom themes live in the
+user-owned `themes/` directory, are re-scanned whenever the picker opens, and
+override validated semantic color tokens; invalid files fall back to the
+built-in theme with a visible diagnostic. Hex colors are
+reduced to an xterm index when the terminal does not advertise truecolor.
 Persistent prompt history and unfinished drafts are bounded, atomically written,
 and stored outside transcripts. Composer fragments and attachment chips remain
 presentation state until the exact turn is submitted to `y-service`.
@@ -802,7 +809,9 @@ promotes the first pending item through the same single-steering-slot contract
 used by the GUI. The full queue overlay performs edit, delete, steer, and
 un-steer operations through service APIs. Inline hints and slash-palette
 shortcut labels resolve their displayed chords from semantic keymap actions so
-user overrides cannot leave a second hard-coded shortcut table behind.
+user overrides cannot leave a second hard-coded shortcut table behind. The
+newest pending TODO can also be recalled directly into the composer without
+opening the overlay; an existing draft is preserved after the recalled text.
 
 Slash completion is a projection of the primary composer, not a second input
 buffer. The composer retains the visible text, cursor, editing, paste, and
@@ -816,6 +825,14 @@ source of truth. Before applying the terminal response, the TUI reconciles its
 tool cards against the completed `TurnResult.tool_calls_executed` snapshot so a
 dropped or delayed progress event cannot remove an executed tool from the live
 transcript. Persisted display transcripts remain the source of truth on resume.
+
+Explicit TUI retry delegates to `ChatService::prepare_resend_turn` using the
+latest non-invalidated checkpoint. Retry is therefore scoped to the most recent
+LLM request: completed tool calls and partial intra-turn display state are
+preserved by the service resend contract, while no duplicate user message is
+appended. Frozen providers are thawed for this operator-requested attempt.
+Unexpected event-channel closure is treated as an interrupted turn, restores
+any submitted composer draft, and exposes the same retry action as `/retry`.
 
 Session rename, archive, deletion, branching, pinning, and quick-slot ownership
 belong to `y-service`. The TUI may render a searchable workspace-scoped hub and

@@ -67,6 +67,24 @@ const STEP_LABELS = [
   'Complete',
 ];
 
+const STEP_TITLES = [
+  'Configure Your LLM Provider',
+  'Runtime Configuration',
+  'Browser Configuration',
+  'Safety Guardrails',
+  'Knowledge Base',
+  'Setup Complete',
+];
+
+const STEP_STATE_LABELS = {
+  completed: 'completed',
+  active: 'current',
+  pending: 'upcoming',
+  skipped: 'skipped',
+} as const;
+
+type WizardStepState = keyof typeof STEP_STATE_LABELS;
+
 const API_TYPES = [
   { id: 'openai-compat', label: 'OpenAI Compatible', iconId: 'OpenAI' },
   { id: 'anthropic', label: 'Anthropic', iconId: 'Anthropic' },
@@ -345,7 +363,6 @@ export function SetupWizard({
 
   const renderStep0_Providers = () => (
     <div key="step-0">
-      <h2 className="wizard-step-title">Configure Your LLM Provider</h2>
       <p className="wizard-step-description">
         At minimum, you need one provider tagged as <strong>general</strong> for the agent to
         function. This will be the primary model used for all tasks.
@@ -499,7 +516,6 @@ export function SetupWizard({
 
   const renderStep1_Runtime = () => (
     <div key="step-1">
-      <h2 className="wizard-step-title">Runtime Configuration</h2>
       <p className="wizard-step-description">
         Control how the agent executes code and commands on your system.
       </p>
@@ -525,7 +541,6 @@ export function SetupWizard({
 
   const renderStep2_Browser = () => (
     <div key="step-2">
-      <h2 className="wizard-step-title">Browser Configuration</h2>
       <p className="wizard-step-description">
         The agent can browse the web using a Chromium-based browser for research and data
         collection.
@@ -563,7 +578,7 @@ export function SetupWizard({
       </SettingsGroup>
 
       {browserEnabled && (
-        <div className="wizard-info-card info">
+        <div className="wizard-info-card">
           <Settings size={14} className="wizard-info-card-icon" />
           <span>
             y-agent automatically detects <strong>Chrome</strong>, <strong>Brave</strong>,
@@ -577,7 +592,6 @@ export function SetupWizard({
 
   const renderStep3_Guardrails = () => (
     <div key="step-3">
-      <h2 className="wizard-step-title">Safety Guardrails</h2>
       <p className="wizard-step-description">
         Configure how the agent handles permissions, human approval, and loop prevention.
       </p>
@@ -625,7 +639,6 @@ export function SetupWizard({
 
   const renderStep4_Knowledge = () => (
     <div key="step-4">
-      <h2 className="wizard-step-title">Knowledge Base</h2>
       <p className="wizard-step-description">
         The knowledge base enables semantic search over your documents using vector embeddings.
         This requires an embedding API service.
@@ -690,7 +703,6 @@ export function SetupWizard({
           alt="y-agent"
           className="wizard-complete-logo"
         />
-        <h2 className="wizard-complete-title">Setup Complete</h2>
         <p className="wizard-complete-text">
           Your initial configuration is ready. You can start using y-agent right away.
           For more advanced configuration options, visit the Settings panel.
@@ -720,7 +732,7 @@ export function SetupWizard({
   };
 
   // ---- Timeline step state ----
-  const getStepState = (i: number) => {
+  const getStepState = (i: number): WizardStepState => {
     if (i < step) {
       return skippedSteps.has(i) ? 'skipped' : 'completed';
     }
@@ -744,23 +756,38 @@ export function SetupWizard({
       {/* Header */}
       <div className="wizard-header" data-tauri-drag-region>
         <img src="/logo-256x256.png" alt="y-agent" className="wizard-logo" />
-        <h1 className="wizard-header-title">Setup Wizard</h1>
+        <div className="wizard-header-copy">
+          <h1 className="wizard-header-title">Setup Wizard</h1>
+          <h2 id="wizard-current-step-title" className="wizard-header-step" aria-live="polite">
+            {STEP_TITLES[step]}
+          </h2>
+        </div>
       </div>
 
       {/* Timeline step indicator */}
-      <div className="wizard-timeline">
-        {STEP_LABELS.map((label, i) => (
-          <div key={i} className={`wizard-timeline-step ${getStepState(i)}`}>
-            <div className="wizard-timeline-step-top">
-              <span className="wizard-timeline-dot" />
-            </div>
-            <span className="wizard-timeline-label">{label}</span>
-          </div>
-        ))}
+      <div className="wizard-timeline" aria-label="Setup progress">
+        <ol className="wizard-timeline-track">
+          {STEP_LABELS.map((label, i) => {
+            const stepState = getStepState(i);
+            return (
+              <li
+                key={label}
+                className={`wizard-timeline-step ${stepState}`}
+                aria-label={`${label}: ${STEP_STATE_LABELS[stepState]}`}
+                aria-current={stepState === 'active' ? 'step' : undefined}
+              >
+                <div className="wizard-timeline-step-top" aria-hidden="true">
+                  <span className="wizard-timeline-dot" />
+                </div>
+                <span className="wizard-timeline-label" aria-hidden="true">{label}</span>
+              </li>
+            );
+          })}
+        </ol>
       </div>
 
       {/* Body */}
-      <div className="wizard-body" key={step}>
+      <div className="wizard-body" key={step} aria-labelledby="wizard-current-step-title">
         <div className="wizard-body-inner">
           {renderCurrentStep()}
         </div>

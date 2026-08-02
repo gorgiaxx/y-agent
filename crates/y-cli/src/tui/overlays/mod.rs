@@ -14,5 +14,6 @@ pub mod prompt_picker;
 pub mod queue_picker;
 pub mod session_picker;
 pub mod tasks_picker;
+pub mod theme_picker;
 pub mod toast;
 pub mod transcript_search;

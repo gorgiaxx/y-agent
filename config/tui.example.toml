@@ -1,0 +1,10 @@
+# Copy this file to the user configuration directory as `tui.toml`.
+# Path: ~/.config/y-agent/tui.toml
+
+# Copy selected composer or transcript text when a mouse drag ends.
+copy_on_select = true
+
+# Built-ins: default, dark, light, nord, gruvbox-dark, solarized-dark,
+# solarized-light, and dracula. Run `/theme` for searchable live preview.
+# Any other value loads ~/.config/y-agent/themes/<theme>.toml.
+theme = "default"

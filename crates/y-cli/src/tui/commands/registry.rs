@@ -28,6 +28,7 @@ impl CommandInfo {
     pub fn shortcut_action(&self) -> Option<KeyAction> {
         match self.name {
             "resume" => Some(KeyAction::OpenSessionHub),
+            "retry" => Some(KeyAction::RetryLastRequest),
             "shortcuts" => Some(KeyAction::ShowHelp),
             "copy" => Some(KeyAction::OpenCopy),
             "queue" => Some(KeyAction::OpenQueue),
@@ -164,6 +165,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             category: CommandCategory::Session,
         },
         CommandInfo {
+            name: "retry",
+            alias: None,
+            description: "Retry the most recent LLM request",
+            args: "",
+            category: CommandCategory::Session,
+        },
+        CommandInfo {
             name: "list",
             alias: Some("ls"),
             description: "List all sessions",
@@ -289,6 +297,13 @@ fn builtin_commands() -> Vec<CommandInfo> {
             alias: Some("file"),
             description: "Attach a local file to the next turn",
             args: "<path>",
+            category: CommandCategory::General,
+        },
+        CommandInfo {
+            name: "theme",
+            alias: None,
+            description: "Choose a built-in or custom color scheme",
+            args: "[name]",
             category: CommandCategory::General,
         },
         // Debug commands
@@ -492,6 +507,10 @@ mod tests {
             "todo command should be discoverable"
         );
         assert!(
+            reg.find("theme").is_some(),
+            "theme command should be discoverable"
+        );
+        assert!(
             reg.find("tasks").is_some(),
             "tasks command should be discoverable"
         );
@@ -515,6 +534,9 @@ mod tests {
 
         let todo = reg.find("todo").expect("todo command");
         assert_eq!(todo.args, "<text>");
+
+        let retry = reg.find("retry").expect("retry command");
+        assert_eq!(retry.shortcut_action(), Some(KeyAction::RetryLastRequest));
     }
 
     #[test]

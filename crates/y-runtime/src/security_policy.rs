@@ -183,7 +183,9 @@ impl SecurityPolicy {
     fn check_process(&self, request: &ExecutionRequest) -> Result<(), RuntimeError> {
         if request.capabilities.process.shell && !self.allow_shell {
             return Err(RuntimeError::CapabilityDenied {
-                capability: "process.shell: shell execution denied by security policy".into(),
+                capability: "process.shell: shell execution denied by security policy; \
+                             set allow_shell = true in runtime.toml to enable it"
+                    .into(),
             });
         }
         Ok(())

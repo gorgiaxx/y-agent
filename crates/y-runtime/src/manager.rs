@@ -167,6 +167,20 @@ impl RuntimeManager {
         self.concurrency_semaphore.available_permits()
     }
 
+    /// Pre-flight policy check for a declared capability set.
+    ///
+    /// Returns the denial message when the current configuration would
+    /// certainly refuse these capabilities (e.g. shell while `allow_shell`
+    /// is false), so callers can fail fast instead of prompting the operator
+    /// for a permission that cannot take effect.
+    pub fn capability_denial(&self, caps: &RuntimeCapability) -> Option<String> {
+        let config = self.read_config();
+        CapabilityChecker::new(&config)
+            .validate_capabilities(caps)
+            .err()
+            .map(|error| error.to_string())
+    }
+
     /// Hot-reload the runtime configuration.
     ///
     /// Rebuilds the `SecurityPolicy` from the new config. The sub-runtimes
@@ -582,6 +596,51 @@ mod tests {
         let req = make_request(Some("python:3.11"), RuntimeCapability::default());
         let backend = mgr.select_backend(&req);
         assert_eq!(backend, RuntimeBackend::Docker);
+    }
+
+    // T-RT-004-PREFLIGHT-01: capability_denial flags shell capabilities when
+    // the policy disallows shell, and the message points at the fix.
+    #[test]
+    fn test_capability_denial_flags_shell_when_disallowed() {
+        let mgr = RuntimeManager::new(RuntimeConfig::default(), None);
+        let shell_caps = RuntimeCapability {
+            process: ProcessCapability {
+                shell: true,
+                ..ProcessCapability::default()
+            },
+            ..RuntimeCapability::default()
+        };
+
+        let denial = mgr.capability_denial(&shell_caps);
+        assert!(denial.is_some(), "shell must be pre-denied by default");
+        assert!(
+            denial.unwrap().contains("allow_shell"),
+            "denial must name the config knob"
+        );
+
+        // Non-shell capabilities are not pre-denied.
+        assert!(mgr
+            .capability_denial(&RuntimeCapability::default())
+            .is_none());
+    }
+
+    // T-RT-004-PREFLIGHT-02: no pre-denial once the policy allows shell.
+    #[test]
+    fn test_capability_denial_none_when_shell_allowed() {
+        let config = RuntimeConfig {
+            allow_shell: true,
+            ..RuntimeConfig::default()
+        };
+        let mgr = RuntimeManager::new(config, None);
+        let shell_caps = RuntimeCapability {
+            process: ProcessCapability {
+                shell: true,
+                ..ProcessCapability::default()
+            },
+            ..RuntimeCapability::default()
+        };
+
+        assert!(mgr.capability_denial(&shell_caps).is_none());
     }
 
     // T-RT-004-02

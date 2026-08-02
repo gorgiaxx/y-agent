@@ -127,7 +127,7 @@ async fn evaluate_tool_permission(
     let input_content = permission_rule_content(tc);
     let mut request = y_guardrails::ToolPermissionRequest::new(
         &tc.name,
-        definition.is_some_and(|value| value.is_dangerous),
+        definition.as_ref().is_some_and(|value| value.is_dangerous),
         &tool_result,
     )
     .with_input_content(input_content)
@@ -138,7 +138,31 @@ async fn evaluate_tool_permission(
     let result = container
         .guardrail_manager
         .evaluate_tool_permission(request);
-    resolve_permission_result_for_operation_mode(result, operation_mode)
+    let result = resolve_permission_result_for_operation_mode(result, operation_mode);
+
+    // Runtime-policy pre-flight: when the runtime layer will certainly refuse
+    // the tool's declared capabilities (e.g. shell while `allow_shell` is
+    // false), asking the operator for permission is pointless — the approval
+    // cannot take effect. Deny up front with an actionable message instead of
+    // prompting first and failing at execution time.
+    if !matches!(result.behavior, PermissionBehavior::Deny) {
+        if let Some(definition) = definition {
+            if let Some(denial) = container
+                .runtime_manager
+                .capability_denial(&definition.capabilities)
+            {
+                return PermissionResult {
+                    behavior: PermissionBehavior::Deny,
+                    reason: PermissionReason::Rule {
+                        rule_display: "runtime policy".to_string(),
+                    },
+                    message: Some(denial),
+                    updated_input: result.updated_input,
+                };
+            }
+        }
+    }
+    result
 }
 
 pub(crate) fn resolve_permission_result_for_operation_mode(
@@ -305,12 +329,17 @@ pub(crate) async fn execute_and_record_tool(
                 reason = %decision_reason,
                 "tool execution denied by permission policy"
             );
+            let detail = decision
+                .message
+                .as_deref()
+                .map(|message| format!(" {message}"))
+                .unwrap_or_default();
             let error_content = system_tool_error_content(
                 format!(
-                    "Tool '{}' is blocked by security policy ({}). \
+                    "Tool '{}' is blocked by security policy ({}).{} \
                  Do NOT ask the user for permission or retry this tool. \
                  Use an alternative approach or skip this action.",
-                    tc.name, decision_reason
+                    tc.name, decision_reason, detail
                 ),
                 false,
             );
@@ -2165,6 +2194,94 @@ mod tests {
         assert_eq!(
             result.behavior,
             y_core::permission_types::PermissionBehavior::Deny
+        );
+    }
+
+    async fn shell_exec_test_container(temp: &tempfile::TempDir) -> ServiceContainer {
+        let service_config = crate::ServiceConfig {
+            storage: y_storage::StorageConfig {
+                db_path: ":memory:".to_string(),
+                pool_size: 1,
+                wal_enabled: false,
+                transcript_dir: temp.path().join("transcripts"),
+                ..y_storage::StorageConfig::default()
+            },
+            ..Default::default()
+        };
+        ServiceContainer::from_config(&service_config)
+            .await
+            .unwrap()
+    }
+
+    fn shell_exec_call(command: &str) -> ToolCallRequest {
+        ToolCallRequest {
+            id: "shell-preflight".to_string(),
+            name: "ShellExec".to_string(),
+            arguments: serde_json::json!({"command": command}),
+        }
+    }
+
+    // T-DISPATCH-PREFLIGHT-01: when the runtime policy certainly refuses the
+    // tool's declared capabilities, permission evaluation denies up front —
+    // no HITL prompt — and the message names the config knob that fixes it.
+    #[tokio::test]
+    async fn runtime_policy_denial_short_circuits_hitl_for_shell_exec() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let container = shell_exec_test_container(&temp).await;
+        let session_id = SessionId::new();
+        let config = test_execution_config(session_id.clone(), &["ShellExec"]);
+
+        let result = evaluate_registered_tool_permission(
+            &container,
+            &config,
+            &shell_exec_call("ls"),
+            &session_id,
+            None,
+            &[],
+        )
+        .await;
+
+        assert_eq!(
+            result.behavior,
+            y_core::permission_types::PermissionBehavior::Deny,
+            "shell exec must be pre-denied while allow_shell = false"
+        );
+        let message = result.message.unwrap_or_default();
+        assert!(
+            message.contains("allow_shell"),
+            "denial message must explain the fix: {message}"
+        );
+    }
+
+    // T-DISPATCH-PREFLIGHT-02: with shell allowed by policy, the pre-flight
+    // does not deny (the normal guardrail pipeline decides instead).
+    #[tokio::test]
+    async fn runtime_policy_preflight_passes_when_shell_allowed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let container = shell_exec_test_container(&temp).await;
+        container
+            .runtime_manager
+            .reload_config(y_runtime::RuntimeConfig {
+                allow_shell: true,
+                ..y_runtime::RuntimeConfig::default()
+            });
+        let session_id = SessionId::new();
+        let config = test_execution_config(session_id.clone(), &["ShellExec"]);
+
+        let result = evaluate_registered_tool_permission(
+            &container,
+            &config,
+            &shell_exec_call("ls"),
+            &session_id,
+            None,
+            &[],
+        )
+        .await;
+
+        assert_ne!(
+            result.behavior,
+            y_core::permission_types::PermissionBehavior::Deny,
+            "pre-flight must not deny once allow_shell = true: {result:?}"
         );
     }
 
