@@ -200,6 +200,7 @@ pub fn submit_shell_command(
         reasoning_complete: false,
         tool_calls: Vec::new(),
         segments: Vec::new(),
+        attachments: Vec::new(),
     });
     state.messages.push(ChatMessage {
         role: MessageRole::Assistant,
@@ -211,6 +212,7 @@ pub fn submit_shell_command(
         reasoning_complete: false,
         tool_calls: Vec::new(),
         segments: Vec::new(),
+        attachments: Vec::new(),
     });
     state.is_streaming = true;
     state.is_cancelling = false;
@@ -337,6 +339,64 @@ pub fn submit_message_with_mode(
     submit_message_with_mode_and_attachments(input, turn_mode, Vec::new(), state, services)
 }
 
+/// Render the chat-history content for a submitted user turn, keeping an
+/// attachment marker visible even when the turn also carries text.
+fn user_display_content(trimmed: &str, attachments: &[y_core::types::Attachment]) -> String {
+    let markers = attachment_markers(attachments);
+    if trimmed.is_empty() {
+        markers
+    } else if markers.is_empty() {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}\n{markers}")
+    }
+}
+
+/// Placeholder markers like `[Image: clipboard.png]`, one per attachment.
+pub(crate) fn attachment_markers(attachments: &[y_core::types::Attachment]) -> String {
+    attachments
+        .iter()
+        .map(|attachment| {
+            let kind = if attachment.mime_type.starts_with("image/") {
+                "Image"
+            } else {
+                "File"
+            };
+            format!("[{kind}: {}]", attachment.filename)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Re-attach attachment markers from persisted message metadata so replayed
+/// transcripts show the same indicators as freshly submitted turns.
+pub(crate) fn content_with_attachment_markers(
+    content: &str,
+    metadata: &serde_json::Value,
+) -> String {
+    let attachments: Vec<y_core::types::Attachment> = metadata
+        .get("attachments")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default();
+    if attachments.is_empty() {
+        return content.to_string();
+    }
+    user_display_content(content.trim(), &attachments)
+}
+
+/// Extract typed attachments from persisted message metadata.
+///
+/// Used during transcript loading to populate `ChatMessage::attachments`
+/// so inline images can be rendered when the terminal supports it.
+pub(crate) fn attachments_from_metadata(
+    metadata: &serde_json::Value,
+) -> Vec<y_core::types::Attachment> {
+    metadata
+        .get("attachments")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default()
+}
+
 fn submit_message_with_mode_and_attachments(
     input: &str,
     turn_mode: TurnMode,
@@ -349,23 +409,9 @@ fn submit_message_with_mode_and_attachments(
         return None;
     }
 
+    let display_content = user_display_content(trimmed, &attachments);
+
     // Add user message to chat history.
-    let display_content = if trimmed.is_empty() {
-        attachments
-            .iter()
-            .map(|attachment| {
-                let kind = if attachment.mime_type.starts_with("image/") {
-                    "Image"
-                } else {
-                    "File"
-                };
-                format!("[{kind}: {}]", attachment.filename)
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-    } else {
-        trimmed.to_string()
-    };
     state.messages.push(ChatMessage {
         role: MessageRole::User,
         content: display_content,
@@ -376,6 +422,7 @@ fn submit_message_with_mode_and_attachments(
         reasoning_complete: false,
         tool_calls: Vec::new(),
         segments: Vec::new(),
+        attachments: attachments.clone(),
     });
 
     // Track user message count for title summarization trigger.
@@ -411,6 +458,7 @@ fn submit_message_with_mode_and_attachments(
         reasoning_complete: false,
         tool_calls: Vec::new(),
         segments: Vec::new(),
+        attachments: Vec::new(),
     });
 
     // Spawn async task for LLM call.
@@ -518,6 +566,7 @@ pub fn submit_prepared_retry(
         reasoning_complete: false,
         tool_calls: Vec::new(),
         segments: Vec::new(),
+        attachments: Vec::new(),
     });
 
     let services = Arc::clone(services);
@@ -1028,6 +1077,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 reasoning_complete: false,
                 tool_calls: Vec::new(),
                 segments: Vec::new(),
+                attachments: Vec::new(),
             });
             state.messages.push(ChatMessage {
                 role: MessageRole::Assistant,
@@ -1039,6 +1089,7 @@ pub fn apply_chat_event(event: ChatEvent, state: &mut AppState) {
                 reasoning_complete: false,
                 tool_calls: Vec::new(),
                 segments: Vec::new(),
+                attachments: Vec::new(),
             });
         }
         ChatEvent::SteerInjected { steer_id, text } => {
@@ -1348,6 +1399,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -1385,6 +1437,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         apply_chat_event(ChatEvent::Error("connection refused".into()), &mut state);
@@ -1410,6 +1463,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         cancel_streaming(&mut state);
@@ -1433,6 +1487,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: vec![StreamSegment::Text("partial response".into())],
+            attachments: Vec::new(),
         });
 
         apply_chat_event(ChatEvent::Cancelled, &mut state);
@@ -1458,6 +1513,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: vec![StreamSegment::Text("first answer".into())],
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -1497,6 +1553,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -1665,6 +1722,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: vec![StreamSegment::Text("second answer".into())],
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -1799,6 +1857,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -1857,6 +1916,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -1909,6 +1969,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
         apply_chat_event(
             ChatEvent::ToolCallCompleted {
@@ -1975,6 +2036,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         for tool_call_id in ["call-a", "call-b"] {
@@ -2025,6 +2087,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -2060,6 +2123,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -2124,6 +2188,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
 
         apply_chat_event(
@@ -2149,6 +2214,68 @@ mod tests {
         assert_eq!(
             classify_input_with_attachments("", false, true),
             InputIntent::NewTurn(String::new())
+        );
+    }
+
+    fn sample_image_attachment() -> y_core::types::Attachment {
+        y_core::types::Attachment {
+            id: "att-1".to_string(),
+            filename: "clipboard.png".to_string(),
+            mime_type: "image/png".to_string(),
+            size: 128,
+            sha256: None,
+            width: Some(640),
+            height: Some(480),
+            source: y_core::types::AttachmentSource::InlineBase64 {
+                base64_data: "aGVsbG8=".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn test_display_content_keeps_attachment_marker_with_text() {
+        let attachments = vec![sample_image_attachment()];
+        assert_eq!(
+            user_display_content("what is this?", &attachments),
+            "what is this?\n[Image: clipboard.png]"
+        );
+    }
+
+    #[test]
+    fn test_display_content_marker_only_for_image_only_turn() {
+        let attachments = vec![sample_image_attachment()];
+        assert_eq!(
+            user_display_content("", &attachments),
+            "[Image: clipboard.png]"
+        );
+    }
+
+    #[test]
+    fn test_display_content_plain_text_without_attachments() {
+        assert_eq!(user_display_content("hello", &[]), "hello");
+    }
+
+    #[test]
+    fn test_content_with_attachment_markers_restores_from_metadata() {
+        let metadata = serde_json::json!({
+            "attachments": [sample_image_attachment()]
+        });
+        assert_eq!(
+            content_with_attachment_markers("look at this", &metadata),
+            "look at this\n[Image: clipboard.png]"
+        );
+    }
+
+    #[test]
+    fn test_content_with_attachment_markers_ignores_messages_without_attachments() {
+        let metadata = serde_json::json!({ "skills": ["demo"] });
+        assert_eq!(
+            content_with_attachment_markers("plain text", &metadata),
+            "plain text"
+        );
+        assert_eq!(
+            content_with_attachment_markers("plain text", &serde_json::Value::Null),
+            "plain text"
         );
     }
 }

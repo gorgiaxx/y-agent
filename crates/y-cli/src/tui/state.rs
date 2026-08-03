@@ -249,6 +249,10 @@ pub struct ChatMessage {
     /// deltas and tool call events. Empty for historical messages (the
     /// renderer falls back to `content` + `tool_calls` parsing).
     pub segments: Vec<StreamSegment>,
+    /// Image or file attachments carried by this message (display model).
+    /// Contains inline base64 data for clipboard-pasted images, enabling
+    /// inline terminal-image rendering when the terminal supports it.
+    pub attachments: Vec<y_core::types::Attachment>,
 }
 
 impl ChatMessage {
@@ -264,6 +268,7 @@ impl ChatMessage {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -316,6 +321,12 @@ impl ChatMessage {
                 }
             }
         }
+        for attachment in &self.attachments {
+            3u8.hash(&mut hasher);
+            attachment.id.hash(&mut hasher);
+            attachment.filename.hash(&mut hasher);
+            attachment.mime_type.hash(&mut hasher);
+        }
         hasher.finish()
     }
 }
@@ -352,6 +363,11 @@ pub struct CachedMessageRender {
     /// `(tool_index, line_range)` pairs. Used for mouse hit-testing: the chat
     /// panel offsets them to absolute transcript rows each frame.
     pub tool_ranges: Vec<(usize, std::ops::Range<usize>)>,
+    /// Inline image placements within `lines` (wrapped coordinates), as
+    /// `(row_offset, base64_data, cols, rows)` tuples. The chat panel
+    /// offsets them to absolute transcript rows each frame and writes
+    /// terminal graphics escape sequences at those positions.
+    pub image_placements: Vec<(usize, String, u16, u16)>,
     /// Monotonic counter bumped on every actual re-render (test/diagnostic signal).
     pub generation: u64,
 }
@@ -599,8 +615,11 @@ pub struct AppState {
     /// Tip shown on the welcome screen; picked once per session so it does
     /// not flicker between frames.
     pub welcome_tip: &'static str,
+    /// Detected terminal inline-image protocol. When `Some`, the chat panel
+    /// reserves blank rows for image attachments and the draw loop writes
+    /// graphics escape sequences at those positions after the frame flushes.
+    pub image_protocol: Option<crate::tui::image::ImageProtocol>,
 }
-
 impl Default for AppState {
     fn default() -> Self {
         Self {
@@ -650,6 +669,7 @@ impl Default for AppState {
                     .map(|duration| u64::from(duration.subsec_nanos()))
                     .unwrap_or(0),
             ),
+            image_protocol: crate::tui::image::detect_image_protocol(),
         }
     }
 }
@@ -1606,6 +1626,7 @@ mod tests {
             plain: Vec::new(),
             tool_ranges: Vec::new(),
             generation: 0,
+            image_placements: Vec::new(),
         };
         cache.store(0, entry);
 
@@ -1647,6 +1668,7 @@ mod tests {
             plain: Vec::new(),
             tool_ranges: Vec::new(),
             generation: 0,
+            image_placements: Vec::new(),
         };
         cache.store(0, entry);
 
@@ -1669,6 +1691,7 @@ mod tests {
             plain: Vec::new(),
             tool_ranges: Vec::new(),
             generation: 0,
+            image_placements: Vec::new(),
         };
         cache.store(0, entry);
 
@@ -1694,6 +1717,7 @@ mod tests {
                     plain: Vec::new(),
                     tool_ranges: Vec::new(),
                     generation: 0,
+                    image_placements: Vec::new(),
                 },
             );
         }
@@ -1718,6 +1742,7 @@ mod tests {
             plain: Vec::new(),
             tool_ranges: Vec::new(),
             generation: 0,
+            image_placements: Vec::new(),
         };
         cache.store(0, make());
         let first = cache.get(0).unwrap().generation;

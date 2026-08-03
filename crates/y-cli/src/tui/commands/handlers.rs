@@ -447,6 +447,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
         state.selected_tool = Some(ToolSelection {
             message_index: 0,
@@ -475,6 +476,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
         state.selected_tool = Some(ToolSelection {
             message_index: 0,
@@ -659,6 +661,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
         let result = execute("reset", &mut state);
         assert!(matches!(result, CommandResult::Ok(Some(_))));
@@ -682,6 +685,7 @@ mod tests {
                 reasoning_complete: false,
                 tool_calls: Vec::new(),
                 segments: Vec::new(),
+                attachments: Vec::new(),
             });
 
             let result = execute(command, &mut state);

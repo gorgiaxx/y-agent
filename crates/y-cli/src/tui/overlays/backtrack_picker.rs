@@ -172,6 +172,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 

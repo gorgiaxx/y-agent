@@ -98,6 +98,7 @@ pub fn render(
     cache: &mut ChatRenderCache,
     plain_out: &mut Vec<SelectionRow>,
     tool_rows_out: &mut Vec<(Range<usize>, ToolSelection)>,
+    image_placements_out: &mut Vec<crate::tui::image::ImagePlacement>,
 ) {
     let t = &state.theme;
 
@@ -171,6 +172,7 @@ pub fn render(
                     state.tick_counter,
                     inner_width,
                     t,
+                    state.image_protocol,
                 );
                 let message_start_row = row_cursor;
                 row_spans.push((
@@ -190,6 +192,16 @@ pub fn render(
                         },
                     )
                 }));
+
+                // Offset message-relative image placements to absolute rows.
+                image_placements_out.extend(entry.image_placements.iter().map(
+                    |(row_offset, base64_data, cols, rows)| crate::tui::image::ImagePlacement {
+                        content_row: message_start_row + row_offset,
+                        base64_data: base64_data.clone(),
+                        cols: *cols,
+                        rows: *rows,
+                    },
+                ));
             }
         }
     }
@@ -267,11 +279,13 @@ enum RowSource {
 }
 
 /// Fully rendered message: wrapped styled lines, their selection mirrors,
-/// and the tool card line ranges in wrapped coordinates.
+/// the tool card line ranges in wrapped coordinates, and inline image
+/// placements (row offset within wrapped lines, base64 data, cols, rows).
 type RenderedMessage = (
     Vec<Line<'static>>,
     Vec<SelectionRow>,
     Vec<(usize, Range<usize>)>,
+    Vec<(usize, String, u16, u16)>,
 );
 
 /// Append a frame-owned item to the assembled row space.
@@ -362,6 +376,7 @@ fn cached_message_render<'c>(
     tick: u64,
     inner_width: usize,
     theme: &Theme,
+    image_protocol: Option<crate::tui::image::ImageProtocol>,
 ) -> &'c CachedMessageRender {
     let content_hash = msg.render_hash();
     if cache
@@ -375,7 +390,7 @@ fn cached_message_render<'c>(
         )
         .is_none()
     {
-        let (lines, plain, tool_ranges) = render_message_wrapped(
+        let (lines, plain, tool_ranges, image_placements) = render_message_wrapped(
             msg,
             message_index,
             selected_tool,
@@ -383,6 +398,7 @@ fn cached_message_render<'c>(
             tick,
             inner_width,
             theme,
+            image_protocol,
         );
         cache.store(
             message_index,
@@ -396,7 +412,7 @@ fn cached_message_render<'c>(
                 lines,
                 plain,
                 tool_ranges,
-                // Stamped by `ChatRenderCache::store`.
+                image_placements,
                 generation: 0,
             },
         );
@@ -419,10 +435,12 @@ fn render_message_wrapped(
     tick: u64,
     inner_width: usize,
     theme: &Theme,
+    image_protocol: Option<crate::tui::image::ImageProtocol>,
 ) -> RenderedMessage {
     let mut raw_lines: Vec<Line> = Vec::new();
     let mut raw_plain: Vec<SelectionRow> = Vec::new();
     let mut raw_tool_ranges: Vec<(usize, Range<usize>)> = Vec::new();
+    let mut raw_image_placements: Vec<(usize, String, u16, u16)> = Vec::new();
     render_message(
         &mut raw_lines,
         &mut raw_plain,
@@ -434,10 +452,34 @@ fn render_message_wrapped(
         tick,
         inner_width,
         theme,
+        image_protocol,
+        &mut raw_image_placements,
     );
     let (lines, plain, wrap_counts) = wrap_rendered_lines(raw_lines, raw_plain, inner_width);
     let tool_ranges = offset_tool_ranges(raw_tool_ranges, &wrap_counts);
-    (lines, plain, tool_ranges)
+    let image_placements = offset_image_placements(raw_image_placements, &wrap_counts);
+    (lines, plain, tool_ranges, image_placements)
+}
+
+/// Convert raw image placements (raw line index) to wrapped-line row offsets
+/// using the same prefix-sum technique as `offset_tool_ranges`.
+fn offset_image_placements(
+    raw_placements: Vec<(usize, String, u16, u16)>,
+    wrap_counts: &[usize],
+) -> Vec<(usize, String, u16, u16)> {
+    let mut offsets: Vec<usize> = Vec::with_capacity(wrap_counts.len() + 1);
+    offsets.push(0);
+    for count in wrap_counts {
+        let previous = offsets.last().copied().unwrap_or(0);
+        offsets.push(previous + count);
+    }
+    raw_placements
+        .into_iter()
+        .map(|(raw_line, data, cols, rows)| {
+            let wrapped_row = offsets.get(raw_line).copied().unwrap_or(0);
+            (wrapped_row, data, cols, rows)
+        })
+        .collect()
 }
 
 /// Convert raw (pre-wrap) tool card line ranges to wrapped-line ranges.
@@ -666,8 +708,6 @@ fn render_welcome(
 /// ```
 ///
 /// Every rendered tool card records its raw (pre-wrap) line span into
-/// `tool_ranges` as `(tool_index, line_range)` pairs; the caller maps them
-/// onto wrapped coordinates after [`wrap_rendered_lines`].
 fn render_message(
     lines: &mut Vec<Line>,
     plain_lines: &mut Vec<SelectionRow>,
@@ -679,6 +719,8 @@ fn render_message(
     tick: u64,
     content_width: usize,
     t: &Theme,
+    image_protocol: Option<crate::tui::image::ImageProtocol>,
+    image_raw_placements: &mut Vec<(usize, String, u16, u16)>,
 ) {
     // No role header line: "You"/"Assistant" labels cost a full row per
     // message and force every other line one indent level deeper. Instead
@@ -697,6 +739,42 @@ fn render_message(
             tick,
             t,
         );
+    }
+
+    // Reserve blank rows for inline image attachments when the terminal
+    // supports a graphics protocol. The escape sequences are written
+    // after the ratatui frame flushes (see TuiApp::draw), so the blank
+    // rows just hold the space the image will occupy.
+    if image_protocol.is_some() && msg.role == MessageRole::User {
+        for attachment in &msg.attachments {
+            if !attachment.mime_type.starts_with("image/") {
+                continue;
+            }
+            let base64_data = match &attachment.source {
+                y_core::types::AttachmentSource::InlineBase64 { base64_data } => {
+                    base64_data.clone()
+                }
+                y_core::types::AttachmentSource::File { .. } => continue,
+            };
+            let Some(raw) = base64_decode(&base64_data) else {
+                continue;
+            };
+            let Some(dims) = crate::tui::image::png_dimensions(&raw) else {
+                continue;
+            };
+            let (cols, rows) = crate::tui::image::calculate_image_fit(
+                dims,
+                u16::try_from(content_width).unwrap_or(80),
+                9,
+                18,
+            );
+            let raw_line_index = lines.len();
+            for _ in 0..rows {
+                lines.push(Line::default());
+                plain_lines.push(String::new().into());
+            }
+            image_raw_placements.push((raw_line_index, base64_data, cols, rows));
+        }
     }
 
     // Render content with tool calls interleaved in event order.
@@ -2312,6 +2390,14 @@ fn selection_overlaps(sel: &TextSelection, row: usize, span_start: usize, span_e
     span_start < sel_col_end && sel_col_start < span_end
 }
 
+/// Decode a base64-encoded string to raw bytes. Returns `None` on decode
+/// failure (malformed input). Used to parse PNG dimensions from inline
+/// image attachment data.
+fn base64_decode(data: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(data).ok()
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -2358,6 +2444,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
@@ -2374,6 +2461,8 @@ mod tests {
             0,
             80,
             &theme,
+            None,
+            &mut Vec::new(),
         );
 
         // No role header line: just the 2 content lines.
@@ -2400,6 +2489,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
@@ -2415,6 +2505,8 @@ mod tests {
             0,
             80,
             &Theme::default(),
+            None,
+            &mut Vec::new(),
         );
 
         assert_eq!(
@@ -2462,6 +2554,7 @@ mod tests {
                 },
                 StreamSegment::Text("The result is valid.".into()),
             ],
+            attachments: Vec::new(),
         };
         let mut lines = Vec::new();
         let mut plain = Vec::new();
@@ -2478,6 +2571,8 @@ mod tests {
             0,
             80,
             &Theme::default(),
+            None,
+            &mut Vec::new(),
         );
 
         let first_reasoning = plain
@@ -2695,6 +2790,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         });
         let items = build_display_items(&state);
         assert_eq!(items.len(), 1);
@@ -2859,6 +2955,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: tools,
             segments: vec![StreamSegment::ToolCall(0), StreamSegment::ToolCall(1)],
+            attachments: Vec::new(),
         };
 
         render_message(
@@ -2875,6 +2972,8 @@ mod tests {
             0,
             80,
             &Theme::default(),
+            None,
+            &mut Vec::new(),
         );
 
         let text = plain_text(&plain);
@@ -3063,6 +3162,7 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -3094,6 +3194,7 @@ mod tests {
                     &mut cache,
                     &mut plain,
                     &mut tool_rows,
+                    &mut Vec::new(),
                 );
             })
             .unwrap();
@@ -3140,6 +3241,7 @@ mod tests {
                     &mut cache,
                     &mut plain,
                     &mut tool_rows,
+                    &mut Vec::new(),
                 );
             })
             .unwrap();
@@ -3182,6 +3284,7 @@ mod tests {
                     &mut cache,
                     &mut plain,
                     &mut tool_rows,
+                    &mut Vec::new(),
                 );
             })
             .unwrap();
@@ -3207,19 +3310,22 @@ mod tests {
         let mut cache = ChatRenderCache::default();
         let msg = user_message("hello world".to_string());
 
-        let g1 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
-        let g2 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
+        let g1 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None).generation;
+        let g2 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None).generation;
         assert_eq!(g1, g2, "unchanged inputs must be a cache hit");
 
         // Width change (resize) invalidates.
-        let g3 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 40, &theme).generation;
+        let g3 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 0, 40, &theme, None).generation;
         assert_ne!(g1, g3, "width change must re-render");
 
         // Content change invalidates.
         let mut changed = msg.clone();
         changed.content.push_str(" extra");
-        let g4 =
-            cached_message_render(&mut cache, 0, &changed, None, true, 0, 40, &theme).generation;
+        let g4 = cached_message_render(&mut cache, 0, &changed, None, true, 0, 40, &theme, None)
+            .generation;
         assert_ne!(g3, g4, "content change must re-render");
 
         // Tool selection change invalidates.
@@ -3227,13 +3333,17 @@ mod tests {
             message_index: 0,
             tool_index: 0,
         });
-        let g5 = cached_message_render(&mut cache, 0, &changed, selection, true, 0, 40, &theme)
-            .generation;
+        let g5 = cached_message_render(
+            &mut cache, 0, &changed, selection, true, 0, 40, &theme, None,
+        )
+        .generation;
         assert_ne!(g4, g5, "selected_tool change must re-render");
 
         // Tail position change (footer) invalidates.
-        let g6 = cached_message_render(&mut cache, 0, &changed, selection, false, 0, 40, &theme)
-            .generation;
+        let g6 = cached_message_render(
+            &mut cache, 0, &changed, selection, false, 0, 40, &theme, None,
+        )
+        .generation;
         assert_ne!(g5, g6, "is_last change must re-render");
     }
 
@@ -3254,12 +3364,16 @@ mod tests {
                 content: "working on it".into(),
                 is_complete: false,
             }],
+            attachments: Vec::new(),
         };
 
-        let g1 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
-        let g2 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
+        let g1 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None).generation;
+        let g2 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None).generation;
         assert_eq!(g1, g2, "same tick must be a cache hit");
-        let g3 = cached_message_render(&mut cache, 0, &msg, None, true, 1, 80, &theme).generation;
+        let g3 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 1, 80, &theme, None).generation;
         assert_ne!(g1, g3, "animated spinner must re-render each tick");
     }
 
@@ -3277,10 +3391,13 @@ mod tests {
             reasoning_complete: false,
             tool_calls: Vec::new(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         };
 
-        let g1 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
-        let g2 = cached_message_render(&mut cache, 0, &msg, None, true, 42, 80, &theme).generation;
+        let g1 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None).generation;
+        let g2 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 42, 80, &theme, None).generation;
         assert_eq!(g1, g2, "static message must ignore the animation tick");
     }
 
@@ -3371,9 +3488,11 @@ mod tests {
             reasoning_complete: false,
             tool_calls: vec![shell_tool()],
             segments: vec![StreamSegment::ToolCall(0)],
+            attachments: Vec::new(),
         };
 
-        let (lines, plain, ranges) = render_message_wrapped(&msg, 0, None, false, 0, 80, &theme);
+        let (lines, plain, ranges, _) =
+            render_message_wrapped(&msg, 0, None, false, 0, 80, &theme, None);
 
         assert_eq!(ranges.len(), 1, "one tool card must record one range");
         let (tool_index, range) = &ranges[0];
@@ -3415,9 +3534,11 @@ mod tests {
                 exploration_tool("call-search-1", "FileSearch", r#"{"query":"ToolCallInfo"}"#),
             ],
             segments: vec![StreamSegment::ToolCall(0), StreamSegment::ToolCall(1)],
+            attachments: Vec::new(),
         };
 
-        let (lines, plain, ranges) = render_message_wrapped(&msg, 0, None, false, 0, 80, &theme);
+        let (lines, plain, ranges, _) =
+            render_message_wrapped(&msg, 0, None, false, 0, 80, &theme, None);
 
         // Layout: group header, child 0 row, child 1 row (no role header).
         assert_eq!(lines.len(), 3, "unexpected layout: {plain:?}");
@@ -3442,9 +3563,11 @@ mod tests {
             reasoning_complete: false,
             tool_calls: vec![shell_tool()],
             segments: Vec::new(),
+            attachments: Vec::new(),
         };
 
-        let (lines, plain, ranges) = render_message_wrapped(&msg, 0, None, false, 0, 20, &theme);
+        let (lines, plain, ranges, _) =
+            render_message_wrapped(&msg, 0, None, false, 0, 20, &theme, None);
 
         assert_eq!(ranges.len(), 1);
         let (tool_index, range) = &ranges[0];
@@ -3480,23 +3603,25 @@ mod tests {
             reasoning_complete: false,
             tool_calls: vec![shell_tool()],
             segments: vec![StreamSegment::ToolCall(0)],
+            attachments: Vec::new(),
         };
 
         let mut cache = ChatRenderCache::default();
         let (first_ranges, first_generation) = {
-            let entry = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme);
+            let entry = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None);
             (entry.tool_ranges.clone(), entry.generation)
         };
         assert!(!first_ranges.is_empty());
 
         // Cache hit: identical entry, no re-render.
-        let hit = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme);
+        let hit = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None);
         assert_eq!(hit.generation, first_generation, "must be a cache hit");
         assert_eq!(hit.tool_ranges, first_ranges);
 
         // Independent re-render in a fresh cache produces identical ranges.
         let mut fresh = ChatRenderCache::default();
-        let rerendered = cached_message_render(&mut fresh, 0, &msg, None, true, 0, 80, &theme);
+        let rerendered =
+            cached_message_render(&mut fresh, 0, &msg, None, true, 0, 80, &theme, None);
         assert_eq!(rerendered.tool_ranges, first_ranges);
     }
 
@@ -3524,6 +3649,7 @@ mod tests {
                     &mut cache,
                     &mut plain,
                     &mut tool_rows,
+                    &mut Vec::new(),
                 );
             })
             .unwrap();
@@ -3553,6 +3679,7 @@ mod tests {
                     &mut cache,
                     &mut plain,
                     &mut tool_rows,
+                    &mut Vec::new(),
                 );
             })
             .unwrap();
@@ -3576,8 +3703,10 @@ mod tests {
         let mut msg = user_message("hi".to_string());
         msg.is_streaming = true;
 
-        let g1 = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme).generation;
-        let g2 = cached_message_render(&mut cache, 0, &msg, None, true, 1, 80, &theme).generation;
+        let g1 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None).generation;
+        let g2 =
+            cached_message_render(&mut cache, 0, &msg, None, true, 1, 80, &theme, None).generation;
         assert_ne!(
             g1, g2,
             "streaming messages must re-render each tick so fresh content lands immediately"

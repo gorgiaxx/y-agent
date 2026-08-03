@@ -13,6 +13,7 @@ pub mod editor;
 pub mod events;
 pub mod git_status;
 pub mod history;
+pub mod image;
 pub mod keys;
 pub mod layout;
 pub mod markdown;
@@ -242,6 +243,14 @@ pub struct TuiApp {
     preserve_composer_after_command: Toggle,
     /// Whether the Kitty keyboard-protocol enhancement was pushed onto the
     /// terminal, so `restore_terminal` pops it only when it actually pushed.
+    /// Detected terminal inline-image protocol (Kitty, iTerm2, or None).
+    /// Cached once at startup; used to decide whether image escape sequences
+    /// are emitted after each frame draw.
+    image_protocol: Option<image::ImageProtocol>,
+    /// Pending image placements collected during chat panel rendering,
+    /// consumed after `terminal.draw()` flushes to write escape sequences
+    /// directly to stdout at the correct terminal coordinates.
+    image_placements: Vec<image::ImagePlacement>,
     keyboard_enhanced: bool,
 }
 
@@ -411,6 +420,8 @@ impl TuiApp {
             pending_submission: None,
             pending_session_confirmation: None,
             pending_shell_confirmation: None,
+            image_protocol: image::detect_image_protocol(),
+            image_placements: Vec::new(),
             preserve_composer_after_command: Toggle::Off,
         })
     }
@@ -2616,6 +2627,7 @@ impl TuiApp {
         let palette = &self.palette;
         let render_cache = &mut self.chat_render_cache;
         let plain_lines = &mut self.chat_plain_lines;
+        let image_placements = &mut self.image_placements;
         let tool_rows = &mut self.chat_tool_rows;
         let keymap = &self.keymap;
         let help_scroll = self.help_scroll;
@@ -2677,6 +2689,7 @@ impl TuiApp {
                 plain_lines,
                 tool_rows,
                 keymap,
+                image_placements,
             );
 
             // Render command palette overlay if in Command mode.
@@ -2772,13 +2785,41 @@ impl TuiApp {
         // Track the composer viewport's top row for mouse hit-mapping.
         // tui-textarea keeps its scroll offset private, so the widget's
         // scroll rule is replicated (`next_scroll_top`) from the cursor row
-        // and the panel's inner height (border excluded).
         let input_inner_height = self
             .last_chunks
             .as_ref()
             .map_or(0, |chunks| chunks.input.height.saturating_sub(2));
         let cursor_row = u16::try_from(self.textarea.cursor().0).unwrap_or(u16::MAX);
         self.input_vscroll = next_scroll_top(self.input_vscroll, cursor_row, input_inner_height);
+
+        // Emit inline-image escape sequences after the ratatui frame flushes.
+        // The chat panel reserves blank rows for image attachments; here we
+        // write the Kitty/iTerm2 graphics sequences directly to stdout at
+        // the correct terminal coordinates.
+        if self.image_protocol.is_some() && !self.image_placements.is_empty() {
+            let total_lines = self
+                .image_placements
+                .iter()
+                .map(|p| p.content_row + p.rows as usize)
+                .max()
+                .unwrap_or(0);
+            if let Some(chunks) = self.last_chunks.as_ref() {
+                let scroll_to = panels::chat::compute_scroll_to(
+                    total_lines,
+                    chunks.chat.height as usize,
+                    self.state.scroll_offset,
+                );
+                let _ = crate::tui::image::emit_image_placements(
+                    self.image_protocol,
+                    &self.image_placements,
+                    scroll_to,
+                    chunks.chat.height as usize,
+                    chunks.chat.x,
+                    chunks.chat.y,
+                );
+            }
+            self.image_placements.clear();
+        }
 
         Ok(())
     }
@@ -4612,9 +4653,8 @@ impl TuiApp {
         plain_lines: &mut Vec<selection::SelectionRow>,
         tool_rows: &mut Vec<(std::ops::Range<usize>, ToolSelection)>,
         keymap: &Keymap,
+        image_placements: &mut Vec<crate::tui::image::ImagePlacement>,
     ) {
-        // Chat panel -- fills plain text lines for selection and tool-card
-        // row ranges for mouse hit-testing.
         panels::chat::render(
             frame,
             chunks.chat,
@@ -4622,8 +4662,8 @@ impl TuiApp {
             render_cache,
             plain_lines,
             tool_rows,
+            image_placements,
         );
-
         let todo_shortcut = keymap
             .primary_shortcut(KeyAction::QueueSteerNext)
             .map(|shortcut| keys::platform_shortcut_label(&shortcut));
@@ -4698,6 +4738,9 @@ impl TuiApp {
             let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
         }
         disable_raw_mode()?;
+        // Inline images use the Kitty `a=T` (transmit-and-display) form with
+        // no stable image id, so they are ephemeral and cleared automatically
+        // when the alternate screen is left. No explicit cleanup is needed.
         execute!(
             self.terminal.backend_mut(),
             DisableMouseCapture,
@@ -4867,6 +4910,7 @@ impl TuiApp {
                 if m.role == y_core::types::Role::Assistant {
                     restore_status_from_metadata(&m.metadata, &mut self.state);
                 }
+                let attachments = chat_flow::attachments_from_metadata(&m.metadata);
 
                 state::ChatMessage {
                     role: match m.role {
@@ -4875,7 +4919,7 @@ impl TuiApp {
                         y_core::types::Role::System => state::MessageRole::System,
                         y_core::types::Role::Tool => state::MessageRole::Tool,
                     },
-                    content: m.content,
+                    content: chat_flow::content_with_attachment_markers(&m.content, &m.metadata),
                     timestamp: m.timestamp,
                     is_streaming: false,
                     is_cancelled: false,
@@ -4883,6 +4927,7 @@ impl TuiApp {
                     reasoning_complete: false,
                     tool_calls,
                     segments,
+                    attachments,
                 }
             })
             .collect();
@@ -5828,6 +5873,7 @@ mod interaction_tests {
             reasoning_complete: true,
             tool_calls: tool_names.iter().map(|name| tool_call(name)).collect(),
             segments: Vec::new(),
+            attachments: Vec::new(),
         }
     }
 
