@@ -1389,7 +1389,16 @@ impl TuiApp {
             } else {
                 let composer_text = self.textarea.lines().join("\n");
                 let cmd_input = resolve_palette_command(&composer_text, &self.palette);
-                if self.should_enter_arg_mode(&cmd_input).await {
+                let command_name = cmd_input.split_whitespace().next().unwrap_or_default();
+                let is_known_command = !command_name.is_empty()
+                    && commands::registry::CommandRegistry::shared()
+                        .find(command_name)
+                        .is_some();
+                if !is_known_command {
+                    // Unknown slash input (e.g. a file path /Users/...):
+                    // submit the raw text as a regular turn instead of
+                    return self.submit_unknown_slash_as_text(composer_text);
+                } else if self.should_enter_arg_mode(&cmd_input).await {
                     if self.state.mode != InteractionMode::Command {
                         self.replace_composer_text("");
                         self.palette = CommandPaletteState::new();
@@ -1567,6 +1576,78 @@ impl TuiApp {
             self.state.set_mode(InteractionMode::Normal);
             self.state.set_focus(PanelFocus::Input);
         }
+    }
+
+    /// Submit the raw composer text as a regular turn when the user is in
+    /// Command mode but the first token is not a known command (e.g. a file
+    /// path like /Users/...). Switches back to Normal mode and classifies
+    /// the input, which returns `NewTurn` for unrecognized slashes.
+    fn submit_unknown_slash_as_text(&mut self, composer_text: String) -> bool {
+        self.state.set_mode(InteractionMode::Normal);
+        self.state.set_focus(PanelFocus::Input);
+        self.palette = CommandPaletteState::new();
+        let visible_input = composer_text;
+        let input = self.composer_draft.expand(&visible_input);
+        let attachments = self.composer_draft.attachments();
+        let intent = chat_flow::classify_input_with_attachments(
+            &input,
+            self.state.is_streaming,
+            !attachments.is_empty(),
+        );
+        let clear_input = match intent {
+            InputIntent::NewTurn(text) => {
+                self.record_prompt_history(&text);
+                let draft_key = self.current_draft_key();
+                if let Err(error) = self.draft_store.put(
+                    draft_key.clone(),
+                    DraftSnapshot {
+                        text: input.clone(),
+                        attachments: attachments.clone(),
+                    },
+                ) {
+                    self.state.push_toast(error, ToastLevel::Error);
+                }
+                let active_chat = chat_flow::submit_message_with_attachments(
+                    &text,
+                    attachments,
+                    &mut self.state,
+                    &self.services,
+                );
+                if active_chat.is_some() {
+                    self.pending_submission = Some((
+                        visible_input.clone(),
+                        self.composer_draft.clone(),
+                        draft_key,
+                    ));
+                }
+                self.active_chat = active_chat;
+                self.active_chat.is_some()
+            }
+            InputIntent::FollowUp(text) => {
+                if !attachments.is_empty() {
+                    self.state.push_toast(
+                        "Wait for the active response before sending attachments.".into(),
+                        ToastLevel::Warning,
+                    );
+                    return false;
+                }
+                if self.enqueue_todo(&text) {
+                    self.record_prompt_history(&text);
+                    true
+                } else {
+                    false
+                }
+            }
+            // Ignore, Command, and ShellCommand are unreachable here:
+            // the whitelist check already filtered unknown commands, and
+            // the shell (!) prefix is handled in the Normal-mode branch.
+            _ => false,
+        };
+        if clear_input {
+            self.textarea = TextArea::default();
+            self.composer_draft.clear();
+        }
+        false
     }
 
     fn record_prompt_history(&mut self, input: &str) {
