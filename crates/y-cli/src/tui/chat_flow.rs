@@ -129,7 +129,17 @@ pub fn classify_input_with_attachments(
     }
     if !has_attachments {
         if let Some(command) = trimmed.strip_prefix('/') {
-            return InputIntent::Command(command.to_string());
+            // Only treat as a slash command when the first token matches a
+            // known command name or alias. This prevents file paths like
+            // /Users/rin/... from being misinterpreted as commands.
+            let first_token = command.split_whitespace().next().unwrap_or("");
+            if !first_token.is_empty()
+                && crate::tui::commands::registry::CommandRegistry::shared()
+                    .find(first_token)
+                    .is_some()
+            {
+                return InputIntent::Command(command.to_string());
+            }
         }
         if let Some(command) = trimmed.strip_prefix('!').map(str::trim) {
             if !command.is_empty() {
@@ -1747,6 +1757,21 @@ mod tests {
             classify_input("next task", true),
             InputIntent::FollowUp("next task".into())
         );
+    }
+
+    #[test]
+    fn test_classify_input_treats_unknown_slash_as_text() {
+        // File paths starting with / must not be interpreted as commands.
+        assert_eq!(
+            classify_input("/Users/rin/Projects/y-agent", false),
+            InputIntent::NewTurn("/Users/rin/Projects/y-agent".into())
+        );
+    }
+
+    #[test]
+    fn test_classify_input_treats_slash_only_as_text() {
+        // A bare / is not a known command: treat as text.
+        assert_eq!(classify_input("/", false), InputIntent::NewTurn("/".into()));
     }
 
     #[test]
