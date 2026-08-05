@@ -56,6 +56,8 @@ pub mod loop_orchestrator;
 pub mod lsp;
 pub mod mcp_service;
 pub mod message_builder;
+#[cfg(feature = "model_catalog")]
+pub mod model_catalog;
 pub mod observability;
 pub mod operator_shell;
 pub mod orchestrator_dispatcher;
@@ -139,6 +141,11 @@ pub use knowledge_service::{
     KnowledgeSearchItem, KnowledgeStats, SectionInfo,
 };
 pub use mcp_service::McpService;
+#[cfg(feature = "model_catalog")]
+pub use model_catalog::{
+    catalog_path, load_catalog, resolve_model, search_models, update_catalog, CatalogMatch,
+    CatalogModel, CatalogUpdateSummary, ModelCatalog, MODELS_DEV_API_URL,
+};
 pub use observability::{
     AgentInstanceSnapshot, AgentPoolSnapshot, ObservabilityService, ProviderSnapshot,
     SchedulerQueueSnapshot, SystemSnapshot,

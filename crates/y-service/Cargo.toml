@@ -65,6 +65,7 @@ default = [
     "compaction_prefire",
     "hook_handlers",
     "instance_coordination",
+    "model_catalog",
     "worktree_isolation",
 ]
 agent_swarm = ["y-tools/agent_swarm"]
@@ -73,6 +74,7 @@ background_auto_wake = []
 compaction_prefire = []
 capability_packs = ["dep:hex", "dep:semver"]
 lsp = ["y-tools/lsp"]
+model_catalog = []
 worktree_isolation = ["y-runtime/worktree_isolation"]
 hook_handlers = ["y-hooks/hook_handlers"]
 instance_coordination = ["y-storage/instance_coordination"]
