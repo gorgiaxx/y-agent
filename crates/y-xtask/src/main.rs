@@ -1,3 +1,5 @@
+mod guard;
+
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
@@ -19,6 +21,9 @@ enum Command {
     Cli(RunCliArgs),
     /// Build the shared frontend and run the desktop GUI binary.
     Gui(RunGuiArgs),
+    /// Verify architecture and quality guards.
+    #[command(subcommand)]
+    Guard(guard::GuardCommand),
 }
 
 #[derive(Debug, Args)]
@@ -97,6 +102,8 @@ fn command_plan(command: &Command) -> Vec<CommandStep> {
                 step("cargo", cargo_args, StepDirectory::Repository),
             ]
         }
+        // Guards run in-process; see `main`.
+        Command::Guard(_) => Vec::new(),
     }
 }
 
@@ -163,7 +170,10 @@ fn run_process(program: &str, args: &[&str], current_dir: &Path) -> Result<()> {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    execute_plan(&command_plan(&cli.command))
+    match &cli.command {
+        Command::Guard(command) => guard::run(command, &repository_root()),
+        other => execute_plan(&command_plan(other)),
+    }
 }
 
 #[cfg(test)]

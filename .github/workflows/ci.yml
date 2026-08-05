@@ -21,6 +21,24 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
 
+  architecture:
+    name: Architecture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-architecture"
+
+      - name: Layering and quality guards
+        run: cargo run -p y-xtask -- guard all
+
+      - name: Guard regression test
+        run: bash scripts/tests/test-architecture-guards.sh
+
   workflow-regressions:
     name: Workflow Regressions
     runs-on: ubuntu-latest

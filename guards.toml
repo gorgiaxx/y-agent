@@ -1,0 +1,21 @@
+# Ratcheting guard baselines, enforced by `cargo run -p y-xtask -- guard all`.
+#
+# These numbers are debt ceilings, not targets. They may only decrease. The guard
+# fails when a count rises above its ceiling AND when a count falls below it
+# without the ceiling being lowered, so improvements are locked in rather than
+# silently reclaimed. Regenerate with `guard budgets --update`.
+
+[budgets]
+panics = 122
+swallowed_errors = 713
+oversized_files = 36
+wildcard_reexports = 0
+lint_suppressions = 23
+
+# Layering debt recorded on 2026-08-05. Entries may be removed as the
+# dependencies are routed through y-service, never added.
+[layers.exceptions]
+"y-cli" = ["y-agent", "y-bot", "y-diagnostics", "y-skills", "y-tools"]
+"y-context" = ["y-prompt", "y-skills", "y-tools"]
+"y-gui" = ["y-agent", "y-knowledge", "y-prompt", "y-provider", "y-skills", "y-tools"]
+"y-web" = ["y-agent", "y-bot", "y-knowledge", "y-prompt", "y-session", "y-skills"]
