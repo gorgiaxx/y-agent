@@ -39,6 +39,9 @@ pub struct WorkflowMeta {
     /// Tags for categorisation.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// How strictly handoff artifacts are enforced during execution.
+    #[serde(default)]
+    pub rigor: crate::orchestrator::artifact::Rigor,
     /// Task definitions.
     pub tasks: Vec<TomlTask>,
 }
@@ -56,6 +59,9 @@ pub struct TomlTask {
     /// IDs of tasks this depends on.
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// Semantic role of this node. Required under deep rigor.
+    #[serde(default)]
+    pub node_kind: crate::orchestrator::artifact::NodeKind,
     /// Priority level.
     #[serde(default)]
     pub priority: Option<TaskPriority>,
@@ -125,6 +131,8 @@ pub struct ParsedWorkflow {
     pub description: String,
     /// Workflow tags.
     pub tags: Vec<String>,
+    /// How strictly handoff artifacts are enforced during execution.
+    pub rigor: crate::orchestrator::artifact::Rigor,
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +182,7 @@ pub fn parse_toml_workflow(input: &str) -> Result<ParsedWorkflow, TomlParseError
             priority: t.priority.unwrap_or_default(),
             dependencies: t.depends_on.clone(),
             task_type,
+            node_kind: t.node_kind,
             timeout_ms: t.timeout_ms,
             retry: t.retry.clone(),
             failure_strategy: t.failure_strategy.clone().unwrap_or_default(),
@@ -206,6 +215,7 @@ pub fn parse_toml_workflow(input: &str) -> Result<ParsedWorkflow, TomlParseError
         name: meta.name.clone(),
         description: meta.description.clone(),
         tags: meta.tags.clone(),
+        rigor: meta.rigor,
     })
 }
 
@@ -274,6 +284,9 @@ impl WorkflowDefinition {
                     name: String::new(),
                     description: String::new(),
                     tags: Vec::new(),
+                    // The expression DSL has no rigor syntax; it is a shorthand
+                    // for simple graphs, which are the Light case by definition.
+                    rigor: crate::orchestrator::artifact::Rigor::Light,
                 })
             }
         }
@@ -315,6 +328,61 @@ depends_on = ["step1"]
         let order = result.dag.topological_order().unwrap();
         assert_eq!(order[0], "step1");
         assert_eq!(order[1], "step2");
+    }
+
+    /// Workflows that predate rigor parse unchanged and stay in the Light case.
+    #[test]
+    fn test_parse_defaults_rigor_and_node_kind() {
+        let toml = r#"
+[workflow]
+name = "legacy"
+
+[[workflow.tasks]]
+id = "step1"
+name = "First Step"
+type = "noop"
+"#;
+
+        let result = parse_toml_workflow(toml).expect("legacy workflow parses");
+        assert_eq!(result.rigor, crate::orchestrator::artifact::Rigor::Light);
+        assert_eq!(
+            result.dag.task("step1").expect("task exists").node_kind,
+            crate::orchestrator::artifact::NodeKind::Unspecified
+        );
+    }
+
+    /// Rigor and semantic roles are declarable from the DSL.
+    #[test]
+    fn test_parse_rigor_and_node_kind() {
+        let toml = r#"
+[workflow]
+name = "rigorous"
+rigor = "deep"
+
+[[workflow.tasks]]
+id = "explore"
+name = "Explore"
+type = "noop"
+node_kind = "explore"
+
+[[workflow.tasks]]
+id = "check"
+name = "Check"
+type = "noop"
+node_kind = "verify"
+depends_on = ["explore"]
+"#;
+
+        let result = parse_toml_workflow(toml).expect("rigorous workflow parses");
+        assert_eq!(result.rigor, crate::orchestrator::artifact::Rigor::Deep);
+        assert_eq!(
+            result.dag.task("explore").expect("task exists").node_kind,
+            crate::orchestrator::artifact::NodeKind::Explore
+        );
+        assert_eq!(
+            result.dag.task("check").expect("task exists").node_kind,
+            crate::orchestrator::artifact::NodeKind::Verify
+        );
     }
 
     /// T-P4-02: Parse TOML workflow with parallel tasks.

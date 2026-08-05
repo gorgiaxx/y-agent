@@ -2,13 +2,14 @@
 //!
 //! Architecture reference: `docs/guides/ARCHITECTURE.md`
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 
+use crate::orchestrator::artifact::{self, Rigor, TaskArtifact, UPSTREAM_ARTIFACTS_INPUT};
 use crate::orchestrator::channel::WorkflowContext;
 use crate::orchestrator::checkpoint::{
     ChannelSnapshot, CheckpointStore, TaskOutput, WorkflowCheckpoint,
@@ -55,6 +56,9 @@ pub struct ExecutionConfig {
     /// Maximum concurrent tasks.
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent_tasks: usize,
+    /// How strictly handoff artifacts are enforced on node completion.
+    #[serde(default)]
+    pub rigor: Rigor,
 }
 
 fn default_max_concurrent() -> usize {
@@ -66,6 +70,7 @@ impl Default for ExecutionConfig {
         Self {
             stream_mode: StreamMode::default(),
             max_concurrent_tasks: default_max_concurrent(),
+            rigor: Rigor::default(),
         }
     }
 }
@@ -77,6 +82,7 @@ pub struct WorkflowExecutor {
     pub config: ExecutionConfig,
     completed_tasks: HashSet<TaskId>,
     task_outputs: HashMap<TaskId, TaskOutput>,
+    artifacts: HashMap<TaskId, TaskArtifact>,
     step_number: u64,
     executors: Vec<Arc<dyn TaskExecutor>>,
 }
@@ -90,6 +96,7 @@ impl WorkflowExecutor {
             config,
             completed_tasks: HashSet::new(),
             task_outputs: HashMap::new(),
+            artifacts: HashMap::new(),
             step_number: 0,
             executors: Vec::new(),
         }
@@ -171,6 +178,17 @@ impl WorkflowExecutor {
                     HashMap::new()
                 };
 
+                // Dataflow on edges: a node always sees the artifacts of the
+                // nodes it depends on, without having to declare a mapping for
+                // each one. Declared mappings win on key collision.
+                let mut resolved_inputs = resolved_inputs;
+                let upstream = self.upstream_artifacts(task);
+                if !upstream.is_empty() {
+                    resolved_inputs
+                        .entry(UPSTREAM_ARTIFACTS_INPUT.to_string())
+                        .or_insert_with(|| serde_json::json!(upstream));
+                }
+
                 // Find executor for this task type.
                 let executor = self
                     .executors
@@ -235,8 +253,23 @@ impl WorkflowExecutor {
 
                 let task_id = task_node.id.clone();
 
+                // A node that completes without an acceptable handoff artifact
+                // has not really completed. Rejection is routed through the
+                // ordinary failure strategy so rigor does not introduce a
+                // second, divergent failure path.
+                let rigor = self.config.rigor;
+                let result = result.and_then(|output| {
+                    match artifact::validate_completion(task_node.node_kind, rigor, &output.output)
+                    {
+                        Ok(artifact) => Ok((output, artifact)),
+                        Err(error) => Err(TaskExecuteError::Permanent {
+                            message: format!("handoff artifact rejected: {error}"),
+                        }),
+                    }
+                });
+
                 match result {
-                    Ok(output) => {
+                    Ok((output, produced_artifact)) => {
                         self.step_number += 1;
 
                         // Apply output mappings.
@@ -259,6 +292,9 @@ impl WorkflowExecutor {
                         // Also write to default channel for backward compat.
                         self.context
                             .write(&format!("{task_id}.output"), output.output.clone());
+                        if let Some(produced) = produced_artifact {
+                            self.artifacts.insert(task_id.clone(), produced);
+                        }
                         self.task_outputs.insert(task_id.clone(), output);
                         self.completed_tasks.insert(task_id);
                     }
@@ -326,6 +362,29 @@ impl WorkflowExecutor {
         Ok(())
     }
 
+    /// Artifacts of a task's direct dependencies, keyed by producing task id.
+    ///
+    /// Only nodes that actually produced an artifact appear, so a `Light`-rigor
+    /// graph simply yields an empty map.
+    fn upstream_artifacts(
+        &self,
+        task: &crate::orchestrator::dag::TaskNode,
+    ) -> BTreeMap<TaskId, &TaskArtifact> {
+        task.dependencies
+            .iter()
+            .filter_map(|dependency| {
+                self.artifacts
+                    .get(dependency)
+                    .map(|artifact| (dependency.clone(), artifact))
+            })
+            .collect()
+    }
+
+    /// Handoff artifact produced by a task, if it produced one.
+    pub fn get_artifact(&self, task_id: &str) -> Option<&TaskArtifact> {
+        self.artifacts.get(task_id)
+    }
+
     /// Execute a workflow DAG synchronously (convenience for simple cases).
     ///
     /// Uses an in-memory Tokio runtime for backward compatibility.
@@ -334,6 +393,16 @@ impl WorkflowExecutor {
         dag: &TaskDag,
         checkpoint_store: &mut CheckpointStore,
     ) -> Result<(), WorkflowExecuteError> {
+        // The synchronous path fabricates placeholder outputs instead of
+        // dispatching executors, so it can never satisfy deep rigor. Failing
+        // loudly is better than silently downgrading the caller's request.
+        if self.config.rigor == Rigor::Deep {
+            return Err(WorkflowExecuteError::DagInvalid(
+                "execute_sync cannot satisfy deep rigor; use execute() with registered executors"
+                    .to_string(),
+            ));
+        }
+
         dag.validate()
             .map_err(|e| WorkflowExecuteError::DagInvalid(e.to_string()))?;
 

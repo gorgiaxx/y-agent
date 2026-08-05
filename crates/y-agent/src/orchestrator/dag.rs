@@ -81,6 +81,12 @@ pub struct TaskNode {
     /// The kind of work this task performs.
     #[serde(default)]
     pub task_type: TaskType,
+    /// Semantic role this node plays in the graph.
+    ///
+    /// Orthogonal to `task_type`, which describes the mechanism. Deep rigor
+    /// requires this to be declared; see `orchestrator::artifact`.
+    #[serde(default)]
+    pub node_kind: crate::orchestrator::artifact::NodeKind,
     /// Timeout in milliseconds (None = no timeout).
     #[serde(default)]
     pub timeout_ms: Option<u64>,
@@ -199,6 +205,11 @@ impl TaskDag {
     /// Number of tasks.
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Look up a task by ID.
+    pub fn task(&self, id: &str) -> Option<&TaskNode> {
+        self.nodes.get(id)
     }
 
     /// Whether the DAG is empty.

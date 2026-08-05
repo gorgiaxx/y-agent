@@ -11,6 +11,7 @@
 //! - [`FailureStrategy`] / [`RetryConfig`] -- failure handling and retry configuration
 //! - [`ConcurrencyController`] -- global and per-resource concurrency limits
 
+pub mod artifact;
 pub mod channel;
 pub mod checkpoint;
 pub mod concurrency;
@@ -27,6 +28,9 @@ pub mod toml_parser;
 pub mod workflow_meta;
 
 // Re-export primary types.
+pub use artifact::{
+    ArtifactError, ConfidenceLevel, NodeKind, Rigor, TaskArtifact, UPSTREAM_ARTIFACTS_INPUT,
+};
 pub use channel::{Channel, ChannelType, WorkflowContext};
 pub use checkpoint::{ChannelSnapshot, CheckpointStore, TaskOutput, WorkflowCheckpoint};
 pub use concurrency::{ConcurrencyController, ResourceType};
