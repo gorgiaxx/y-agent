@@ -194,3 +194,18 @@ undocumented_unsafe_blocks = "deny"
 # before returning `None` appears unused to the linter, but the assignment IS
 # read by the next iteration via the `state` parameter.
 unused_assignments = "allow"
+
+# Release binaries ship to users and are long-lived processes; the extra link
+# time buys smaller binaries and better cross-crate inlining across the 25-crate
+# workspace. `panic` is deliberately left at `unwind`: y-service catches panics
+# raised by tool execution, and `abort` would terminate the user's session
+# instead of failing the single tool call.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+# Debug builds are rebuilt constantly; line tables are enough for backtraces and
+# cut link time and target/ size substantially versus full debuginfo.
+[profile.dev]
+debug = 1
