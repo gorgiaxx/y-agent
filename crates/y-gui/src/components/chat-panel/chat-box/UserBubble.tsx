@@ -22,6 +22,7 @@ import type { Message, Attachment } from '../../../types';
 import { logger } from '../../../lib';
 import { Avatar } from './MessageShared';
 import { HighlightedText } from './HighlightedText';
+import { ImageLightbox } from './ImageLightbox';
 import { formatMessageTime } from '../../../utils/formatMessageTime';
 import './UserBubble.css';
 
@@ -170,19 +171,6 @@ export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: User
               </div>
             ) : null;
           })()}
-          {previewImage && (
-            <div className="image-preview-overlay" onClick={() => setPreviewImage(null)}>
-              <img
-                src={`data:${previewImage.mime_type};base64,${previewImage.base64_data}`}
-                alt={previewImage.filename}
-                className="image-preview-full"
-                onClick={(e) => e.stopPropagation()}
-              />
-              <button className="image-preview-close" onClick={() => setPreviewImage(null)}>
-                ✕
-              </button>
-            </div>
-          )}
           <HighlightedText>{message.content}</HighlightedText>
         </div>
 
@@ -211,6 +199,13 @@ export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: User
           )}
         </div>
       </div>
+      {previewImage && (
+        <ImageLightbox
+          src={`data:${previewImage.mime_type};base64,${previewImage.base64_data}`}
+          alt={previewImage.filename}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
     </div>
   );
 }

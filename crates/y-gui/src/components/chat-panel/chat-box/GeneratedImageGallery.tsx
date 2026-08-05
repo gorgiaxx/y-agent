@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import type { GeneratedImage } from '../../../types';
 import { generatedImageDataUrl } from '../../../lib/generatedImages';
+import { ImageLightbox } from './ImageLightbox';
 
 export interface GeneratedImageGalleryProps {
   images: GeneratedImage[];
@@ -70,19 +70,12 @@ export function GeneratedImageGallery({ images }: GeneratedImageGalleryProps) {
         })}
       </div>
 
-      {previewImage && previewIdx !== null && createPortal(
-        <div
-          className="generated-image-lightbox"
-          onClick={handleClosePreview}
-          role="presentation"
-        >
-          <img
-            src={generatedImageDataUrl(previewImage)}
-            alt={`Generated image ${previewImage.index + 1}`}
-            className="generated-image-lightbox-image"
-          />
-        </div>,
-        document.body,
+      {previewImage && previewIdx !== null && (
+        <ImageLightbox
+          src={generatedImageDataUrl(previewImage)}
+          alt={`Generated image ${previewImage.index + 1}`}
+          onClose={handleClosePreview}
+        />
       )}
     </>
   );
