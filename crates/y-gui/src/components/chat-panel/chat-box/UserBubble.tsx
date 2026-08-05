@@ -111,6 +111,7 @@ function UserActionBar({
 
 
 export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: UserBubbleProps) {
+  const [previewImage, setPreviewImage] = useState<Attachment | null>(null);
   const handleBubbleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLDivElement>) => {
       if (disabled) return;
@@ -163,11 +164,25 @@ export function UserBubble({ message, onEdit, onUndo, onResend, disabled }: User
                     alt={att.filename}
                     className="message-attachment-thumb"
                     title={att.filename}
+                    onClick={() => setPreviewImage(att)}
                   />
                 ))}
               </div>
             ) : null;
           })()}
+          {previewImage && (
+            <div className="image-preview-overlay" onClick={() => setPreviewImage(null)}>
+              <img
+                src={`data:${previewImage.mime_type};base64,${previewImage.base64_data}`}
+                alt={previewImage.filename}
+                className="image-preview-full"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button className="image-preview-close" onClick={() => setPreviewImage(null)}>
+                ✕
+              </button>
+            </div>
+          )}
           <HighlightedText>{message.content}</HighlightedText>
         </div>
 

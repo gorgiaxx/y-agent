@@ -12,6 +12,7 @@
 //! and correct mouse-to-content coordinate mapping for text selection.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -20,6 +21,9 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use unicode_width::UnicodeWidthStr;
 
+use crate::tui::image::{
+    calculate_image_fit, image_id_for, png_dimensions, ImagePlacement, ImageProtocol,
+};
 use crate::tui::selection::{SelectionRow, TextSelection};
 use crate::tui::state::{
     AppState, CachedMessageRender, ChatMessage, ChatRenderCache, MessageRole, StreamSegment,
@@ -98,7 +102,7 @@ pub fn render(
     cache: &mut ChatRenderCache,
     plain_out: &mut Vec<SelectionRow>,
     tool_rows_out: &mut Vec<(Range<usize>, ToolSelection)>,
-    image_placements_out: &mut Vec<crate::tui::image::ImagePlacement>,
+    image_placements_out: &mut Vec<ImagePlacement>,
 ) {
     let t = &state.theme;
 
@@ -108,6 +112,7 @@ pub fn render(
 
     plain_out.clear();
     tool_rows_out.clear();
+    image_placements_out.clear();
 
     // Degenerate width: preserve the previous single-blank-row behavior.
     if inner_width == 0 {
@@ -194,14 +199,14 @@ pub fn render(
                 }));
 
                 // Offset message-relative image placements to absolute rows.
-                image_placements_out.extend(entry.image_placements.iter().map(
-                    |(row_offset, base64_data, cols, rows)| crate::tui::image::ImagePlacement {
-                        content_row: message_start_row + row_offset,
-                        base64_data: base64_data.clone(),
-                        cols: *cols,
-                        rows: *rows,
-                    },
-                ));
+                // The payload is shared by `Arc`, so this is a refcount bump
+                // per image rather than a copy of the whole base64 string.
+                image_placements_out.extend(entry.image_placements.iter().map(|placement| {
+                    ImagePlacement {
+                        content_row: message_start_row + placement.content_row,
+                        ..placement.clone()
+                    }
+                }));
             }
         }
     }
@@ -280,12 +285,12 @@ enum RowSource {
 
 /// Fully rendered message: wrapped styled lines, their selection mirrors,
 /// the tool card line ranges in wrapped coordinates, and inline image
-/// placements (row offset within wrapped lines, base64 data, cols, rows).
+/// placements whose `content_row` is relative to the message's first row.
 type RenderedMessage = (
     Vec<Line<'static>>,
     Vec<SelectionRow>,
     Vec<(usize, Range<usize>)>,
-    Vec<(usize, String, u16, u16)>,
+    Vec<ImagePlacement>,
 );
 
 /// Append a frame-owned item to the assembled row space.
@@ -376,7 +381,7 @@ fn cached_message_render<'c>(
     tick: u64,
     inner_width: usize,
     theme: &Theme,
-    image_protocol: Option<crate::tui::image::ImageProtocol>,
+    image_protocol: Option<ImageProtocol>,
 ) -> &'c CachedMessageRender {
     let content_hash = msg.render_hash();
     if cache
@@ -435,12 +440,12 @@ fn render_message_wrapped(
     tick: u64,
     inner_width: usize,
     theme: &Theme,
-    image_protocol: Option<crate::tui::image::ImageProtocol>,
+    image_protocol: Option<ImageProtocol>,
 ) -> RenderedMessage {
     let mut raw_lines: Vec<Line> = Vec::new();
     let mut raw_plain: Vec<SelectionRow> = Vec::new();
     let mut raw_tool_ranges: Vec<(usize, Range<usize>)> = Vec::new();
-    let mut raw_image_placements: Vec<(usize, String, u16, u16)> = Vec::new();
+    let mut raw_image_placements: Vec<ImagePlacement> = Vec::new();
     render_message(
         &mut raw_lines,
         &mut raw_plain,
@@ -464,9 +469,9 @@ fn render_message_wrapped(
 /// Convert raw image placements (raw line index) to wrapped-line row offsets
 /// using the same prefix-sum technique as `offset_tool_ranges`.
 fn offset_image_placements(
-    raw_placements: Vec<(usize, String, u16, u16)>,
+    raw_placements: Vec<ImagePlacement>,
     wrap_counts: &[usize],
-) -> Vec<(usize, String, u16, u16)> {
+) -> Vec<ImagePlacement> {
     let mut offsets: Vec<usize> = Vec::with_capacity(wrap_counts.len() + 1);
     offsets.push(0);
     for count in wrap_counts {
@@ -475,9 +480,9 @@ fn offset_image_placements(
     }
     raw_placements
         .into_iter()
-        .map(|(raw_line, data, cols, rows)| {
-            let wrapped_row = offsets.get(raw_line).copied().unwrap_or(0);
-            (wrapped_row, data, cols, rows)
+        .map(|placement| ImagePlacement {
+            content_row: offsets.get(placement.content_row).copied().unwrap_or(0),
+            ..placement
         })
         .collect()
 }
@@ -719,8 +724,8 @@ fn render_message(
     tick: u64,
     content_width: usize,
     t: &Theme,
-    image_protocol: Option<crate::tui::image::ImageProtocol>,
-    image_raw_placements: &mut Vec<(usize, String, u16, u16)>,
+    image_protocol: Option<ImageProtocol>,
+    image_raw_placements: &mut Vec<ImagePlacement>,
 ) {
     // No role header line: "You"/"Assistant" labels cost a full row per
     // message and force every other line one indent level deeper. Instead
@@ -746,25 +751,27 @@ fn render_message(
     // after the ratatui frame flushes (see TuiApp::draw), so the blank
     // rows just hold the space the image will occupy.
     if image_protocol.is_some() && msg.role == MessageRole::User {
-        for attachment in &msg.attachments {
+        for (ordinal, attachment) in msg.attachments.iter().enumerate() {
             if !attachment.mime_type.starts_with("image/") {
                 continue;
             }
-            let base64_data = match &attachment.source {
-                y_core::types::AttachmentSource::InlineBase64 { base64_data } => {
-                    base64_data.clone()
-                }
-                y_core::types::AttachmentSource::File { .. } => continue,
-            };
-            let Some(raw) = base64_decode(&base64_data) else {
+            let y_core::types::AttachmentSource::InlineBase64 { base64_data } = &attachment.source
+            else {
                 continue;
             };
-            let Some(dims) = crate::tui::image::png_dimensions(&raw) else {
+            let Some(raw) = base64_decode(base64_data) else {
                 continue;
             };
-            let (cols, rows) = crate::tui::image::calculate_image_fit(
+            let Some(dims) = png_dimensions(&raw) else {
+                continue;
+            };
+            // Limit image height to 1/3 of the content width (a rough proxy
+            // for terminal height) so images don't fill the entire screen.
+            let max_rows = (content_width / 3).clamp(5, 20) as u16;
+            let (cols, rows) = calculate_image_fit(
                 dims,
                 u16::try_from(content_width).unwrap_or(80),
+                max_rows,
                 9,
                 18,
             );
@@ -773,7 +780,16 @@ fn render_message(
                 lines.push(Line::default());
                 plain_lines.push(String::new().into());
             }
-            image_raw_placements.push((raw_line_index, base64_data, cols, rows));
+            // The payload hash and the `Arc` are built once here, at cache
+            // time -- the per-frame path only clones the refcount.
+            image_raw_placements.push(ImagePlacement {
+                content_row: raw_line_index,
+                image_id: image_id_for(base64_data, message_index, ordinal),
+                base64_data: Arc::from(base64_data.as_str()),
+                dims,
+                cols,
+                rows,
+            });
         }
     }
 
@@ -3710,6 +3726,109 @@ mod tests {
         assert_ne!(
             g1, g2,
             "streaming messages must re-render each tick so fresh content lands immediately"
+        );
+    }
+
+    #[test]
+    fn test_image_attachment_renders_inline_with_protocol() {
+        use crate::tui::image::ImageProtocol;
+
+        let theme = Theme::default();
+        // Minimal 4x4 PNG (base64-encoded).
+        let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR4nGP4z8DwHxkzkC4AADxAH+HggXe0AAAAAElFTkSuQmCC";
+        let msg = ChatMessage {
+            role: MessageRole::User,
+            content: "[Image: test.png]".to_string(),
+            timestamp: Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+            attachments: vec![y_core::types::Attachment {
+                id: "att-1".into(),
+                filename: "test.png".into(),
+                mime_type: "image/png".into(),
+                size: 100,
+                sha256: None,
+                width: Some(4),
+                height: Some(4),
+                source: y_core::types::AttachmentSource::InlineBase64 {
+                    base64_data: png_b64.to_string(),
+                },
+            }],
+        };
+
+        let mut cache = ChatRenderCache::default();
+        let entry = cached_message_render(
+            &mut cache,
+            0,
+            &msg,
+            None,
+            true,
+            0,
+            80,
+            &theme,
+            Some(ImageProtocol::Kitty),
+        );
+
+        // With image_protocol = Some, the renderer must produce at least one
+        // image placement and reserve blank rows for it.
+        assert!(
+            !entry.image_placements.is_empty(),
+            "image placements must be produced when protocol is Some"
+        );
+        let placement = &entry.image_placements[0];
+        assert!(placement.rows >= 1, "image must reserve at least 1 row");
+        assert!(placement.cols >= 1, "image must have at least 1 column");
+        assert!(
+            placement.dims.height_px > 0,
+            "source dimensions must be carried for scroll cropping"
+        );
+
+        // The base64 data must be carried through for escape-sequence emission.
+        assert_eq!(
+            &*placement.base64_data, png_b64,
+            "base64 data must be preserved in placement"
+        );
+    }
+
+    #[test]
+    fn test_image_attachment_skipped_without_protocol() {
+        let theme = Theme::default();
+        let png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR4nGP4z8DwHxkzkC4AADxAH+HggXe0AAAAAElFTkSuQmCC";
+        let msg = ChatMessage {
+            role: MessageRole::User,
+            content: "[Image: test.png]".to_string(),
+            timestamp: Utc::now(),
+            is_streaming: false,
+            is_cancelled: false,
+            reasoning_content: String::new(),
+            reasoning_complete: false,
+            tool_calls: Vec::new(),
+            segments: Vec::new(),
+            attachments: vec![y_core::types::Attachment {
+                id: "att-1".into(),
+                filename: "test.png".into(),
+                mime_type: "image/png".into(),
+                size: 100,
+                sha256: None,
+                width: Some(4),
+                height: Some(4),
+                source: y_core::types::AttachmentSource::InlineBase64 {
+                    base64_data: png_b64.to_string(),
+                },
+            }],
+        };
+
+        let mut cache = ChatRenderCache::default();
+        let entry = cached_message_render(&mut cache, 0, &msg, None, true, 0, 80, &theme, None);
+
+        // Without image_protocol, no image placements should be produced.
+        assert!(
+            entry.image_placements.is_empty(),
+            "no image placements when protocol is None"
         );
     }
 }

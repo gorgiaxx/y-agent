@@ -401,12 +401,29 @@ pub(crate) fn content_with_attachment_markers(
 pub(crate) fn attachments_from_metadata(
     metadata: &serde_json::Value,
 ) -> Vec<y_core::types::Attachment> {
-    metadata
+    let mut attachments: Vec<y_core::types::Attachment> = metadata
         .get("attachments")
         .and_then(|value| serde_json::from_value(value.clone()).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Re-hydrate image attachments from file paths to inline base64 data
+    // so the TUI can render them inline. When messages are persisted,
+    // materialize_attachments writes inline base64 to disk and replaces the
+    // source with File { path }. This reads those files back.
+    for attachment in &mut attachments {
+        if !attachment.mime_type.starts_with("image/") {
+            continue;
+        }
+        if let y_core::types::AttachmentSource::File { path } = &attachment.source {
+            if let Ok(data) = std::fs::read(path) {
+                use base64::Engine;
+                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                attachment.source =
+                    y_core::types::AttachmentSource::InlineBase64 { base64_data: b64 };
+            }
+        }
+    }
+    attachments
 }
-
 fn submit_message_with_mode_and_attachments(
     input: &str,
     turn_mode: TurnMode,

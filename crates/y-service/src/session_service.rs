@@ -138,6 +138,43 @@ struct SessionHubPreferences {
     quick_slots: BTreeMap<u8, String>,
 }
 
+/// Re-hydrate image attachments from file paths to inline base64 data.
+///
+/// When messages are persisted, `materialize_attachments` writes inline
+/// base64 image data to disk and replaces the source with `File { path }`.
+/// This reads those files back and restores the `base64_data` field so the
+/// GUI (which requires `base64_data`) can display the images.
+fn hydrate_image_attachments(metadata: &mut serde_json::Value) {
+    let Some(attachments) = metadata
+        .get_mut("attachments")
+        .and_then(|v| v.as_array_mut())
+    else {
+        return;
+    };
+    for att in attachments.iter_mut() {
+        let is_image = att
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|m| m.starts_with("image/"));
+        if !is_image {
+            continue;
+        }
+        if att.get("base64_data").is_some() {
+            continue;
+        }
+        let Some(path) = att.get("path").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if let Ok(data) = std::fs::read(path) {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+            if let Some(obj) = att.as_object_mut() {
+                obj.insert("base64_data".into(), serde_json::Value::String(b64));
+            }
+        }
+    }
+}
+
 impl SessionService {
     const PUBLIC_SESSION_PREFIX: &'static str = "ses_";
 
@@ -225,7 +262,11 @@ impl SessionService {
         let messages = manager.read_display_transcript(session_id).await?;
         let mut infos = messages
             .iter()
-            .map(MessageInfo::from_message)
+            .map(|m| {
+                let mut info = MessageInfo::from_message(m);
+                hydrate_image_attachments(&mut info.metadata);
+                info
+            })
             .collect::<Vec<_>>();
         if let Some(count) = last {
             let start = infos.len().saturating_sub(count);

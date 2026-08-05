@@ -3,11 +3,12 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useEffect, useCallback } from 'react';
-import { Clock3, Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search } from 'lucide-react';
+import { Clock3, Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search, Download } from 'lucide-react';
 import { transport } from '../../lib';
 import type { AppConfigResponse } from '../../types';
 import './ProvidersTab.css';
 import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicker';
+import { ProviderMigrationPanel } from '../common/ProviderMigrationPanel';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
 import { TagChipInput } from './TagChipInput';
 import type { ProviderFormData, RetryFormData } from './settingsTypes';
@@ -20,7 +21,7 @@ import {
 import { ProviderHeadersEditor } from './ProviderHeadersEditor';
 import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
-import { Input, Button, Switch, SettingsGroup, SettingsItem, SubListLayout } from '../ui';
+import { Input, Button, Switch, SettingsGroup, SettingsItem, SubListLayout, Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui';
 import { PROVIDER_TYPE_OPTIONS } from './providerTypeOptions';
 
 // ---------------------------------------------------------------------------
@@ -446,6 +447,7 @@ export function ProvidersTab({
   const [activeProviderTab, setActiveProviderTab] = useState(0);
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
+  const [migrationOpen, setMigrationOpen] = useState(false);
 
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true);
@@ -579,6 +581,15 @@ export function ProvidersTab({
               <span>Add</span>
             </button>
             <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setMigrationOpen(true)}
+              title="快速导入 provider"
+            >
+              <Download size={13} />
+              <span>快速导入</span>
+            </Button>
+            <Button
               variant="icon"
               size="sm"
               onClick={() => handleProviderDuplicate(activeProviderTab)}
@@ -648,6 +659,17 @@ export function ProvidersTab({
         />
       )}
     </SubListLayout>
+      <Dialog open={migrationOpen} onOpenChange={setMigrationOpen}>
+        <DialogContent size="md">
+          <DialogTitle>快速导入 Provider</DialogTitle>
+          <DialogDescription>从其他 agent CLI 导入已配置的 provider</DialogDescription>
+          <ProviderMigrationPanel
+            showHeader={false}
+            setToast={setToast}
+            onMigrated={() => { void loadProviders(); }}
+          />
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

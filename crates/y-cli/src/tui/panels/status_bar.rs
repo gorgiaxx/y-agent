@@ -11,7 +11,7 @@
 
 use chrono::Utc;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
@@ -151,7 +151,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, keymap: &Keymap) 
     let line = Line::from(spans);
     // The paragraph base style paints the full-width background band; span
     // styles only patch foreground colors, so the band is uniform.
-    let para = Paragraph::new(line).style(Style::default().bg(t.status_bar_bg()));
+    let para = Paragraph::new(line).style(Style::default().bg(Color::Reset));
     frame.render_widget(para, area);
 }
 
@@ -773,7 +773,6 @@ mod tests {
     #[test]
     fn test_render_paints_background_band_full_width() {
         let state = AppState::new();
-        let expected_bg = state.theme.status_bar_bg();
 
         let backend = ratatui::backend::TestBackend::new(60, 3);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
@@ -786,8 +785,9 @@ mod tests {
             for y in 0..3 {
                 let cell = buffer.cell((x, y)).unwrap();
                 assert_eq!(
-                    cell.bg, expected_bg,
-                    "cell ({x}, {y}) must carry the status bar background"
+                    cell.bg,
+                    ratatui::style::Color::Reset,
+                    "cell ({x}, {y}) must carry the transparent (Reset) background"
                 );
             }
         }

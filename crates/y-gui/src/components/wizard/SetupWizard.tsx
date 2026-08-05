@@ -25,6 +25,7 @@ import {
   Search,
 } from 'lucide-react';
 import { ProviderIconImg } from '../common/ProviderIconPicker';
+import { ProviderMigrationPanel } from '../common/ProviderMigrationPanel';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
 import {
   Input,
@@ -138,6 +139,7 @@ export function SetupWizard({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [useSameForTitle, setUseSameForTitle] = useState<boolean | null>(null);
+  const [migratedProviders, setMigratedProviders] = useState(false);
 
   // Model discovery state
   const [modelList, setModelList] = useState<ModelItem[]>([]);
@@ -321,7 +323,7 @@ export function SetupWizard({
 
   const handleNext = useCallback(async () => {
     try {
-      if (step === 0 && !skippedSteps.has(0)) await saveProviders();
+      if (step === 0 && !skippedSteps.has(0) && !migratedProviders) await saveProviders();
       if (step === 1 && !skippedSteps.has(1)) await saveRuntime();
       if (step === 2 && !skippedSteps.has(2)) await saveBrowser();
       if (step === 3 && !skippedSteps.has(3)) await saveGuardrails();
@@ -332,7 +334,7 @@ export function SetupWizard({
     if (step < TOTAL_STEPS - 1) {
       setStep(step + 1);
     }
-  }, [step, skippedSteps, saveProviders, saveRuntime, saveBrowser, saveGuardrails, saveKnowledge]);
+  }, [step, skippedSteps, migratedProviders, saveProviders, saveRuntime, saveBrowser, saveGuardrails, saveKnowledge]);
 
   const handleSkip = useCallback(() => {
     setSkippedSteps((prev) => new Set(prev).add(step));
@@ -363,6 +365,7 @@ export function SetupWizard({
 
   const renderStep0_Providers = () => (
     <div key="step-0">
+      <ProviderMigrationPanel onMigrated={() => setMigratedProviders(true)} />
       <p className="wizard-step-description">
         At minimum, you need one provider tagged as <strong>general</strong> for the agent to
         function. This will be the primary model used for all tasks.
@@ -743,7 +746,7 @@ export function SetupWizard({
   // ---- Can proceed? ----
   const canProceed = () => {
     if (step === 0) {
-      return !!(provider.id && provider.model);
+      return !!(provider.id && provider.model) || migratedProviders;
     }
     return true;
   };

@@ -280,6 +280,10 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   runtime_capabilities: { method: 'GET', path: '/api/v1/runtime-capabilities' },
   provider_list:       { method: 'GET',  path: '/api/v1/providers' },
   provider_thaw_all:   { method: 'POST', path: '/api/v1/providers/thaw' },
+  // -- Provider migration --
+  provider_migration_detect: { method: 'GET',  path: '/api/v1/provider-migration/detect' },
+  provider_migration_run:    { method: 'POST', path: '/api/v1/provider-migration/run',
+                               body: (a) => ({ source_id: arg(a, 'sourceId', 'source_id'), selected_ids: arg(a, 'selectedIds', 'selected_ids') }) },
   app_paths:           { method: 'GET',  path: '/api/v1/app-paths' },
   ide_list:            { method: 'GET',  path: '/__noop__' },
 

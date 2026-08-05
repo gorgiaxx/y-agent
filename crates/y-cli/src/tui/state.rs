@@ -363,11 +363,12 @@ pub struct CachedMessageRender {
     /// `(tool_index, line_range)` pairs. Used for mouse hit-testing: the chat
     /// panel offsets them to absolute transcript rows each frame.
     pub tool_ranges: Vec<(usize, std::ops::Range<usize>)>,
-    /// Inline image placements within `lines` (wrapped coordinates), as
-    /// `(row_offset, base64_data, cols, rows)` tuples. The chat panel
-    /// offsets them to absolute transcript rows each frame and writes
-    /// terminal graphics escape sequences at those positions.
-    pub image_placements: Vec<(usize, String, u16, u16)>,
+    /// Inline image placements within `lines`, with `content_row` relative to
+    /// the message's first row. The chat panel offsets them to absolute
+    /// transcript rows each frame and writes terminal graphics escape
+    /// sequences at those positions; the base64 payload is shared by `Arc`
+    /// so per-frame assembly never copies it.
+    pub image_placements: Vec<crate::tui::image::ImagePlacement>,
     /// Monotonic counter bumped on every actual re-render (test/diagnostic signal).
     pub generation: u64,
 }

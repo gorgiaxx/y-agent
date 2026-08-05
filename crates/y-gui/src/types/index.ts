@@ -541,6 +541,63 @@ export interface ProviderInfo {
   capabilities: string[];
   context_window: number;
 }
+// ---------------------------------------------------------------------------
+// Provider migration (quick-import from external agent CLIs)
+// ---------------------------------------------------------------------------
+
+/** Source tool identifiers supported by the migration feature. */
+export type MigrationSourceId = 'omp' | 'kimi' | 'claude' | 'codex' | 'omo';
+
+/** A single migratable provider extracted from an external agent's config. */
+export interface MigrationProviderCandidate {
+  /** Suggested y-agent provider id (prefixed with the source id). */
+  id: string;
+  /** Human-readable label shown in the selection dialog. */
+  label: string;
+  /** Mapped y-agent provider type (openai-compat | openai | anthropic | gemini | deepseek). */
+  provider_type: string;
+  /** Default model to use for this provider. */
+  model: string;
+  /** API base URL, if discovered. */
+  base_url: string | null;
+  /** Whether a static API key was extracted. */
+  has_api_key: boolean;
+  /** Masked key preview, e.g. "sk-4054...cb7". */
+  api_key_preview: string;
+  /** Context window size in tokens, if known. */
+  context_window: number | null;
+  /** Original provider name in the source config. */
+  source_provider_name: string;
+}
+
+/** Detection result for one external agent source. */
+export interface MigrationSourceInfo {
+  id: MigrationSourceId;
+  label: string;
+  /** @lobehub/icons id, or null for a custom badge (omp/omo). */
+  icon_id: string | null;
+  /** Whether the source's config file exists and was parsed. */
+  detected: boolean;
+  /** Whether migration from this source has already been performed. */
+  migrated: boolean;
+  /** Whether this source can be migrated (false e.g. for codex OAuth). */
+  supported: boolean;
+  /** Reason the source is unsupported, if any. */
+  unsupported_reason: string | null;
+  /** Extracted provider candidates available for selection. */
+  providers: MigrationProviderCandidate[];
+}
+
+/** Result of a migration run for one source. */
+export interface MigrationReport {
+  source_id: MigrationSourceId;
+  /** y-agent provider ids that were newly written to providers.toml. */
+  imported: string[];
+  /** Candidate ids skipped because an equivalent provider id already exists. */
+  skipped: string[];
+  /** Per-candidate error messages. */
+  errors: string[];
+}
 
 /** Snapshot of backend in-memory collection sizes (from `memory_stats`). */
 export interface MemoryStats {

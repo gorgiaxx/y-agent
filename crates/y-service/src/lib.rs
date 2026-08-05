@@ -62,6 +62,7 @@ pub mod orchestrator_dispatcher;
 pub mod plan_orchestrator;
 mod prepared_turn_context;
 pub mod prompt_templates;
+pub mod provider_migration;
 pub mod rewind;
 pub mod scheduler_service;
 pub mod session_events;

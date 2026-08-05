@@ -1,0 +1,163 @@
+/* ============================================
+   Provider Migration -- quick-import panel
+   ============================================ */
+
+/* ---- Panel container ---- */
+.provider-migration-panel {
+  margin-bottom: var(--space-lg);
+}
+
+.provider-migration-panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.provider-migration-panel-title {
+  margin: 0;
+  font-size: var(--font-size-md, 13px);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.provider-migration-panel-hint {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted);
+}
+
+/* ---- Logo row ---- */
+.provider-migration-logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.provider-migration-tile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-primary);
+  font: inherit;
+  line-height: 1;
+  color: inherit;
+  appearance: none;
+  transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+}
+
+button.provider-migration-tile:disabled {
+  cursor: default;
+}
+
+.provider-migration-tile--clickable {
+  cursor: pointer;
+}
+
+.provider-migration-tile--clickable:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover, var(--surface-secondary, rgba(0, 0, 0, 0.04)));
+}
+
+.provider-migration-tile--dimmed {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.provider-migration-tile--locked {
+  cursor: default;
+}
+
+/* Initials badge for sources without a lobehub icon (omp / omo) */
+.provider-migration-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+
+/* Completed checkmark overlay */
+.provider-migration-check {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--success, #6fcf97);
+  color: #fff;
+  border: 2px solid var(--surface-primary);
+}
+
+/* ---- Selection dialog body ---- */
+.provider-migration-dialog-body {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-height: 50vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.provider-migration-candidate {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-primary);
+}
+
+.provider-migration-candidate-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.provider-migration-candidate-label {
+  font-size: var(--font-size-sm, 12px);
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.provider-migration-candidate-meta {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.provider-migration-candidate-key {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+.provider-migration-dialog-footer {
+  width: 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-md, 8px);
+}

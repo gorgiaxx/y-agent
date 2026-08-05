@@ -441,27 +441,50 @@ impl SessionManager {
         session_id: &SessionId,
         messages: &[Message],
     ) -> Result<String, SessionManagerError> {
-        // Only consider text content sent by the user. Tool results
-        // (`Role::Tool`) and assistant turns can dominate the payload with
-        // tool-call JSON that biases the generated title, so they are
-        // excluded. Take at most the last 6 user messages to keep the
-        // input compact.
-        let user_msgs: Vec<&Message> = messages
-            .iter()
-            .filter(|m| m.role == y_core::types::Role::User)
-            .collect();
-        let context: Vec<_> = user_msgs
-            .iter()
-            .rev()
-            .take(6)
-            .rev()
-            .map(|m| serde_json::json!({ "role": format!("{:?}", m.role), "content": m.content }))
-            .collect();
+        // Build the context: include user messages, and when a user message
+        // has image attachments, also include the following assistant response
+        // so the title generator can use the image description (since the
+        // user message text is just "[Image: filename]" for image-only turns).
+        let msgs: Vec<&Message> = messages.iter().collect();
+        let mut context: Vec<serde_json::Value> = Vec::new();
+        for (i, m) in msgs.iter().enumerate() {
+            if m.role != y_core::types::Role::User {
+                continue;
+            }
+            let has_images = m
+                .attachments()
+                .map(|atts| atts.iter().any(|a| a.mime_type.starts_with("image/")))
+                .unwrap_or(false);
+            context.push(serde_json::json!({
+                "role": format!("{:?}", m.role),
+                "content": m.content
+            }));
+            // When the user sent an image, include the next assistant
+            // response so the title generator has context about the image.
+            if has_images {
+                if let Some(next) = msgs.get(i + 1) {
+                    if next.role == y_core::types::Role::Assistant && !next.content.is_empty() {
+                        // Truncate long assistant responses to keep the
+                        // title-generation payload compact.
+                        let snippet = if next.content.len() > 500 {
+                            format!("{}...", &next.content[..500])
+                        } else {
+                            next.content.clone()
+                        };
+                        context.push(serde_json::json!({
+                            "role": format!("{:?}", next.role),
+                            "content": snippet
+                        }));
+                    }
+                }
+            }
+        }
+        // Take at most the last 12 entries (user + assistant pairs) to
+        // keep the input compact.
+        let context: Vec<_> = context.into_iter().rev().take(12).rev().collect();
 
         let input = serde_json::json!({ "messages": context });
-
         let session_uuid = uuid::Uuid::parse_str(&session_id.0).ok();
-
         let output = delegator
             .delegate(
                 "title-generator",
@@ -473,23 +496,18 @@ impl SessionManager {
             .map_err(|e| SessionManagerError::Other {
                 message: format!("title generation delegation failed: {e}"),
             })?;
-
         let title = output
             .text
             .trim()
             .trim_matches('"')
             .trim_matches('\'')
             .to_string();
-
         if title.is_empty() {
             return Err(SessionManagerError::Other {
                 message: "title-generator agent returned empty title".into(),
             });
         }
-
-        // Persist the generated title.
         self.update_title(session_id, title.clone()).await?;
-
         Ok(title)
     }
 

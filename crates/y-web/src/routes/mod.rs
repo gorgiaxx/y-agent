@@ -13,6 +13,7 @@ pub mod events;
 pub mod health;
 pub mod knowledge;
 pub mod observability;
+pub mod provider_migration;
 pub mod rewind;
 pub mod schedules;
 pub mod sessions;
@@ -43,6 +44,7 @@ pub fn create_router(state: &AppState) -> Router {
         .merge(schedules::router())
         .merge(events::router())
         .merge(config::router())
+        .merge(provider_migration::router())
         .merge(workspaces::router())
         .merge(skills::router())
         .merge(knowledge::router())

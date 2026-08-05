@@ -331,7 +331,7 @@ mod tests {
             end: (0, 15),
             ..Default::default()
         };
-        assert_eq!(extract_text(&[row.clone()], &full), "fn main()");
+        assert_eq!(extract_text(std::slice::from_ref(&row), &full), "fn main()");
 
         // Drag starting on the code itself.
         let code_only = TextSelection {

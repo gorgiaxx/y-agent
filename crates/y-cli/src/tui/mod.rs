@@ -251,6 +251,13 @@ pub struct TuiApp {
     /// consumed after `terminal.draw()` flushes to write escape sequences
     /// directly to stdout at the correct terminal coordinates.
     image_placements: Vec<image::ImagePlacement>,
+    /// Kitty image IDs that have been transmitted to the terminal. Avoids
+    /// re-sending base64 data on every frame (transmit-once + placement).
+    image_transmitted: image::TransmittedSet,
+    /// Image IDs that are currently placed on screen. Used to detect
+    /// images that have scrolled out of view so their placements can be
+    /// deleted (preventing stale images from covering scrolled text).
+    image_visible_ids: image::TransmittedSet,
     keyboard_enhanced: bool,
 }
 
@@ -280,7 +287,6 @@ impl TuiApp {
         }
 
         // Request the Kitty keyboard-protocol enhancement on capable hosts so
-        // modifier-bearing keys (Shift+Enter, Alt+arrows, ...) arrive with
         // their real modifiers instead of collapsing to a plain Enter/arrow.
         // `crossterm` probes the terminal's Primary Device Attributes and
         // silently no-ops when the terminal does not advertise the flags, so
@@ -419,8 +425,10 @@ impl TuiApp {
             clipboard_image_in_flight: Toggle::Off,
             pending_submission: None,
             pending_session_confirmation: None,
+            image_visible_ids: image::TransmittedSet::new(),
             pending_shell_confirmation: None,
             image_protocol: image::detect_image_protocol(),
+            image_transmitted: image::TransmittedSet::new(),
             image_placements: Vec::new(),
             preserve_composer_after_command: Toggle::Off,
         })
@@ -468,7 +476,6 @@ impl TuiApp {
         // Load session list at startup; the session itself is created lazily
         // on the first message (see `chat_flow::submit_message`).
         self.load_sessions().await;
-
         // Initialize context window and status-bar model from provider
         // metadata. The pool exposes no default-provider handle, so this
         // uses the first registered provider (routing order decides which
@@ -2720,11 +2727,7 @@ impl TuiApp {
             let area = frame.area();
 
             frame.render_widget(
-                Block::default().style(
-                    Style::default()
-                        .fg(state.theme.text())
-                        .bg(state.theme.panel_bg()),
-                ),
+                Block::default().style(Style::default().fg(state.theme.text()).bg(Color::Reset)),
                 area,
             );
 
@@ -2877,13 +2880,9 @@ impl TuiApp {
         // The chat panel reserves blank rows for image attachments; here we
         // write the Kitty/iTerm2 graphics sequences directly to stdout at
         // the correct terminal coordinates.
-        if self.image_protocol.is_some() && !self.image_placements.is_empty() {
-            let total_lines = self
-                .image_placements
-                .iter()
-                .map(|p| p.content_row + p.rows as usize)
-                .max()
-                .unwrap_or(0);
+        let protocol = self.image_protocol;
+        if protocol.is_some() {
+            let total_lines = self.chat_plain_lines.len();
             if let Some(chunks) = self.last_chunks.as_ref() {
                 let scroll_to = panels::chat::compute_scroll_to(
                     total_lines,
@@ -2891,16 +2890,20 @@ impl TuiApp {
                     self.state.scroll_offset,
                 );
                 let _ = crate::tui::image::emit_image_placements(
-                    self.image_protocol,
+                    protocol,
                     &self.image_placements,
-                    scroll_to,
-                    chunks.chat.height as usize,
-                    chunks.chat.x,
-                    chunks.chat.y,
+                    &mut self.image_transmitted,
+                    &mut self.image_visible_ids,
+                    crate::tui::image::ImageViewport {
+                        scroll_to,
+                        inner_height: chunks.chat.height as usize,
+                        chat_x: chunks.chat.x,
+                        chat_y: chunks.chat.y,
+                    },
                 );
             }
-            self.image_placements.clear();
         }
+        self.image_placements.clear();
 
         Ok(())
     }
@@ -4819,9 +4822,16 @@ impl TuiApp {
             let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
         }
         disable_raw_mode()?;
-        // Inline images use the Kitty `a=T` (transmit-and-display) form with
-        // no stable image id, so they are ephemeral and cleared automatically
-        // when the alternate screen is left. No explicit cleanup is needed.
+        // Delete all transmitted Kitty images so they don't linger in the
+        // terminal's store after leaving the alternate screen.
+        if self.image_protocol == Some(image::ImageProtocol::Kitty)
+            && !self.image_transmitted.is_empty()
+        {
+            let _ = std::io::Write::write_all(
+                &mut std::io::stdout().lock(),
+                image::delete_all_kitty_images().as_bytes(),
+            );
+        }
         execute!(
             self.terminal.backend_mut(),
             DisableMouseCapture,

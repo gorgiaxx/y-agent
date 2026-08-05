@@ -493,6 +493,9 @@ pub fn run() {
             commands::config::config_reload,
             commands::config::provider_test,
             commands::config::provider_list_models,
+            // Provider migration
+            commands::provider_migration::provider_migration_detect,
+            commands::provider_migration::provider_migration_run,
             commands::config::prompt_list,
             commands::config::prompt_get,
             commands::config::prompt_get_default,

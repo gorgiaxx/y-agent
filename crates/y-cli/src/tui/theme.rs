@@ -739,12 +739,6 @@ impl Theme {
         )
     }
 
-    /// Status bar background band.
-    pub fn status_bar_bg(&self) -> Color {
-        // RGB(30,30,42) -> index 235 (subtle dark band, one step above panel_bg)
-        self.color("status_bar_bg", Color::Rgb(30, 30, 42), Color::Indexed(235))
-    }
-
     // -----------------------------------------------------------------------
     // Input area
     // -----------------------------------------------------------------------
@@ -993,7 +987,6 @@ mod tests {
         let _ = theme.status_sep();
         let _ = theme.status_cost();
         let _ = theme.status_version();
-        let _ = theme.status_bar_bg();
         let _ = theme.input_border_focused();
         let _ = theme.input_border_unfocused();
         let _ = theme.input_title();
