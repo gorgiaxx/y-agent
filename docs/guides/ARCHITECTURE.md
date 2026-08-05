@@ -26,7 +26,7 @@ The harness owns:
 | Capability | Current implementation | Boundary |
 | --- | --- | --- |
 | Goal semantics | `y-context` working memory and structured handoff documents preserve goals, constraints, decisions, and progress | No standalone persistent Goal service or CRUD API yet |
-| Plan mode | `y-service/src/plan_orchestrator/` creates reviewed structured plans and executes dependency-aware phases | Plans are task-scoped execution state, not historical design documents |
+| Plan mode | `y-service/src/plan_orchestrator/` creates reviewed structured plans and executes dependency-aware phases; `y-agent` orchestrator nodes carry a semantic `node_kind` and, under `Deep` rigor, a validated typed handoff artifact that flows forward along edges | Plans are task-scoped execution state, not historical design documents; gate nodes and gate-driven graph growth are not implemented |
 | Loop mode | `y-service/src/loop_orchestrator.rs` iterates execution and self-review until convergence or limits | Used for exploratory work whose full graph is not known up front |
 | Self-orchestration | `y-agent` workflow meta-tools, DAG engine, durable dynamic-agent lifecycle and proposals, agent registry, delegation, and feature-gated bounded agent swarms plus `y-service` Auto-mode decisions and bounded cross-asset reuse planning | Dynamic creation/update/deactivation is validated and permission-bounded; repeated regression evidence can be rolled back or refined into a validated candidate, while strong existing assets are surfaced before new ones are created; swarm execution is map-style fan-out rather than a general shared-state agent society |
 | Delegated workspace isolation | `y-service` resolves effective write capability and provisions `y-runtime` Git worktrees for interactive delegated writers; results include bounded patch evidence and durable resumable snapshots | Worktrees never grant permissions or auto-merge; non-Git copy isolation and automatic conflict resolution are not implemented |
@@ -68,6 +68,13 @@ Core
 
 `y-service` is the only business-logic hub. Presentation crates may validate
 transport input and render output, but they must not implement domain workflows.
+
+This layering is mechanically enforced by `cargo run -p y-xtask -- guard
+architecture`, which reads the workspace dependency graph and rejects any edge
+that points outward, any presentation crate reaching past `y-service`, and any
+crate with no layer assignment. Pre-existing debt is recorded in `guards.toml`
+under `[layers.exceptions]`; entries may be removed as dependencies are routed
+through `y-service`, never added.
 
 ## Agent Turn Lifecycle
 
@@ -113,6 +120,40 @@ research, diagnosis, and tasks whose graph emerges during execution.
 
 Mode selection changes orchestration strategy, not ownership of tools, safety,
 storage, or diagnostics.
+
+## Handoff Artifact and Rigor Contract
+
+`y-agent/src/orchestrator/artifact.rs` owns the typed handoff artifact. A node's
+output is otherwise an opaque JSON blob, so whether the work behind it was
+thorough is invisible to the scheduler and to every downstream node. The
+artifact moves that judgement into the data model instead of the prompt.
+
+`TaskNode.node_kind` declares the node's semantic role (`Explore`, `Implement`,
+`Verify`, `Fix`, `Synthesize`, `Critique`), orthogonal to `TaskType`, which
+describes the mechanism. `ExecutionConfig.rigor` selects `Light` or `Deep`. This
+is one engine with one knob: rigor changes only artifact enforcement, never the
+scheduler, the dataflow, or the failure path.
+
+`Light` is the default and preserves existing behavior exactly: artifacts are
+optional and unvalidated. `Deep` requires a declared node kind and a complete
+artifact on completion. `what_i_did_not_check` is mandatory for every kind;
+`findings` is required of the roles that assert coverage, and `evidence` of the
+roles whose conclusion is meaningless without it. A node that completes without
+an acceptable artifact is failed through its ordinary `failure_strategy`, so
+rigor introduces no second failure path. `execute_sync` fabricates placeholder
+outputs and therefore rejects `Deep` rather than silently downgrading it.
+
+Artifacts flow forward along edges: `WorkflowExecutor` hands every task its
+direct predecessors' artifacts under the reserved input key
+`upstream_artifacts`, without per-node mapping declarations. A declared input of
+the same name wins.
+
+Confidence stays a free string on the wire and has exactly one interpretation,
+`ConfidenceLevel::parse`. Unreadable confidence resolves to `Low`: an absent
+claim must never read as a strong one.
+
+Not yet implemented: gate nodes, gate-driven graph growth, and `NodeOrigin`
+accounting. Artifacts and rigor are the data-model prerequisite for those.
 
 ## Bounded Agent Swarm Contract
 

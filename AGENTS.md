@@ -103,6 +103,7 @@ After completing Rust code changes, run the following checks **in order**:
 - **`cargo clippy --workspace -- -D warnings`** — All Clippy lints must pass with zero warnings. Treat every warning as an error. Lint policy is defined in `[workspace.lints.clippy]` in `Cargo.toml` and thresholds in `clippy.toml`.
 - **`cargo check --workspace`** — Full workspace compilation must succeed with no errors.
 - **`cargo doc --workspace --no-deps`** — Documentation must build without errors.
+- **`cargo run -p y-xtask -- guard all`** — Architecture and quality guards must pass. This mechanically enforces the layering in `docs/guides/ARCHITECTURE.md`, the presentation-layer rule in 2.9, the lint-suppression rule in 2.10, and the ceilings in `docs/standards/MEMORY_BUDGET.md`. Budgets in `guards.toml` are ratchets: they may only decrease, and an improvement that is not locked in also fails.
 
 #### Frontend / Tauri GUI changes (`crates/y-gui`)
 
@@ -141,6 +142,7 @@ This strips compilation progress, download noise, and individual test-pass lines
 ## 5) Key References
 
 - `docs/guides/ARCHITECTURE.md` -- canonical harness architecture and capability maturity
+- `docs/standards/MEMORY_BUDGET.md` -- enforced memory ceilings and ratchet expectations
 - `docs/standards/TEST_STRATEGY.md` -- TDD methodology, pyramid, quality gates
 - `docs/standards/ENGINEERING_STANDARDS.md` -- Rust coding standards
 - `docs/schema/README.md` -- runtime schema source-of-truth pointers

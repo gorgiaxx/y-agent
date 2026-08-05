@@ -236,6 +236,7 @@ version = "1.0.0"
 execution_model = "eager"           # "eager" | "superstep"
 max_concurrent_tasks = 10
 failure_strategy = "fail_fast"      # "fail_fast" | "continue_on_error"
+rigor = "light"                     # "light" | "deep"; see Node Kinds and Rigor
 
 [workflow.channels]
 # Typed channel declarations
@@ -294,6 +295,7 @@ id = "search"
 name = "Web Search"
 type = "tool_execution"             # See Task Types table
 priority = "normal"                 # "critical" | "high" | "normal" | "low" | "background"
+node_kind = "explore"               # Semantic role; see Node Kinds and Rigor
 timeout_ms = 30000
 
   [workflow.tasks.executor]
@@ -335,6 +337,63 @@ timeout_ms = 30000
 | Branch         | `branch`         | Conditional routing           | `conditions` with target task IDs                       |
 | Parallel Group | `parallel`       | Explicit parallel group       | `tasks`, `join` (`all`, `any`, `at_least(n)`)           |
 | Loop           | `loop`           | Bounded iteration             | `condition`, `max_iterations`, `body_tasks`             |
+
+### 3.6.1 Node Kinds and Rigor
+
+`type` describes the *mechanism* a task uses. `node_kind` describes the
+*semantic role* it plays in the graph. The two are orthogonal: a `sub_agent`
+task may be exploration or verification, and the two carry different
+evidentiary obligations.
+
+| Node kind | Value | Role | Must enumerate findings | Must show evidence |
+| --- | --- | --- | --- | --- |
+| Unspecified | `unspecified` | Role not declared (default) | -- | -- |
+| Explore | `explore` | Gather information without changing anything | yes | no |
+| Implement | `implement` | Perform the substantive change | no | no |
+| Verify | `verify` | Check an implementation against its requirement | yes | yes |
+| Fix | `fix` | Repair a defect surfaced by verification | no | no |
+| Synthesize | `synthesize` | Merge several nodes' artifacts into one result | yes | no |
+| Critique | `critique` | Challenge a result, looking for what was missed | yes | yes |
+
+Execution runs at one of two rigor levels, set by `rigor` in
+`[workflow.execution]` (`"light"` by default, or `"deep"`). This is one engine
+with one knob, not two schedulers: rigor changes only whether handoff artifacts
+are required.
+
+Under `light`, artifacts are optional and unvalidated. Under `deep`, every node
+must declare a `node_kind` other than `unspecified` and attach a handoff
+artifact on completion:
+
+```json
+{
+  "artifact": {
+    "summary": "one paragraph result",
+    "findings": ["what the node established"],
+    "evidence": ["paths, commands, outputs"],
+    "edge_cases_considered": ["cases deliberately examined"],
+    "what_i_did_not_check": ["scope knowingly left uncovered"],
+    "confidence": "high"
+  }
+}
+```
+
+`what_i_did_not_check` is required for every node kind under `deep`. Forcing a
+worker to enumerate what it did **not** cover is the one requirement confident
+prose cannot satisfy, which is what makes thin work structurally visible.
+
+`confidence` stays a free string on the wire and is interpreted leniently:
+recognized words (`high`, `certain`, `medium`, `moderate`, `low`) and numbers
+(`0.9` and `90` agree) map onto three rungs. Unreadable text reads as **low** --
+an absent confidence claim must never read as a strong one.
+
+A node that completes without an acceptable artifact is failed, and the failure
+is routed through the task's ordinary `failure_strategy`. Rigor introduces no
+second failure path.
+
+Artifacts flow forward along edges: every task receives its direct
+predecessors' artifacts under the reserved input key `upstream_artifacts`,
+keyed by producing task id, without declaring an input mapping. An explicitly
+declared input of the same name takes precedence.
 
 ### 3.7 Dependencies
 
