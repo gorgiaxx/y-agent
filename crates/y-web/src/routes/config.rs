@@ -62,6 +62,22 @@ pub struct ListModelsRequest {
     pub azure_auth_mode: String,
 }
 
+/// Request body for refreshing the models.dev catalog.
+#[derive(Debug, Default, Deserialize)]
+pub struct CatalogUpdateRequest {
+    /// Override the upstream URL (defaults to the models.dev API).
+    pub source_url: Option<String>,
+}
+
+/// Request body for fuzzy-searching the cached models.dev catalog.
+#[derive(Debug, Default, Deserialize)]
+pub struct CatalogSearchRequest {
+    #[serde(default)]
+    pub query: String,
+    pub provider_type: Option<String>,
+    pub limit: Option<usize>,
+}
+
 /// Request body for saving a prompt file.
 #[derive(Debug, Deserialize)]
 pub struct SavePromptRequest {
@@ -282,6 +298,38 @@ async fn provider_list_models(
     let value: Value = serde_json::from_str(&response_body)
         .map_err(|e| ApiError::Internal(format!("Failed to parse response: {e}")))?;
     Ok(Json(value))
+}
+
+/// `POST /api/v1/models/catalog/update` -- download the models.dev catalog.
+async fn model_catalog_update(
+    State(state): State<AppState>,
+    body: Option<Json<CatalogUpdateRequest>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let source_url = body.and_then(|Json(b)| b.source_url);
+    let summary = y_service::update_catalog(&state.config_dir, source_url.as_deref())
+        .await
+        .map_err(ApiError::Internal)?;
+    Ok(Json(summary))
+}
+
+/// `POST /api/v1/models/catalog/search` -- fuzzy-match a model id.
+async fn model_catalog_search(
+    State(state): State<AppState>,
+    body: Option<Json<CatalogSearchRequest>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let catalog = y_service::load_catalog(&state.config_dir).map_err(ApiError::Internal)?;
+    let matches = y_service::search_models(
+        &catalog.models,
+        &body.query,
+        body.provider_type.as_deref(),
+        body.limit.unwrap_or(50),
+    );
+    Ok(Json(serde_json::json!({
+        "fetched_at": catalog.fetched_at,
+        "total": catalog.models.len(),
+        "matches": matches,
+    })))
 }
 
 /// Build the models-list URL, handling Azure's different endpoint structure.
@@ -530,4 +578,6 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/providers/test", post(provider_test))
         .route("/api/v1/providers/list-models", post(provider_list_models))
+        .route("/api/v1/models/catalog/update", post(model_catalog_update))
+        .route("/api/v1/models/catalog/search", post(model_catalog_search))
 }

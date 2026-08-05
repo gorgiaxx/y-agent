@@ -228,6 +228,20 @@ function providerListModelsBody(a: Record<string, unknown>) {
   });
 }
 
+function modelCatalogUpdateBody(a: Record<string, unknown>) {
+  return compactBody({
+    source_url: arg(a, 'sourceUrl', 'source_url'),
+  });
+}
+
+function modelCatalogSearchBody(a: Record<string, unknown>) {
+  return compactBody({
+    query: arg(a, 'query'),
+    provider_type: arg(a, 'providerType', 'provider_type'),
+    limit: arg(a, 'limit'),
+  });
+}
+
 function knowledgeIngestBody(a: Record<string, unknown>) {
   return compactBody({
     source: arg(a, 'source'),
@@ -377,6 +391,8 @@ export const COMMAND_MAP: Record<string, EndpointDef> = {
   config_reload:       { method: 'POST', path: '/api/v1/config/reload', response: messageResponse },
   provider_test:       { method: 'POST', path: '/api/v1/providers/test', body: providerTestBody, response: resultResponse },
   provider_list_models: { method: 'POST', path: '/api/v1/providers/list-models', body: providerListModelsBody },
+  model_catalog_update: { method: 'POST', path: '/api/v1/models/catalog/update', body: modelCatalogUpdateBody },
+  model_catalog_search: { method: 'POST', path: '/api/v1/models/catalog/search', body: modelCatalogSearchBody },
   mcp_config_get:      { method: 'GET',  path: '/api/v1/config/mcp' },
   mcp_config_save:     { method: 'PUT',  path: '/api/v1/config/mcp', body: contentBody },
   mcp_status:          { method: 'GET',  path: '/api/v1/config/mcp/status' },

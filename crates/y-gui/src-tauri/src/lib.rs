@@ -493,6 +493,8 @@ pub fn run() {
             commands::config::config_reload,
             commands::config::provider_test,
             commands::config::provider_list_models,
+            commands::config::model_catalog_update,
+            commands::config::model_catalog_search,
             // Provider migration
             commands::provider_migration::provider_migration_detect,
             commands::provider_migration::provider_migration_run,

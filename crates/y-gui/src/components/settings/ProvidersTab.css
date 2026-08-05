@@ -197,16 +197,29 @@
   color: var(--accent);
 }
 
-/* ---- Model field with search button ---- */
+/* ---- Model field with discovery / catalog buttons ---- */
+.pf-model-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
 .pf-model-group {
   position: relative;
   display: flex;
   align-items: center;
 }
 
-.pf-model-search-btn {
+.pf-model-actions {
   position: absolute;
   right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pf-model-search-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -222,5 +235,32 @@
 
 .pf-model-search-btn:hover {
   background: var(--surface-hover);
+  color: var(--accent);
+}
+
+.pf-model-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.pf-model-hint--matched {
+  color: var(--accent);
+}
+
+.pf-model-hint-apply {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.pf-model-hint-apply:hover {
   color: var(--accent);
 }

@@ -2,8 +2,8 @@
 // ProvidersTab -- Provider list sidebar + ProviderTabPanel detail form
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect, useCallback } from 'react';
-import { Clock3, Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search, Download } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Clock3, Eye, EyeOff, Plus, X, Bot, Copy, ChevronUp, ChevronDown, Search, Upload, Database, RefreshCw } from 'lucide-react';
 import { transport } from '../../lib';
 import type { AppConfigResponse } from '../../types';
 import './ProvidersTab.css';
@@ -11,6 +11,7 @@ import { ProviderIconPicker, ProviderIconImg } from '../common/ProviderIconPicke
 import { ProviderMigrationPanel } from '../common/ProviderMigrationPanel';
 import { ModelPickerDropdown, type ModelItem } from '../common/ModelPickerDropdown';
 import { TagChipInput } from './TagChipInput';
+import { CapabilitySelect } from './CapabilitySelect';
 import type { ProviderFormData, RetryFormData } from './settingsTypes';
 import {
   emptyProvider,
@@ -18,6 +19,13 @@ import {
   stripRetrySection,
   buildProvidersToml,
 } from './settingsTypes';
+import {
+  searchModelCatalog,
+  updateModelCatalog,
+  describeCatalogModel,
+  type CatalogMatch,
+  type CatalogModel,
+} from '../../utils/modelCatalog';
 import { ProviderHeadersEditor } from './ProviderHeadersEditor';
 import { RawTomlEditor, RawModeToggle, SettingsActionSlot } from './TomlEditorTab';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../ui/Select';
@@ -45,6 +53,14 @@ function ProviderTabPanel({
   const [modelList, setModelList] = useState<ModelItem[]>([]);
   const [modelLoading, setModelLoading] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
+
+  // models.dev catalog state: browse list + the fuzzy match for the typed id.
+  const [catalogList, setCatalogList] = useState<ModelItem[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [catalogEntries, setCatalogEntries] = useState<CatalogModel[]>([]);
+  const [resolvedModel, setResolvedModel] = useState<CatalogMatch | null>(null);
+  const [catalogEmpty, setCatalogEmpty] = useState(false);
 
   const update = (patch: Partial<ProviderFormData>) => {
     onChange(index, { ...provider, ...patch });
@@ -125,6 +141,64 @@ function ProviderTabPanel({
     }
   };
 
+  // Fuzzy-resolve the typed model id against the cached catalog (debounced).
+  const modelQuery = provider.model;
+  const providerType = provider.provider_type;
+  useEffect(() => {
+    if (!modelQuery.trim()) {
+      setResolvedModel(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchModelCatalog(modelQuery, providerType, 1)
+        .then((result) => {
+          if (cancelled) return;
+          setCatalogEmpty(result.total === 0);
+          setResolvedModel(result.matches.find((m) => m.resolved) ?? null);
+        })
+        .catch(() => {
+          if (!cancelled) setResolvedModel(null);
+        });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [modelQuery, providerType]);
+
+  // Ranked catalog lookup driving the browse dropdown. Ranking happens in the
+  // backend so desktop and web resolve ids identically.
+  const catalogRequest = useRef(0);
+  const handleCatalogSearch = useCallback(async (query: string) => {
+    const request = ++catalogRequest.current;
+    setCatalogLoading(true);
+    setCatalogError(null);
+    try {
+      const result = await searchModelCatalog(query, providerType, 100);
+      if (request !== catalogRequest.current) return;
+      setCatalogEmpty(result.total === 0);
+      setCatalogEntries(result.matches.map((m) => m.model));
+      setCatalogList(result.matches.map((m) => ({
+        id: m.model.id,
+        display_name: describeCatalogModel(m.model),
+      })));
+    } catch (e) {
+      if (request === catalogRequest.current) setCatalogError(String(e));
+    } finally {
+      if (request === catalogRequest.current) setCatalogLoading(false);
+    }
+  }, [providerType]);
+
+  /** Adopt a catalog entry: model id plus every field the catalog knows. */
+  const applyCatalogModel = (entry: CatalogModel) => {
+    update({
+      model: entry.id,
+      capabilities: entry.capabilities,
+      ...(entry.context_window ? { context_window: entry.context_window } : {}),
+      ...(entry.max_output_tokens ? { max_output_tokens: entry.max_output_tokens } : {}),
+      ...(entry.cost_per_1k_input !== null ? { cost_per_1k_input: entry.cost_per_1k_input } : {}),
+      ...(entry.cost_per_1k_output !== null ? { cost_per_1k_output: entry.cost_per_1k_output } : {}),
+    });
+  };
+
   return (
     <div className="sidetab-tab-form">
       <SettingsGroup title="Identity">
@@ -201,30 +275,74 @@ function ProviderTabPanel({
 
       <SettingsGroup title="Connection">
         <SettingsItem title="Model ID" wide>
-          <div className="pf-model-group w-full">
-            <Input
-              className="flex-1 min-w-0 pr-[30px]"
-              value={provider.model}
-              onChange={(e) => update({ model: e.target.value })}
-              placeholder="e.g. gpt-4o"
-            />
-            {canDiscoverModels && (
-              <ModelPickerDropdown
-                models={modelList}
-                loading={modelLoading}
-                error={modelError}
-                onSelect={(id) => update({ model: id })}
-              >
-                <button
-                  className="pf-model-search-btn"
-                  onClick={handleModelSearch}
-                  title="Discover models from endpoint"
-                  type="button"
+          <div className="pf-model-field">
+            <div className="pf-model-group w-full">
+              <Input
+                className="flex-1 min-w-0 pr-[56px]"
+                value={provider.model}
+                onChange={(e) => update({ model: e.target.value })}
+                placeholder="e.g. gpt-4o"
+              />
+              <div className="pf-model-actions">
+                {canDiscoverModels && (
+                  <ModelPickerDropdown
+                    models={modelList}
+                    loading={modelLoading}
+                    error={modelError}
+                    onSelect={(id) => update({ model: id })}
+                  >
+                    <button
+                      className="pf-model-search-btn"
+                      onClick={handleModelSearch}
+                      title="Discover models from endpoint"
+                      type="button"
+                    >
+                      <Search size={13} />
+                    </button>
+                  </ModelPickerDropdown>
+                )}
+                <ModelPickerDropdown
+                  models={catalogList}
+                  loading={catalogLoading}
+                  error={catalogError}
+                  initialFilter={provider.model}
+                  placeholder="Fuzzy-match models.dev..."
+                  onFilterChange={handleCatalogSearch}
+                  onSelect={(id) => {
+                    const entry = catalogEntries.find((m) => m.id === id);
+                    if (entry) applyCatalogModel(entry);
+                  }}
                 >
-                  <Search size={13} />
+                  <button
+                    className="pf-model-search-btn"
+                    title="Browse the models.dev catalog"
+                    type="button"
+                  >
+                    <Database size={13} />
+                  </button>
+                </ModelPickerDropdown>
+              </div>
+            </div>
+            {catalogEmpty ? (
+              <span className="pf-model-hint">
+                No models.dev catalog yet -- click &quot;Update Models&quot; above to download it.
+              </span>
+            ) : resolvedModel ? (
+              <span className="pf-model-hint pf-model-hint--matched">
+                Matched {resolvedModel.model.provider_id}/{resolvedModel.model.id}
+                {' \u00b7 '}
+                {describeCatalogModel(resolvedModel.model)}
+                <button
+                  type="button"
+                  className="pf-model-hint-apply"
+                  onClick={() => applyCatalogModel(resolvedModel.model)}
+                >
+                  Apply specs
                 </button>
-              </ModelPickerDropdown>
-            )}
+              </span>
+            ) : provider.model.trim() ? (
+              <span className="pf-model-hint">No models.dev match for this id</span>
+            ) : null}
           </div>
         </SettingsItem>
         <SettingsItem title="Base URL" wide>
@@ -318,11 +436,11 @@ function ProviderTabPanel({
         </SettingsItem>
         <SettingsItem
           title="Capabilities"
-          description="Used for request shaping. Examples: text, vision, image_generation"
+          description="Used for request shaping. Pick the ones this model supports."
           wide
         >
-          <TagChipInput
-            tags={provider.capabilities}
+          <CapabilitySelect
+            selected={provider.capabilities}
             onChange={(next) => update({ capabilities: next })}
           />
         </SettingsItem>
@@ -448,6 +566,47 @@ export function ProvidersTab({
   const [rawMode, setRawMode] = useState(false);
   const [rawContent, setRawContent] = useState('');
   const [migrationOpen, setMigrationOpen] = useState(false);
+  const [catalogUpdating, setCatalogUpdating] = useState(false);
+
+  const handleToggleRaw = (next: boolean) => {
+    if (next) {
+      // Serialize current providers list (with the [retry] table) for raw editing.
+      setRawContent(buildProvidersToml(providersMeta, retryForm, providersList));
+    }
+    setRawMode(next);
+  };
+
+  const handleCatalogUpdate = useCallback(async () => {
+    setCatalogUpdating(true);
+    try {
+      const summary = await updateModelCatalog();
+      setToast({
+        message: `Model catalog updated: ${summary.model_count} models from `
+          + `${summary.provider_count} providers -> ${summary.path}`,
+        type: 'success',
+      });
+    } catch (e) {
+      setToast({ message: `Model catalog update failed: ${e}`, type: 'error' });
+    } finally {
+      setCatalogUpdating(false);
+    }
+  }, [setToast]);
+
+  const actionSlot = (
+    <SettingsActionSlot>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleCatalogUpdate}
+        disabled={catalogUpdating}
+        title="Download the latest models.dev catalog into the config directory"
+      >
+        <RefreshCw size={12} className={catalogUpdating ? 'pf-busy-icon' : undefined} />
+        {catalogUpdating ? 'Updating...' : 'Update Models'}
+      </Button>
+      <RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} />
+    </SettingsActionSlot>
+  );
 
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true);
@@ -540,18 +699,10 @@ export function ProvidersTab({
     return <div className="section-loading">Loading...</div>;
   }
 
-  const handleToggleRaw = (next: boolean) => {
-    if (next) {
-      // Serialize current providers list (with the [retry] table) for raw editing.
-      setRawContent(buildProvidersToml(providersMeta, retryForm, providersList));
-    }
-    setRawMode(next);
-  };
-
   if (rawMode) {
     return (
       <>
-        <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
+        {actionSlot}
         <RawTomlEditor
           content={rawContent}
           onChange={(val) => {
@@ -567,7 +718,7 @@ export function ProvidersTab({
 
   return (
     <>
-    <SettingsActionSlot><RawModeToggle rawMode={rawMode} onToggle={handleToggleRaw} /></SettingsActionSlot>
+    {actionSlot}
     <SubListLayout
       sidebar={
         <>
@@ -581,13 +732,12 @@ export function ProvidersTab({
               <span>Add</span>
             </button>
             <Button
-              variant="outline"
+              variant="icon"
               size="sm"
               onClick={() => setMigrationOpen(true)}
               title="快速导入 provider"
             >
-              <Download size={13} />
-              <span>快速导入</span>
+              <Upload size={14} />
             </Button>
             <Button
               variant="icon"

@@ -238,6 +238,40 @@ pub async fn provider_list_models(
     .await
 }
 
+/// Download the models.dev catalog into the user config directory.
+#[tauri::command]
+pub async fn model_catalog_update(
+    state: State<'_, AppState>,
+    source_url: Option<String>,
+) -> Result<y_service::CatalogUpdateSummary, String> {
+    y_service::update_catalog(&state.config_dir, source_url.as_deref()).await
+}
+
+/// Fuzzy-search the cached models.dev catalog.
+///
+/// An empty `query` browses the catalog. `provider_type` biases ranking toward
+/// the matching models.dev provider.
+#[tauri::command]
+pub async fn model_catalog_search(
+    state: State<'_, AppState>,
+    query: Option<String>,
+    provider_type: Option<String>,
+    limit: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    let catalog = y_service::load_catalog(&state.config_dir)?;
+    let matches = y_service::search_models(
+        &catalog.models,
+        query.as_deref().unwrap_or_default(),
+        provider_type.as_deref(),
+        limit.unwrap_or(50),
+    );
+    Ok(serde_json::json!({
+        "fetched_at": catalog.fetched_at,
+        "total": catalog.models.len(),
+        "matches": matches,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // MCP server config commands (backed by <config_dir>/tools.toml [[mcp_servers]])
 // ---------------------------------------------------------------------------

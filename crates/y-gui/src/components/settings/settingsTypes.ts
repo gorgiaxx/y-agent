@@ -9,6 +9,7 @@ import {
   STORAGE_SCHEMA, HOOKS_SCHEMA, TOOLS_SCHEMA, GUARDRAILS_SCHEMA, KNOWLEDGE_SCHEMA,
   LANGFUSE_SCHEMA,
 } from '../../utils/settingsSchemas';
+import { normalizeCapabilities } from './providerCapabilityOptions';
 
 // ---------------------------------------------------------------------------
 // Provider form types (mirrors Rust ProviderConfig)
@@ -666,7 +667,7 @@ export function jsonToProviders(json: unknown): ProviderFormData[] {
     model: (p.model as string) ?? '',
     enabled: p.enabled !== false,
     tags: Array.isArray(p.tags) ? (p.tags as string[]) : [],
-    capabilities: Array.isArray(p.capabilities) ? (p.capabilities as string[]) : [],
+    capabilities: normalizeCapabilities(Array.isArray(p.capabilities) ? (p.capabilities as string[]) : []),
     max_concurrency: (p.max_concurrency as number) ?? 5,
     context_window: (p.context_window as number) ?? 128000,
     max_output_tokens: (p.max_output_tokens as number) ?? null,

@@ -23,6 +23,15 @@ interface ModelPickerDropdownProps {
   /** Trigger element that opens the dropdown. */
   children: React.ReactNode;
   className?: string;
+  /**
+   * Receives every filter keystroke. When provided, `models` is rendered as
+   * given (the owner is expected to supply already-ranked results) instead of
+   * being filtered locally by substring.
+   */
+  onFilterChange?: (filter: string) => void;
+  /** Initial filter text applied when the dropdown opens. */
+  initialFilter?: string;
+  placeholder?: string;
 }
 
 export function ModelPickerDropdown({
@@ -32,15 +41,20 @@ export function ModelPickerDropdown({
   onSelect,
   children,
   className,
+  onFilterChange,
+  initialFilter = '',
+  placeholder = 'Filter models...',
 }: ModelPickerDropdownProps) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const filtered = models.filter((m) =>
-    m.id.toLowerCase().includes(filter.toLowerCase()) ||
-    (m.display_name ?? '').toLowerCase().includes(filter.toLowerCase()),
-  );
+  const filtered = onFilterChange
+    ? models
+    : models.filter((m) =>
+      m.id.toLowerCase().includes(filter.toLowerCase()) ||
+      (m.display_name ?? '').toLowerCase().includes(filter.toLowerCase()),
+    );
 
   return (
     <Popover
@@ -48,7 +62,8 @@ export function ModelPickerDropdown({
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
         if (nextOpen) {
-          setFilter('');
+          setFilter(initialFilter);
+          onFilterChange?.(initialFilter);
           requestAnimationFrame(() => inputRef.current?.focus());
         }
       }}
@@ -67,8 +82,11 @@ export function ModelPickerDropdown({
             ref={inputRef}
             className="model-picker-filter"
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter models..."
+            onChange={(e) => {
+              setFilter(e.target.value);
+              onFilterChange?.(e.target.value);
+            }}
+            placeholder={placeholder}
           />
         </div>
         {loading && (
