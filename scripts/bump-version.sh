@@ -13,15 +13,18 @@
 #   2. crates/y-gui/package.json
 #   3. crates/y-gui/src-tauri/tauri.conf.json
 #   4. package.nix
-#   5. crates/y-gui/package-lock.json  (regenerated via npm --package-lock-only)
+#   5. crates/y-gui/package-lock.json  (sed patched, then npm-regenerated)
 #   6. Cargo.lock                 (workspace crate versions, via cargo metadata)
 #
-# IMPORTANT: Step 5 runs `npm install --package-lock-only` (same as the CI
-# lock-sync check in .github/workflows/ci.yml).  This ensures the committed
-# lock file matches whatever CI generates, regardless of dependency metadata
-# differences.  If you get a CI lock-sync failure, make sure your local npm
-# version matches CI's (Node 22 / npm 10).  Using `nvm use 22` before running
-# this script is recommended.
+# IMPORTANT: After sed-patching the version in package-lock.json, this script
+# runs `npm install --package-lock-only` (same invocation as the CI lock-sync
+# check in .github/workflows/ci.yml) so the lock file's dependency metadata
+# matches whatever npm version regenerates in CI.
+#
+# If your local npm is broken or absent, the script falls back to the sed-only
+# approach so you can still bump locally.  The CI lock-sync check will pass as
+# long as the version strings are correct and npm hasn't drifted between Node
+# releases.  When in doubt, use `nvm use 22` before running this script.
 
 set -euo pipefail
 
@@ -91,7 +94,6 @@ echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
 echo ""
 
 # 1. Cargo.toml -- [workspace.package] version
-#    Match: version = "x.y.z" at beginning of line (under [workspace.package])
 sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" "$CARGO_TOML"
 echo "  [OK] Cargo.toml"
 
@@ -107,19 +109,25 @@ echo "  [OK] crates/y-gui/src-tauri/tauri.conf.json"
 sed -i '' "s/version = \"$CURRENT_VERSION\";/version = \"$NEW_VERSION\";/" "$PACKAGE_NIX"
 echo "  [OK] package.nix"
 
-# 5. package-lock.json -- regenerate from package.json
-#    Run `npm install --package-lock-only` (same invocation as CI's lock-sync
-#    check in .github/workflows/ci.yml) so the lock file is fully consistent
-#    with the updated package.json and matches whatever npm version is used.
-(
-  cd "$REPO_ROOT/crates/y-gui"
-  npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-)
-echo "  [OK] crates/y-gui/package-lock.json"
+# 5. package-lock.json -- patch both top-level "version" and packages[""]["version"]
+sed -i '' "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" "$PACKAGE_LOCK"
+echo "  [OK] crates/y-gui/package-lock.json (sed patched)"
+
+# 5b. optional: regen with npm so dependency metadata matches CI
+if command -v npm &>/dev/null; then
+  echo "  [..] regenerating lock file metadata via npm..."
+  ( cd "$REPO_ROOT/crates/y-gui" && npm install --package-lock-only --ignore-scripts --no-audit --no-fund 2>/dev/null )
+  if [ $? -eq 0 ]; then
+    echo "  [OK] crates/y-gui/package-lock.json (npm regenerated)"
+  else
+    echo "  [WARN] npm regen failed (npm may be broken). sed-patched lock file is your commit."
+    echo "         CI may flag lock-sync issues if your npm version differs from CI."
+  fi
+else
+  echo "  [SKIP] npm not found -- lock file is sed-patched only."
+fi
 
 # 6. Cargo.lock -- workspace crate versions
-#    `cargo metadata` re-resolves and rewrites the lock file to match the
-#    manifests while keeping existing dependency pins (unlike `cargo update`).
 ( cd "$REPO_ROOT" && cargo metadata --format-version 1 > /dev/null )
 echo "  [OK] Cargo.lock"
 
